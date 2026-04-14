@@ -855,117 +855,17 @@ await _post('/api/onboarding/reset', { source: 'asm', target });
       }
 
       @media (max-width: 640px){
-  .asm-panel{
-    width: calc(100vw - 12px);
-    margin: 6px auto;
-    max-height: calc(100vh - 12px);
-    border-radius: 16px;
-  }
-
-  .asm-head{
-    padding: 12px 12px;
-    align-items: flex-start;
-    gap: 10px;
-  }
-
-  .asm-title{
-    font-size: 13px;
-    line-height: 1.2;
-    padding-right: 10px;
-  }
-
-  .asm-sub{
-    font-size: 11.5px;
-    line-height: 1.35;
-  }
-
-  .asm-body{
-    padding: 12px 12px 10px;
-  }
-
-  .asm-chip{
-    padding: 11px 11px;
-    align-items: flex-start;
-  }
-
-  .asm-chip-text{
-    white-space: normal;
-    overflow: visible;
-    text-overflow: initial;
-    line-height: 1.35;
-    word-break: break-word;
-  }
-
-  .asm-spot{
-    padding: 12px;
-  }
-
-  .asm-spot-title{
-    align-items: flex-start;
-    gap: 8px;
-    flex-wrap: wrap;
-  }
-
-  .asm-spot-sub{
-    font-size: 11.5px;
-    line-height: 1.45;
-  }
-
-  #asm-hint, #pxm-hint{
-    font-size: 11.5px;
-    line-height: 1.4;
-  }
-
-  .asm-footer{
-    padding: 10px 12px 12px;
-    flex-direction: column;
-    align-items: stretch;
-    gap: 10px;
-  }
-
-  .asm-footer-left{
-    margin-right: 0;
-    width: 100%;
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 8px;
-  }
-
-  .asm-step{
-    font-size: 11px;
-  }
-
-  .asm-link{
-    font-size: 11.5px;
-    padding: 4px 2px;
-    white-space: normal;
-    text-align: left;
-  }
-
-  .asm-btn{
-    width: 100%;
-    min-height: 44px;
-    font-size: 13px;
-  }
-
-  .asm-x{
-    flex: 0 0 auto;
-  }
-
-  .asm-exit-card{
-    width: min(94vw, 520px);
-    padding: 14px 14px 12px;
-  }
-
-  .asm-exit-actions{
-    flex-direction: column;
-  }
-
-  .asm-exit-actions .asm-btn{
-    width: 100%;
-  }
-}
+        .asm-panel{
+          width: calc(100vw - 18px);
+          margin: 9px auto;
+          max-height: calc(100vh - 18px);
+          border-radius: 16px;
+        }
+        .asm-chip{ padding: 11px 11px; }
+        .asm-footer{ gap:8px; }
+        .asm-footer-left{ gap:6px; }
+        .asm-link{ font-size: 12px; padding: 6px 6px; }
+      }
     `;
     document.head.appendChild(style);
   }
@@ -982,10 +882,10 @@ await _post('/api/onboarding/reset', { source: 'asm', target });
       <div class="asm-panel" role="dialog" aria-modal="true">
         <div class="asm-head">
           <div>
-            <div class="asm-title" id="asm-title">Select accounts</div>
-            <div class="asm-sub" id="asm-sub">Select up to ${MAX_SELECT} account per type.</div>
+            <div class="asm-title" id="asm-title">Seleccionar cuentas</div>
+            <div class="asm-sub" id="asm-sub">Selecciona hasta ${MAX_SELECT} cuenta por tipo.</div>
           </div>
-          <button class="asm-x" id="asm-close" aria-label="Close">✕</button>
+          <button class="asm-x" id="asm-close" aria-label="Cerrar">✕</button>
         </div>
 
         <div class="asm-body">
@@ -1032,10 +932,10 @@ await _post('/api/onboarding/reset', { source: 'asm', target });
           <div class="asm-footer-left">
             <span class="asm-step hidden" id="asm-step-chip">Step 1/3</span>
             <button class="asm-link hidden" id="asm-back">Back</button>
-            <button class="asm-link hidden" id="asm-change">Want to change your pixel?</button>
+            <button class="asm-link hidden" id="asm-change">¿Quieres cambiar tu pixel?</button>
           </div>
-          <button class="asm-btn" id="asm-cancel">Cancel</button>
-          <button class="asm-btn asm-btn-primary" id="asm-save">Save selection</button>
+          <button class="asm-btn" id="asm-cancel">Cancelar</button>
+          <button class="asm-btn asm-btn-primary" id="asm-save">Guardar selección</button>
         </div>
       </div>
     `;
@@ -1079,10 +979,10 @@ await _post('/api/onboarding/reset', { source: 'asm', target });
       <div class="asm-panel" role="dialog" aria-modal="true">
         <div class="asm-head">
           <div>
-            <div class="asm-title" id="pxm-title">Select pixel</div>
-            <div class="asm-sub" id="pxm-sub">Select 1 option to continue.</div>
+            <div class="asm-title" id="pxm-title">Seleccionar pixel</div>
+            <div class="asm-sub" id="pxm-sub">Selecciona 1 opción para continuar.</div>
           </div>
-          <button class="asm-x" id="pxm-close" aria-label="Close">✕</button>
+          <button class="asm-x" id="pxm-close" aria-label="Cerrar">✕</button>
         </div>
 
         <div class="asm-body">
@@ -1100,8 +1000,8 @@ await _post('/api/onboarding/reset', { source: 'asm', target });
         </div>
 
         <div class="asm-footer">
-          <button class="asm-btn" id="pxm-cancel">Cancel</button>
-          <button class="asm-btn asm-btn-primary" id="pxm-save">Save selection</button>
+          <button class="asm-btn" id="pxm-cancel">Cancelar</button>
+          <button class="asm-btn asm-btn-primary" id="pxm-save">Guardar selección</button>
         </div>
       </div>
     `;
@@ -1353,11 +1253,11 @@ await _post('/api/onboarding/reset', { source: 'asm', target });
 
     if (reached)
       _hint(
-        `Limit reached: you can only select ${MAX_SELECT} account.`,
+        `Límite alcanzado: solo puedes seleccionar ${MAX_SELECT} cuenta.`,
         'warn',
         'account-select-modal'
       );
-    else _hint(`Select up to ${MAX_SELECT} account per type.`, 'info', 'account-select-modal');
+    else _hint(`Selecciona hasta ${MAX_SELECT} cuenta por tipo.`, 'info', 'account-select-modal');
 
     // Wizard Step A: habilitar por selección del tipo requerido
     if (ASM.flow.next === 'metaPixel' && ASM.flow.step === 'A') {
@@ -1379,7 +1279,7 @@ await _post('/api/onboarding/reset', { source: 'asm', target });
       _hideEl(err);
     }
 
-    _hint(`Select up to ${MAX_SELECT} account per type.`, 'info', 'account-select-modal');
+    _hint(`Selecciona hasta ${MAX_SELECT} cuenta por tipo.`, 'info', 'account-select-modal');
 
     const metaTitle = _el('asm-meta-title');
     const metaList = _el('asm-meta-list');
@@ -1404,7 +1304,7 @@ await _post('/api/onboarding/reset', { source: 'asm', target });
           if (checked) {
             if (set.size >= MAX_SELECT) {
               cbEl.checked = false;
-              return _hint(`You can only select up to ${MAX_SELECT} account.`, 'warn', 'account-select-modal');
+              return _hint(`Solo puedes seleccionar hasta ${MAX_SELECT} cuenta.`, 'warn', 'account-select-modal');
             }
             set.clear();
             set.add(val);
@@ -1432,7 +1332,7 @@ await _post('/api/onboarding/reset', { source: 'asm', target });
       ASM.data.googleAds.forEach((a) => {
         const id = normGadsId(a.id || a.customerId || a.customer_id || '');
         const displayName =
-          a.name || a.descriptiveName || a.descriptive_name || `Account ${id}`;
+          a.name || a.descriptiveName || a.descriptive_name || `Cuenta ${id}`;
         const isChecked = ASM.sel.googleAds.has(id);
 
         const chip = _chip(displayName, id, 'googleAds', isChecked, (checked, val, kind, cbEl) => {
@@ -1440,7 +1340,7 @@ await _post('/api/onboarding/reset', { source: 'asm', target });
           if (checked) {
             if (set.size >= MAX_SELECT) {
               cbEl.checked = false;
-              return _hint(`You can only select up to ${MAX_SELECT} account.`, 'warn', 'account-select-modal');
+              return _hint(`Solo puedes seleccionar hasta ${MAX_SELECT} cuenta.`, 'warn', 'account-select-modal');
             }
             set.clear();
             set.add(val);
@@ -1483,7 +1383,7 @@ await _post('/api/onboarding/reset', { source: 'asm', target });
           if (checked) {
             if (_countFor(kind) >= MAX_SELECT) {
               cbEl.checked = false;
-              return _hint(`You can only select up to ${MAX_SELECT} account.`, 'warn', 'account-select-modal');
+              return _hint(`Solo puedes seleccionar hasta ${MAX_SELECT} cuenta.`, 'warn', 'account-select-modal');
             }
             set.clear();
             set.add(val); // ✅ SOLO RAW
@@ -1503,7 +1403,7 @@ await _post('/api/onboarding/reset', { source: 'asm', target });
     }
 
     if (!ASM.visible.meta && !ASM.visible.googleAds && !ASM.visible.googleGa) {
-      _hint('There are not enough accounts to select (or there is only 1 account per type).', 'info', 'account-select-modal');
+      _hint('No hay cuentas suficientes para seleccionar (o solo existe 1 cuenta por tipo).', 'info', 'account-select-modal');
     }
 
     if (ASM.flow.next === 'metaPixel' && ASM.flow.step === 'A') {
@@ -1595,214 +1495,208 @@ await _post('/api/onboarding/reset', { source: 'asm', target });
     window.dispatchEvent(new CustomEvent('adray:onboarding-flow-completed', { detail }));
   }
 
-  function _canSkipMetaPixel() {
-  return Array.isArray(ASM.data.metaPixels) && ASM.data.metaPixels.length === 0;
-}
-
-function _canSaveMetaPixel() {
-  return ASM.sel.metaPixel.size > 0 || _canSkipMetaPixel();
-}
+  function _canSaveMetaPixel() {
+    return ASM.sel.metaPixel.size > 0;
+  }
 
   function _renderMetaPixelAllList() {
-  const titleWrap = _el('asm-pxm-meta-title');
-  const listEl = _el('asm-pxm-meta-list');
-  const countEl = _el('asm-pxm-meta-count');
-  if (!titleWrap || !listEl) return;
+    const titleWrap = _el('asm-pxm-meta-title');
+    const listEl = _el('asm-pxm-meta-list');
+    const countEl = _el('asm-pxm-meta-count');
+    if (!titleWrap || !listEl) return;
 
-  const gTitle = _el('asm-pxm-google-title');
-  const gList = _el('asm-pxm-google-list');
-  if (gTitle) _hideEl(gTitle);
-  if (gList) _hideEl(gList);
+    // hide google block
+    const gTitle = _el('asm-pxm-google-title');
+    const gList = _el('asm-pxm-google-list');
+    if (gTitle) _hideEl(gTitle);
+    if (gList) _hideEl(gList);
 
-  if (!ASM.data.metaPixels.length) {
-    _hideEl(titleWrap);
-    _hint("You don't have a pixel yet. We recommend activating one later.", 'warn', 'account-select-modal');
-    ASM.sel.metaPixel.clear();
-    _enableSave(true, 'asm-save');
-    return;
-  }
+    if (!ASM.data.metaPixels.length) {
+      _hideEl(titleWrap);
+      _hint('No encontramos pixeles en esta cuenta. Puedes continuar y configurarlo después.', 'warn', 'account-select-modal');
+      ASM.sel.metaPixel.clear();
+      _enableSave(false, 'asm-save');
+      return;
+    }
 
-  _showEl(titleWrap);
-  listEl.innerHTML = '';
+    _showEl(titleWrap);
+    listEl.innerHTML = '';
 
-  const recId = _bestMetaPixelLocal();
-  const sorted = [...ASM.data.metaPixels].sort((a, b) => {
-    const aa = safeStr(a.id) === safeStr(recId) ? 1 : 0;
-    const bb = safeStr(b.id) === safeStr(recId) ? 1 : 0;
-    return bb - aa;
-  });
-
-  sorted.forEach((p) => {
-    const id = safeStr(p.id);
-    const label = safeStr(p.name) || id;
-    const isChecked = ASM.sel.metaPixel.has(id);
-
-    const chip = _chip(label, id, 'metaPixel', isChecked, (checked, val, kind, cbEl) => {
-      const set = ASM.sel[kind];
-      if (checked) {
-        if (set.size >= MAX_SELECT) {
-          cbEl.checked = false;
-          return _hint('You can only select 1 option.', 'warn', 'account-select-modal');
-        }
-        set.clear();
-        set.add(val);
-      } else {
-        set.delete(val);
-      }
-
-      if (countEl) countEl.textContent = `${set.size ? 1 : 0}/${MAX_SELECT}`;
-      _enableSave(_canSaveMetaPixel(), 'asm-save');
+    const recId = _bestMetaPixelLocal();
+    const sorted = [...ASM.data.metaPixels].sort((a, b) => {
+      const aa = safeStr(a.id) === safeStr(recId) ? 1 : 0;
+      const bb = safeStr(b.id) === safeStr(recId) ? 1 : 0;
+      return bb - aa;
     });
 
-    listEl.appendChild(chip);
-  });
+    sorted.forEach((p) => {
+      const id = safeStr(p.id);
+      const label = safeStr(p.name) || id;
+      const isChecked = ASM.sel.metaPixel.has(id);
 
-  if (countEl) countEl.textContent = `${ASM.sel.metaPixel.size ? 1 : 0}/${MAX_SELECT}`;
-  _enableSave(_canSaveMetaPixel(), 'asm-save');
-}
+      const chip = _chip(label, id, 'metaPixel', isChecked, (checked, val, kind, cbEl) => {
+        const set = ASM.sel[kind];
+        if (checked) {
+          if (set.size >= MAX_SELECT) {
+            cbEl.checked = false;
+            return _hint(`Solo puedes seleccionar 1 opción.`, 'warn', 'account-select-modal');
+          }
+          set.clear();
+          set.add(val);
+        } else {
+          set.delete(val);
+        }
+
+        if (countEl) countEl.textContent = `${set.size ? 1 : 0}/${MAX_SELECT}`;
+        _enableSave(_canSaveMetaPixel(), 'asm-save');
+      });
+
+      listEl.appendChild(chip);
+    });
+
+    if (countEl) countEl.textContent = `${ASM.sel.metaPixel.size ? 1 : 0}/${MAX_SELECT}`;
+    _enableSave(_canSaveMetaPixel(), 'asm-save');
+  }
 
   function _renderMetaPixelRecommendedBox() {
-  const box = _el('asm-rec-box');
-  if (!box) return;
+    const box = _el('asm-rec-box');
+    if (!box) return;
 
-  const recId = _bestMetaPixelLocal();
-  if (!recId) {
-    _hint("You don't have a pixel yet. We recommend activating one later.", 'warn', 'account-select-modal');
-    _setAccountWizardStep('C');
-    _renderMetaPixelAllList();
-    return;
+    const recId = _bestMetaPixelLocal();
+    if (!recId) {
+      _hint('No encontramos una recomendación clara. Te mostramos la lista completa.', 'warn', 'account-select-modal');
+      _setAccountWizardStep('C');
+      _renderMetaPixelAllList();
+      return;
+    }
+
+    const picked = (ASM.data.metaPixels || []).find((p) => safeStr(p.id) === safeStr(recId));
+    const recName = picked?.name || recId;
+    ASM.sel.metaPixel.clear();
+    ASM.sel.metaPixel.add(recId);
+
+    box.innerHTML = `
+      <div class="asm-spot">
+        <div class="asm-spot-title">
+          <span class="asm-badge">RECOMMENDED</span>
+          <span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
+            ${_escapeHtml(recName)}
+          </span>
+        </div>
+        <div class="asm-spot-sub">
+          Usaremos este pixel para validar conversiones y potenciar insights en tu AI.
+        </div>
+        <div class="asm-spot-sub" style="margin-top:10px;">
+          Si no es el correcto, da click en <b>“¿Quieres cambiar tu pixel?”</b>
+        </div>
+      </div>
+    `;
+
+    _enableSave(true, 'asm-save');
   }
-
-  const picked = (ASM.data.metaPixels || []).find((p) => safeStr(p.id) === safeStr(recId));
-  const recName = picked?.name || recId;
-  ASM.sel.metaPixel.clear();
-  ASM.sel.metaPixel.add(recId);
-
-  box.innerHTML = `
-    <div class="asm-spot">
-      <div class="asm-spot-title">
-        <span class="asm-badge">RECOMMENDED</span>
-        <span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
-          ${_escapeHtml(recName)}
-        </span>
-      </div>
-      <div class="asm-spot-sub">
-        We'll use this pixel to validate conversions and improve your AI insights.
-      </div>
-      <div class="asm-spot-sub" style="margin-top:10px;">
-        If this isn't the right one, tap <b>"Want to change your pixel?"</b>
-      </div>
-    </div>
-  `;
-
-  _enableSave(true, 'asm-save');
-}
 
   // ✅ Google Conversion wizard helpers
-  function _canSkipGoogleConversion() {
-  return Array.isArray(ASM.data.googleConversions) && ASM.data.googleConversions.length === 0;
-}
-
-function _canSaveGoogleConversion() {
-  return ASM.sel.googleConversion.size > 0 || _canSkipGoogleConversion();
-}
+  function _canSaveGoogleConversion() {
+    return ASM.sel.googleConversion.size > 0;
+  }
 
   function _renderGoogleConversionAllList() {
-  const titleWrap = _el('asm-pxm-google-title');
-  const listEl = _el('asm-pxm-google-list');
-  const countEl = _el('asm-pxm-google-count');
-  if (!titleWrap || !listEl) return;
+    const titleWrap = _el('asm-pxm-google-title');
+    const listEl = _el('asm-pxm-google-list');
+    const countEl = _el('asm-pxm-google-count');
+    if (!titleWrap || !listEl) return;
 
-  const mTitle = _el('asm-pxm-meta-title');
-  const mList = _el('asm-pxm-meta-list');
-  if (mTitle) _hideEl(mTitle);
-  if (mList) _hideEl(mList);
+    // hide meta block
+    const mTitle = _el('asm-pxm-meta-title');
+    const mList = _el('asm-pxm-meta-list');
+    if (mTitle) _hideEl(mTitle);
+    if (mList) _hideEl(mList);
 
-  if (!ASM.data.googleConversions.length) {
-    _hideEl(titleWrap);
-    _hint("You don't have a conversion yet. We recommend activating one later.", 'warn', 'account-select-modal');
-    ASM.sel.googleConversion.clear();
-    _enableSave(true, 'asm-save');
-    return;
-  }
+    if (!ASM.data.googleConversions.length) {
+      _hideEl(titleWrap);
+      _hint('No encontramos conversiones en esta cuenta. Puedes continuar y configurarlo después.', 'warn', 'account-select-modal');
+      ASM.sel.googleConversion.clear();
+      _enableSave(false, 'asm-save');
+      return;
+    }
 
-  _showEl(titleWrap);
-  listEl.innerHTML = '';
+    _showEl(titleWrap);
+    listEl.innerHTML = '';
 
-  const recRes = safeStr(ASM.data.googleConversionsRecommendedResource || '');
+    const recRes = safeStr(ASM.data.googleConversionsRecommendedResource || '');
 
-  const sorted = [...ASM.data.googleConversions].sort((a, b) => {
-    const aa = safeStr(a.resourceName) === recRes ? 1 : 0;
-    const bb = safeStr(b.resourceName) === recRes ? 1 : 0;
-    return bb - aa;
-  });
-
-  sorted.forEach((c) => {
-    const id = safeStr(c.resourceName);
-    const label = safeStr(c.name) || id;
-    const isChecked = ASM.sel.googleConversion.has(id);
-
-    const chip = _chip(label, id, 'googleConversion', isChecked, (checked, val, kind, cbEl) => {
-      const set = ASM.sel[kind];
-      if (checked) {
-        if (set.size >= MAX_SELECT) {
-          cbEl.checked = false;
-          return _hint('You can only select 1 option.', 'warn', 'account-select-modal');
-        }
-        set.clear();
-        set.add(val);
-      } else {
-        set.delete(val);
-      }
-
-      if (countEl) countEl.textContent = `${set.size ? 1 : 0}/${MAX_SELECT}`;
-      _enableSave(_canSaveGoogleConversion(), 'asm-save');
+    const sorted = [...ASM.data.googleConversions].sort((a, b) => {
+      const aa = safeStr(a.resourceName) === recRes ? 1 : 0;
+      const bb = safeStr(b.resourceName) === recRes ? 1 : 0;
+      return bb - aa;
     });
 
-    listEl.appendChild(chip);
-  });
+    sorted.forEach((c) => {
+      const id = safeStr(c.resourceName);
+      const label = safeStr(c.name) || id;
+      const isChecked = ASM.sel.googleConversion.has(id);
 
-  if (countEl) countEl.textContent = `${ASM.sel.googleConversion.size ? 1 : 0}/${MAX_SELECT}`;
-  _enableSave(_canSaveGoogleConversion(), 'asm-save');
-}
+      const chip = _chip(label, id, 'googleConversion', isChecked, (checked, val, kind, cbEl) => {
+        const set = ASM.sel[kind];
+        if (checked) {
+          if (set.size >= MAX_SELECT) {
+            cbEl.checked = false;
+            return _hint('Solo puedes seleccionar 1 opción.', 'warn', 'account-select-modal');
+          }
+          set.clear();
+          set.add(val);
+        } else {
+          set.delete(val);
+        }
 
-  function _renderGoogleConversionRecommendedBox() {
-  const box = _el('asm-rec-box');
-  if (!box) return;
+        if (countEl) countEl.textContent = `${set.size ? 1 : 0}/${MAX_SELECT}`;
+        _enableSave(_canSaveGoogleConversion(), 'asm-save');
+      });
 
-  const rec = safeStr(ASM.data.googleConversionsRecommendedResource || '');
-  if (!rec) {
-    _hint("You don't have a conversion yet. We recommend activating one later.", 'warn', 'account-select-modal');
-    _setAccountWizardStep('C');
-    _renderGoogleConversionAllList();
-    return;
+      listEl.appendChild(chip);
+    });
+
+    if (countEl) countEl.textContent = `${ASM.sel.googleConversion.size ? 1 : 0}/${MAX_SELECT}`;
+    _enableSave(_canSaveGoogleConversion(), 'asm-save');
   }
 
-  const picked = (ASM.data.googleConversions || []).find((x) => safeStr(x.resourceName) === rec);
-  const recName = picked?.name || rec;
+  function _renderGoogleConversionRecommendedBox() {
+    const box = _el('asm-rec-box');
+    if (!box) return;
 
-  ASM.sel.googleConversion.clear();
-  ASM.sel.googleConversion.add(rec);
+    const rec = safeStr(ASM.data.googleConversionsRecommendedResource || '');
+    if (!rec) {
+      _hint('No encontramos una recomendación clara. Te mostramos la lista completa.', 'warn', 'account-select-modal');
+      _setAccountWizardStep('C');
+      _renderGoogleConversionAllList();
+      return;
+    }
 
-  box.innerHTML = `
-    <div class="asm-spot">
-      <div class="asm-spot-title">
-        <span class="asm-badge">RECOMMENDED</span>
-        <span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
-          ${_escapeHtml(recName)}
-        </span>
-      </div>
-      <div class="asm-spot-sub">
-        We'll use this conversion to improve your AI insights.
-      </div>
-      <div class="asm-spot-sub" style="margin-top:10px;">
-        If this isn't the right one, tap <b>"Want to change your pixel?"</b>
-      </div>
-    </div>
-  `;
+    const picked = (ASM.data.googleConversions || []).find((x) => safeStr(x.resourceName) === rec);
+    const recName = picked?.name || rec;
 
-  _enableSave(true, 'asm-save');
-}
+    ASM.sel.googleConversion.clear();
+    ASM.sel.googleConversion.add(rec);
+
+    box.innerHTML = `
+      <div class="asm-spot">
+        <div class="asm-spot-title">
+          <span class="asm-badge">RECOMMENDED</span>
+          <span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
+            ${_escapeHtml(recName)}
+          </span>
+        </div>
+        <div class="asm-spot-sub">
+          Usaremos esta conversión para potenciar insights en tu AI.
+        </div>
+        <div class="asm-spot-sub" style="margin-top:10px;">
+          Si no es la correcta, da click en <b>“¿Quieres cambiar tu pixel?”</b>
+        </div>
+      </div>
+    `;
+
+    _enableSave(true, 'asm-save');
+  }
 
   async function _saveGoogleConversionSelectionAndClose(modal) {
     const resource = Array.from(ASM.sel.googleConversion)[0] || null;
@@ -1841,124 +1735,113 @@ function _canSaveGoogleConversion() {
   }
 
   function _setAccountWizardStep(step) {
-  ASM.flow.step = step;
+    ASM.flow.step = step;
 
-  const stepChip = _el('asm-step-chip');
-  const backBtn = _el('asm-back');
-  const changeBtn = _el('asm-change');
+    const stepChip = _el('asm-step-chip');
+    const backBtn = _el('asm-back');
+    const changeBtn = _el('asm-change');
 
-  const stepA = _el('asm-stepA');
-  const stepB = _el('asm-stepB');
-  const stepC = _el('asm-stepC');
+    const stepA = _el('asm-stepA');
+    const stepB = _el('asm-stepB');
+    const stepC = _el('asm-stepC');
 
-  if (!stepA || !stepB || !stepC) return;
+    if (!stepA || !stepB || !stepC) return;
 
-  _hideEl(stepA);
-  _hideEl(stepB);
-  _hideEl(stepC);
+    _hideEl(stepA);
+    _hideEl(stepB);
+    _hideEl(stepC);
 
-  if (backBtn) _hideEl(backBtn);
-  if (changeBtn) _hideEl(changeBtn);
+    if (backBtn) _hideEl(backBtn);
+    if (changeBtn) _hideEl(changeBtn);
 
-  const title = _el('asm-title');
-  const sub = _el('asm-sub');
-  const saveBtn = _el('asm-save');
+    const title = _el('asm-title');
+    const sub = _el('asm-sub');
+    const saveBtn = _el('asm-save');
 
-  const isMeta = ASM.flow.next === 'metaPixel';
-  const isGoogle = ASM.flow.next === 'googleConversion';
+    const isMeta = ASM.flow.next === 'metaPixel';
+    const isGoogle = ASM.flow.next === 'googleConversion';
 
-  if (step === 'A') {
-    _showEl(stepA);
+    if (step === 'A') {
+      _showEl(stepA);
+
+      if (stepChip) {
+        _showEl(stepChip);
+        stepChip.textContent = 'Step 1/3';
+      }
+
+      if (isMeta) {
+        if (title) title.textContent = 'Seleccionar cuentas';
+        if (sub) sub.textContent = 'Selecciona tu cuenta de Meta Ads para continuar.';
+        if (saveBtn) saveBtn.textContent = 'Continuar';
+        _hint('Selecciona tu cuenta y continúa.', 'info', 'account-select-modal');
+        _enableSave(ASM.sel.meta.size > 0, 'asm-save');
+      } else if (isGoogle) {
+        if (title) title.textContent = 'Seleccionar cuentas';
+        if (sub) sub.textContent = 'Selecciona tu cuenta de Google Ads para continuar.';
+        if (saveBtn) saveBtn.textContent = 'Continuar';
+        _hint('Selecciona tu cuenta y continúa.', 'info', 'account-select-modal');
+        _enableSave(ASM.sel.googleAds.size > 0, 'asm-save');
+      } else {
+        if (title) title.textContent = 'Seleccionar cuentas';
+        if (sub) sub.textContent = `Selecciona hasta ${MAX_SELECT} cuenta por tipo.`;
+        if (saveBtn) saveBtn.textContent = 'Guardar selección';
+        _hint(`Selecciona hasta ${MAX_SELECT} cuenta por tipo.`, 'info', 'account-select-modal');
+        _enableSave(_canSaveAccounts(), 'asm-save');
+      }
+
+      return;
+    }
+
+    if (step === 'B') {
+      _showEl(stepB);
+
+      if (stepChip) {
+        _showEl(stepChip);
+        stepChip.textContent = 'Step 2/3';
+      }
+      if (backBtn) _showEl(backBtn);
+      if (changeBtn) _showEl(changeBtn);
+
+      if (isMeta) {
+        if (title) title.textContent = 'Tu pixel recomendado';
+        if (sub) sub.textContent = 'Elegimos la mejor opción para empezar (conversiones).';
+        if (saveBtn) saveBtn.textContent = 'Guardar selección';
+        _hint('Te recomendamos la mejor opción. Puedes cambiarla si lo deseas.', 'info', 'account-select-modal');
+        _enableSave(true, 'asm-save');
+      } else if (isGoogle) {
+        if (title) title.textContent = 'Tu conversión recomendada';
+        if (sub) sub.textContent = 'Elegimos la mejor opción para empezar (insights).';
+        if (saveBtn) saveBtn.textContent = 'Guardar selección';
+        _hint('Te recomendamos la mejor opción. Puedes cambiarla si lo deseas.', 'info', 'account-select-modal');
+        _enableSave(true, 'asm-save');
+      }
+
+      return;
+    }
+
+    // step C
+    _showEl(stepC);
 
     if (stepChip) {
       _showEl(stepChip);
-      stepChip.textContent = 'Step 1/3';
-    }
-
-    if (isMeta) {
-      if (title) title.textContent = 'Select account';
-      if (sub) sub.textContent = 'Select your Meta Ads account to continue.';
-      if (saveBtn) saveBtn.textContent = 'Continue';
-      _hint('Select your account to continue.', 'info', 'account-select-modal');
-      _enableSave(ASM.sel.meta.size > 0, 'asm-save');
-    } else if (isGoogle) {
-      if (title) title.textContent = 'Select account';
-      if (sub) sub.textContent = 'Select your Google Ads account to continue.';
-      if (saveBtn) saveBtn.textContent = 'Continue';
-      _hint('Select your account to continue.', 'info', 'account-select-modal');
-      _enableSave(ASM.sel.googleAds.size > 0, 'asm-save');
-    } else {
-      if (title) title.textContent = 'Select accounts';
-      if (sub) sub.textContent = `Select up to ${MAX_SELECT} account per type.`;
-      if (saveBtn) saveBtn.textContent = 'Save selection';
-      _hint(`Select up to ${MAX_SELECT} account per type.`, 'info', 'account-select-modal');
-      _enableSave(_canSaveAccounts(), 'asm-save');
-    }
-
-    return;
-  }
-
-  if (step === 'B') {
-    _showEl(stepB);
-
-    if (stepChip) {
-      _showEl(stepChip);
-      stepChip.textContent = 'Step 2/3';
+      stepChip.textContent = 'Step 3/3';
     }
     if (backBtn) _showEl(backBtn);
-    if (changeBtn) _showEl(changeBtn);
 
     if (isMeta) {
-      if (title) title.textContent = 'Recommended pixel';
-      if (sub) sub.textContent = 'We picked the best option to get started.';
-      if (saveBtn) saveBtn.textContent = 'Save selection';
-      _hint('We recommend the best option, but you can change it.', 'info', 'account-select-modal');
-      _enableSave(true, 'asm-save');
+      if (title) title.textContent = 'Seleccionar pixel';
+      if (sub) sub.textContent = 'Selecciona 1 opción para continuar.';
+      if (saveBtn) saveBtn.textContent = 'Guardar selección';
+      _hint('Elige 1 pixel para continuar.', 'info', 'account-select-modal');
+      _enableSave(_canSaveMetaPixel(), 'asm-save');
     } else if (isGoogle) {
-      if (title) title.textContent = 'Recommended conversion';
-      if (sub) sub.textContent = 'We picked the best option to get started.';
-      if (saveBtn) saveBtn.textContent = 'Save selection';
-      _hint('We recommend the best option, but you can change it.', 'info', 'account-select-modal');
-      _enableSave(true, 'asm-save');
+      if (title) title.textContent = 'Seleccionar conversión';
+      if (sub) sub.textContent = 'Selecciona 1 opción para continuar.';
+      if (saveBtn) saveBtn.textContent = 'Guardar selección';
+      _hint('Elige 1 conversión para continuar.', 'info', 'account-select-modal');
+      _enableSave(_canSaveGoogleConversion(), 'asm-save');
     }
-
-    return;
   }
-
-  _showEl(stepC);
-
-  if (stepChip) {
-    _showEl(stepChip);
-    stepChip.textContent = 'Step 3/3';
-  }
-  if (backBtn) _showEl(backBtn);
-
-  if (isMeta) {
-    if (title) title.textContent = 'Select pixel';
-    if (sub) sub.textContent = 'Select a pixel if you already have one. Otherwise, you can continue.';
-    if (saveBtn) saveBtn.textContent = 'Save selection';
-    _hint(
-      _canSkipMetaPixel()
-        ? "You don't have a pixel yet. We recommend activating one later."
-        : 'Select 1 pixel to continue.',
-      _canSkipMetaPixel() ? 'warn' : 'info',
-      'account-select-modal'
-    );
-    _enableSave(_canSaveMetaPixel(), 'asm-save');
-  } else if (isGoogle) {
-    if (title) title.textContent = 'Select conversion';
-    if (sub) sub.textContent = 'Select a conversion if you already have one. Otherwise, you can continue.';
-    if (saveBtn) saveBtn.textContent = 'Save selection';
-    _hint(
-      _canSkipGoogleConversion()
-        ? "You don't have a conversion yet. We recommend activating one later."
-        : 'Select 1 conversion to continue.',
-      _canSkipGoogleConversion() ? 'warn' : 'info',
-      'account-select-modal'
-    );
-    _enableSave(_canSaveGoogleConversion(), 'asm-save');
-  }
-}
 
   /* =========================================================
    * ✅ Open Account Modal
@@ -2008,11 +1891,11 @@ function _canSaveGoogleConversion() {
         // Step A: Continue -> save meta account -> load pixels -> Step B
         if (ASM.flow.step === 'A') {
           if (ASM.sel.meta.size === 0) {
-            return _hint('Select a Meta Ads account to continue.', 'warn', 'account-select-modal');
+            return _hint('Selecciona una cuenta de Meta para continuar.', 'warn', 'account-select-modal');
           }
 
           const originalText = saveBtn.textContent;
-          saveBtn.textContent = 'Loading...';
+          saveBtn.textContent = 'Cargando…';
           saveBtn.disabled = true;
 
           try {
@@ -2029,18 +1912,18 @@ function _canSaveGoogleConversion() {
             _setAccountWizardStep('B');
             _renderMetaPixelRecommendedBox();
 
-            saveBtn.textContent = 'Save selection';
+            saveBtn.textContent = 'Guardar selección';
             saveBtn.disabled = false;
             return;
           } catch (e) {
             console.error('metaPixel wizard continue error', e);
             const box = _el('asm-error');
             if (box) {
-              box.textContent = 'Something went wrong while continuing. Please try again.';
+              box.textContent = 'Ocurrió un error al continuar. Intenta de nuevo.';
               _showEl(box);
             }
             _hint('', 'info', 'account-select-modal');
-            saveBtn.textContent = originalText || 'Continue';
+            saveBtn.textContent = originalText || 'Continuar';
             saveBtn.disabled = false;
             return;
           }
@@ -2048,38 +1931,38 @@ function _canSaveGoogleConversion() {
 
         // Step B/C: Save pixel + confirm + close + events
         if (ASM.flow.step === 'B' || ASM.flow.step === 'C') {
-  const originalText = saveBtn.textContent;
-  saveBtn.textContent = 'Saving...';
-  saveBtn.disabled = true;
+          const originalText = saveBtn.textContent;
+          saveBtn.textContent = 'Guardando…';
+          saveBtn.disabled = true;
 
-  try {
-    if (ASM.sel.metaPixel.size === 0 && !_canSkipMetaPixel()) {
-      const best = _bestMetaPixelLocal();
-      if (best) ASM.sel.metaPixel.add(best);
-    }
+          try {
+            if (ASM.sel.metaPixel.size === 0) {
+              const best = _bestMetaPixelLocal();
+              if (best) ASM.sel.metaPixel.add(best);
+            }
 
-    if (!_canSaveMetaPixel()) {
-      saveBtn.textContent = originalText || 'Save selection';
-      saveBtn.disabled = false;
-      return _hint('Select 1 pixel to continue.', 'warn', 'account-select-modal');
-    }
+            if (!_canSaveMetaPixel()) {
+              saveBtn.textContent = originalText || 'Guardar selección';
+              saveBtn.disabled = false;
+              return _hint('Selecciona 1 pixel para continuar.', 'warn', 'account-select-modal');
+            }
 
-    await _saveMetaPixelSelectionAndClose(modal);
+            await _saveMetaPixelSelectionAndClose(modal);
 
-    saveBtn.textContent = originalText || 'Save selection';
-    saveBtn.disabled = false;
-  } catch (e) {
-    console.error('metaPixel wizard save error', e);
-    const box = _el('asm-error');
-    if (box) {
-      box.textContent = 'Something went wrong while saving your selection. Please try again.';
-      _showEl(box);
-    }
-    _hint('', 'info', 'account-select-modal');
-    saveBtn.textContent = originalText || 'Save selection';
-    saveBtn.disabled = false;
-  }
-}
+            saveBtn.textContent = originalText || 'Guardar selección';
+            saveBtn.disabled = false;
+          } catch (e) {
+            console.error('metaPixel wizard save error', e);
+            const box = _el('asm-error');
+            if (box) {
+              box.textContent = 'Ocurrió un error guardando tu selección. Intenta de nuevo.';
+              _showEl(box);
+            }
+            _hint('', 'info', 'account-select-modal');
+            saveBtn.textContent = originalText || 'Guardar selección';
+            saveBtn.disabled = false;
+          }
+        }
       };
 
       return;
@@ -2111,11 +1994,11 @@ function _canSaveGoogleConversion() {
         // Step A: Continue -> save customer -> load conversions -> Step B
         if (ASM.flow.step === 'A') {
           if (ASM.sel.googleAds.size === 0) {
-            return _hint('Select a Google Ads account to continue.', 'warn', 'account-select-modal');
+            return _hint('Selecciona una cuenta de Google Ads para continuar.', 'warn', 'account-select-modal');
           }
 
           const originalText = saveBtn.textContent;
-          saveBtn.textContent = 'Loading...';
+          saveBtn.textContent = 'Cargando…';
           saveBtn.disabled = true;
 
           try {
@@ -2128,18 +2011,18 @@ function _canSaveGoogleConversion() {
             _setAccountWizardStep('B');
             _renderGoogleConversionRecommendedBox();
 
-            saveBtn.textContent = 'Save selection';
+            saveBtn.textContent = 'Guardar selección';
             saveBtn.disabled = false;
             return;
           } catch (e) {
             console.error('googleConversion wizard continue error', e);
             const box = _el('asm-error');
             if (box) {
-              box.textContent = 'Something went wrong while continuing. Please try again.';
+              box.textContent = 'Ocurrió un error al continuar. Intenta de nuevo.';
               _showEl(box);
             }
             _hint('', 'info', 'account-select-modal');
-            saveBtn.textContent = originalText || 'Continue';
+            saveBtn.textContent = originalText || 'Continuar';
             saveBtn.disabled = false;
             return;
           }
@@ -2147,45 +2030,45 @@ function _canSaveGoogleConversion() {
 
         // Step B/C: Save conversion + confirm + close + events
         if (ASM.flow.step === 'B' || ASM.flow.step === 'C') {
-  const originalText = saveBtn.textContent;
-  saveBtn.textContent = 'Saving...';
-  saveBtn.disabled = true;
+          const originalText = saveBtn.textContent;
+          saveBtn.textContent = 'Guardando…';
+          saveBtn.disabled = true;
 
-  try {
-    if (!_canSaveGoogleConversion()) {
-      saveBtn.textContent = originalText || 'Save selection';
-      saveBtn.disabled = false;
-      return _hint('Select 1 conversion to continue.', 'warn', 'account-select-modal');
-    }
+          try {
+            if (!_canSaveGoogleConversion()) {
+              saveBtn.textContent = originalText || 'Guardar selección';
+              saveBtn.disabled = false;
+              return _hint('Selecciona 1 conversión para continuar.', 'warn', 'account-select-modal');
+            }
 
-    await _saveGoogleConversionSelectionAndClose(modal);
+            await _saveGoogleConversionSelectionAndClose(modal);
 
-    saveBtn.textContent = originalText || 'Save selection';
-    saveBtn.disabled = false;
-  } catch (e) {
-    console.error('googleConversion wizard save error', e);
-    const box = _el('asm-error');
-    if (box) {
-      box.textContent = 'Something went wrong while saving your selection. Please try again.';
-      _showEl(box);
-    }
-    _hint('', 'info', 'account-select-modal');
-    saveBtn.textContent = originalText || 'Save selection';
-    saveBtn.disabled = false;
-  }
-}
+            saveBtn.textContent = originalText || 'Guardar selección';
+            saveBtn.disabled = false;
+          } catch (e) {
+            console.error('googleConversion wizard save error', e);
+            const box = _el('asm-error');
+            if (box) {
+              box.textContent = 'Ocurrió un error guardando tu selección. Intenta de nuevo.';
+              _showEl(box);
+            }
+            _hint('', 'info', 'account-select-modal');
+            saveBtn.textContent = originalText || 'Guardar selección';
+            saveBtn.disabled = false;
+          }
+        }
       };
 
       return;
     }
 
     // ✅ Normal mode (cuentas)
-    saveBtn.textContent = 'Save selection';
+    saveBtn.textContent = 'Guardar selección';
     saveBtn.onclick = async () => {
       if (!_canSaveAccounts()) return;
 
       const originalText = saveBtn.textContent;
-      saveBtn.textContent = 'Saving...';
+      saveBtn.textContent = 'Guardando…';
       saveBtn.disabled = true;
 
       try {
@@ -2250,12 +2133,12 @@ function _canSaveGoogleConversion() {
 
         const box = _el('asm-error');
         if (box) {
-          box.textContent = 'Something went wrong while saving your selection. Please try again.';
+          box.textContent = 'Ocurrió un error guardando tu selección. Intenta de nuevo.';
           _showEl(box);
         }
         _hint('', 'info', 'account-select-modal');
 
-        saveBtn.textContent = originalText || 'Save selection';
+        saveBtn.textContent = originalText || 'Guardar selección';
         _enableSave(_canSaveAccounts(), 'asm-save');
       }
     };
@@ -2284,7 +2167,7 @@ function _canSaveGoogleConversion() {
 
     if (!ASM.data.googleConversions.length) {
       _hideEl(gWrap);
-      _hint("We couldn't find any conversions.", 'warn', 'pixel-select-modal');
+      _hint('No encontramos conversiones.', 'warn', 'pixel-select-modal');
       return;
     }
 
@@ -2308,7 +2191,7 @@ function _canSaveGoogleConversion() {
         if (checked) {
           if (set.size >= MAX_SELECT) {
             cbEl.checked = false;
-            return _hint('You can only select 1 option.', 'warn', 'pixel-select-modal');
+            return _hint('Solo puedes seleccionar 1 opción.', 'warn', 'pixel-select-modal');
           }
           set.clear();
           set.add(val);
@@ -2334,13 +2217,13 @@ function _canSaveGoogleConversion() {
       saveBtn.onclick = async () => {
         try {
           if (!_canSaveGoogleConversion()) {
-            return _hint('Select 1 conversion to continue.', 'warn', 'pixel-select-modal');
+            return _hint('Selecciona 1 conversión para continuar.', 'warn', 'pixel-select-modal');
           }
           await _saveGoogleConversionSelectionAndClose(modal);
         } catch (e) {
           console.error('legacy pixel modal save error', e);
           if (err) {
-            err.textContent = 'Something went wrong while saving your selection.';
+            err.textContent = 'Ocurrió un error guardando tu selección.';
             _showEl(err);
           }
         }

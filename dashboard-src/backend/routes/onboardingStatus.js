@@ -49,7 +49,7 @@ function requireAuth(req, res, next) {
   return res.status(401).json({ ok: false, error: 'UNAUTHORIZED' });
 }
 
-// UX: máximo 1 selección por tipo (Meta / Google Ads / GA4)
+// ✅ UX: máximo 1 selección por tipo (Meta / Google Ads / GA4)
 const MAX_SELECT = 1;
 
 // --- normalizers ---
@@ -62,7 +62,7 @@ const normGaId = (s = '') =>
     .replace(/^customers\//, '')
     .replace(/[^\d]/g, '');
 
-// GA4 canónico: siempre "properties/<digits>"
+// ✅ GA4 CANÓNICO: siempre "properties/<digits>"
 const normGA4Id = (s = '') => {
   const raw = String(s || '').trim();
   if (!raw) return '';
@@ -87,7 +87,7 @@ function hasAnyMetaToken(metaDoc) {
 }
 
 /**
- * Separación OAuth por producto (alineado al modelo GoogleAccount.js)
+ * ✅ Separación OAuth por producto (alineado al modelo GoogleAccount.js)
  * - ADS: accessToken/refreshToken + scope
  * - GA4: ga4AccessToken/ga4RefreshToken + ga4Scope
  */
@@ -171,12 +171,12 @@ function selectedGoogleFromDocOrUser(gaDoc, user) {
 }
 
 /**
- * Selección GA4:
+ * ✅ Selección GA4 (alineado al modelo):
  * - Preferimos GoogleAccount.selectedPropertyIds (nuevo)
  * - Fallback: GoogleAccount.selectedGaPropertyId (legacy)
  * - Fallback: user.selectedGAProperties (legacy)
  *
- * Importante: NO usar defaultPropertyId como “selección”.
+ * 🚫 Importante: NO usar defaultPropertyId como “selección”.
  */
 function selectedGA4FromDocOrUser(gaDoc, user) {
   const fromDoc = Array.isArray(gaDoc?.selectedPropertyIds)
@@ -194,8 +194,8 @@ function selectedGA4FromDocOrUser(gaDoc, user) {
 }
 
 /**
- * requiredSelection:
- * - hay más de MAX_SELECT disponibles y NO hay selección
+ * connected vs requiredSelection:
+ * - requiredSelection = hay > MAX_SELECT disponibles y NO hay selección
  */
 function requiredSelectionByUX(availableCount, selectedCount) {
   return availableCount > MAX_SELECT && selectedCount === 0;
@@ -216,6 +216,7 @@ router.get('/', requireAuth, async (req, res) => {
   try {
     const uid = req.user._id;
 
+    // Carga docs (tokens/selección/defaults)
     const [metaDoc, gaDoc, shopDoc, userDoc, pixelDocs] = await Promise.all([
       MetaAccount.findOne({ $or: [{ user: uid }, { userId: uid }] })
         .select('_id ad_accounts adAccounts access_token token accessToken longLivedToken longlivedToken selectedAccountIds defaultAccountId')
@@ -225,17 +226,22 @@ router.get('/', requireAuth, async (req, res) => {
         .select(
           [
             '_id',
+            // ADS tokens + scopes
             'refreshToken',
             'accessToken',
             'scope',
+            // GA4 tokens + scopes
             'ga4RefreshToken',
             'ga4AccessToken',
             'ga4Scope',
+            // flags
             'connectedAds',
             'connectedGa4',
+            // discovery data
             'ad_accounts',
             'customers',
             'gaProperties',
+            // selections/defaults
             'selectedCustomerIds',
             'defaultCustomerId',
             'selectedPropertyIds',
@@ -262,7 +268,7 @@ router.get('/', requireAuth, async (req, res) => {
 
     const user = userDoc || req.user || {};
 
-    // ===== PIXELS / CONVERSIONS =====
+    // ===== PIXELS (NEW) =====
     const pxList = Array.isArray(pixelDocs) ? pixelDocs : [];
     const pxMeta = pxList.find((d) => d?.provider === 'meta') || null;
     const pxGoogle = pxList.find((d) => d?.provider === 'google_ads') || null;
@@ -333,11 +339,6 @@ router.get('/', requireAuth, async (req, res) => {
       user?.shopifyConnected
     );
 
-    // ===== OPTIONAL FLAGS =====
-    // Pixel / conversion ya no bloquean el onboarding.
-    const metaPixelOptional = true;
-    const googleConversionOptional = true;
-
     // ===== Payload base =====
     const status = {
       meta: {
@@ -379,9 +380,9 @@ router.get('/', requireAuth, async (req, res) => {
         connected: shopifyConnected,
       },
 
+      // ✅ NEW: pixels/conversions state
       pixels: {
         meta: {
-          optional: metaPixelOptional,
           selected: metaPixelSelected,
           confirmed: metaPixelConfirmed,
           selectedId: pxMeta?.selectedId || null,
@@ -390,7 +391,6 @@ router.get('/', requireAuth, async (req, res) => {
           confirmedAt: pxMeta?.confirmedAt || null,
         },
         googleAds: {
-          optional: googleConversionOptional,
           selected: googleConvSelected,
           confirmed: googleConvConfirmed,
           selectedId: pxGoogle?.selectedId || null,
@@ -401,7 +401,7 @@ router.get('/', requireAuth, async (req, res) => {
       },
     };
 
-    // ===== LEGACY: onboarding3.js =====
+    // === LEGACY: onboarding3.js ===
     status.google = {
       connected: !!(
         (adsOAuth && adsScopeOk) ||
@@ -412,29 +412,21 @@ router.get('/', requireAuth, async (req, res) => {
       count: status.ga4.count,
     };
 
-    /**
-     * ===== READY FLAGS =====
-     * Nueva regla:
-     * - Pixel / conversion NO bloquean readyToContinue ni readyToAnalyze
-     * - Si la cuenta está conectada y la selección principal está correcta, la fuente está lista
-     *
-     * Esto alinea backend con el nuevo onboarding inline:
-     * “sin pixel pero conectado”.
-     */
+    // ✅ READY flags (para React gating)
     status.readyToContinue = {
-      meta: metaConnected && !metaRequiredSel && status.meta.selectedCount > 0,
-      googleAds: googleAdsConnected && !gRequiredSel && status.googleAds.selectedCount > 0,
+      meta: metaConnected && !metaRequiredSel && status.meta.selectedCount > 0 && metaPixelSelected,
+      googleAds: googleAdsConnected && !gRequiredSel && status.googleAds.selectedCount > 0 && googleConvSelected,
       ga4: ga4Connected && ga4AvailIds.length > 0 && !ga4RequiredSel && status.ga4.selectedCount > 0,
     };
 
     status.readyToAnalyze = {
-      meta: metaConnected && !metaRequiredSel && status.meta.selectedCount > 0,
-      googleAds: googleAdsConnected && !gRequiredSel && status.googleAds.selectedCount > 0,
+      meta: metaConnected && !metaRequiredSel && status.meta.selectedCount > 0 && metaPixelConfirmed,
+      googleAds: googleAdsConnected && !gRequiredSel && status.googleAds.selectedCount > 0 && googleConvConfirmed,
       ga4: ga4Connected && ga4AvailIds.length > 0 && !ga4RequiredSel && status.ga4.selectedCount > 0,
     };
 
-    // Fuentes a analizar:
-    // ya no dependen de pixel/conversion confirmado porque ahora son opcionales.
+    // Fuentes a analizar (para barra/progreso)
+    // ✅ clave: para Ads SOLO si pixel/conversion ya está CONFIRMADO (Continue)
     const sourcesToAnalyze = [
       ...(status.readyToAnalyze.meta ? ['meta'] : []),
       ...(status.readyToAnalyze.googleAds ? ['google'] : []),

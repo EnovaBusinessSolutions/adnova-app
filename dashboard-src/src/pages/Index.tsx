@@ -2,6 +2,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
 import { DashboardLayout } from "@/components/DashboardLayout";
+import { PixelSetupWizard } from "@/components/PixelSetupWizard";
+
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import {
@@ -36,6 +38,7 @@ async function apiPostJson<T>(url: string, body: any) {
 }
 
 type StepState = "done" | "locked" | "todo";
+
 type PixelProvider = "meta" | "google_ads";
 
 type OnboardingStatus = {
@@ -69,6 +72,7 @@ type OnboardingStatus = {
       maxSelect: number;
     };
     shopify?: { connected: boolean };
+
     pixels?: {
       meta?: {
         selected: boolean;
@@ -85,6 +89,7 @@ type OnboardingStatus = {
         confirmedAt: string | null;
       };
     };
+
     readyToContinue?: {
       meta?: boolean;
       googleAds?: boolean;
@@ -123,6 +128,7 @@ function replaceQS(next: URLSearchParams) {
 }
 
 type ConnectKind = "meta" | "google" | null;
+type GoogleConnectProduct = "ads" | "ga4" | null;
 
 function getConnectKindFromQS(qs: URLSearchParams): ConnectKind {
   if (qs.get("meta") === "ok") return "meta";
@@ -137,6 +143,20 @@ function getSelectorFlagFromQS(qs: URLSearchParams): boolean {
   const all = qs.getAll("selector");
   const last = all.length ? String(all[all.length - 1]) : String(qs.get("selector") || "");
   return last === "1";
+}
+
+function getGoogleProductFromQS(qs: URLSearchParams): GoogleConnectProduct {
+  const all = qs.getAll("product").map((x) => String(x || "").toLowerCase());
+  const p = all.length ? all[all.length - 1] : (qs.get("product") || "").toLowerCase();
+
+  if (p === "ads") return "ads";
+  if (p === "ga4") return "ga4";
+
+  if (qs.get("ga4") === "ok") return "ga4";
+  if (qs.get("gads") === "ok") return "ads";
+  if (qs.get("ads") === "ok") return "ads";
+
+  return null;
 }
 
 function cleanConnectFlagsFromQS() {
@@ -281,7 +301,7 @@ function NeonStatus({
         <span className="relative z-[1]">Completed</span>
         <span
           aria-hidden
-          className="pointer-events-none absolute inset-0 bg-[linear-gradient(110deg,transparent,rgba(255,255,255,0.14),transparent)] translate-x-[-120%] animate-[adray-shimmer_3.4s_ease-in-out_infinite]"
+          className="pointer-events-none absolute inset-0 bg-[linear-gradient(110deg,transparent,rgba(255,255,255,0.14),transparent)] translate-x-[-120%] animate-[adrayShimmer_3.4s_ease-in-out_infinite]"
         />
       </span>
     );
@@ -307,15 +327,15 @@ function StepProgress({ step }: { step: 1 | 2 }) {
   const isStep2 = step === 2;
 
   const pillBase =
-    "inline-flex shrink-0 items-center gap-2 whitespace-nowrap rounded-full border px-3 py-1.5 text-[11px] transition-all backdrop-blur-md";
+    "inline-flex items-center gap-2 whitespace-nowrap rounded-full border px-3 py-1.5 text-[11px] transition-all";
 
   const active =
-    "border-[#B55CFF]/45 bg-[#B55CFF]/[0.12] text-white shadow-[0_0_18px_rgba(181,92,255,0.12)]";
+    "border-[#B55CFF]/45 bg-[#B55CFF]/[0.10] text-white shadow-[0_0_18px_rgba(181,92,255,0.12)]";
   const done = "border-white/10 bg-white/[0.04] text-white/82";
   const pending = "border-white/10 bg-white/[0.02] text-white/52";
 
   return (
-    <div className="no-scrollbar -mx-1 flex flex-nowrap items-center gap-2 overflow-x-auto px-1 sm:mx-0 sm:flex-wrap sm:overflow-visible sm:px-0">
+    <div className="flex flex-wrap items-center gap-2">
       <span className={[pillBase, isStep1 ? active : done].join(" ")}>
         <span className="inline-flex h-1.5 w-1.5 rounded-full bg-[#B55CFF]" />
         Step 1: Activate Data
@@ -361,6 +381,7 @@ function StepRow({
     accent === "emerald"
       ? {
           softBorder: "border-[#4FE3C1]/22",
+          softBg: "bg-[#4FE3C1]/10",
           softGlow: "shadow-[0_0_22px_rgba(79,227,193,0.10)]",
           hoverBorder: "hover:border-[#4FE3C1]/32",
           hoverGlow: "hover:shadow-[0_0_28px_rgba(79,227,193,0.10)]",
@@ -369,11 +390,11 @@ function StepRow({
             "border-[#4FE3C1]/35 bg-[#4FE3C1]/[0.14] text-white shadow-[0_0_18px_rgba(79,227,193,0.16)] hover:bg-[#4FE3C1]/[0.16]",
           glowTop: "bg-[#4FE3C1]/10",
           glowBottom: "bg-[#B55CFF]/8",
-          beam: "from-[#4FE3C1]/14 via-white/[0.05] to-transparent",
         }
       : accent === "blue"
         ? {
             softBorder: "border-[#7CC8FF]/22",
+            softBg: "bg-[#7CC8FF]/10",
             softGlow: "shadow-[0_0_22px_rgba(124,200,255,0.10)]",
             hoverBorder: "hover:border-[#7CC8FF]/32",
             hoverGlow: "hover:shadow-[0_0_28px_rgba(124,200,255,0.10)]",
@@ -382,10 +403,10 @@ function StepRow({
               "border-[#7CC8FF]/35 bg-[#7CC8FF]/[0.14] text-white shadow-[0_0_18px_rgba(124,200,255,0.16)] hover:bg-[#7CC8FF]/[0.16]",
             glowTop: "bg-[#7CC8FF]/10",
             glowBottom: "bg-[#B55CFF]/8",
-            beam: "from-[#7CC8FF]/14 via-white/[0.05] to-transparent",
           }
         : {
             softBorder: "border-[#B55CFF]/22",
+            softBg: "bg-[#B55CFF]/10",
             softGlow: "shadow-[0_0_22px_rgba(181,92,255,0.08)]",
             hoverBorder: "hover:border-[#B55CFF]/28",
             hoverGlow: "hover:shadow-[0_0_28px_rgba(181,92,255,0.08)]",
@@ -394,14 +415,13 @@ function StepRow({
               "border-[#B55CFF]/38 bg-[#B55CFF]/[0.14] text-white shadow-[0_0_18px_rgba(181,92,255,0.18)] hover:bg-[#B55CFF]/[0.16]",
             glowTop: "bg-[#B55CFF]/10",
             glowBottom: "bg-[#4FE3C1]/8",
-            beam: "from-[#B55CFF]/14 via-white/[0.05] to-transparent",
           };
 
   return (
     <div
       className={[
-        "group relative overflow-hidden rounded-[26px] border p-4 sm:rounded-[30px] sm:p-5 transition-all backdrop-blur-md",
-        "bg-[linear-gradient(180deg,rgba(18,14,28,0.70)_0%,rgba(12,12,16,0.86)_100%)]",
+        "group relative overflow-hidden rounded-[28px] border p-4 sm:p-5 transition-all",
+        "bg-white/[0.02] hover:bg-white/[0.03]",
         isDone
           ? `${theme.softBorder} ${theme.softGlow}`
           : isLocked
@@ -412,16 +432,13 @@ function StepRow({
       <div className="pointer-events-none absolute inset-0 opacity-0 transition-opacity duration-300 group-hover:opacity-100">
         <div className={["absolute -top-16 right-0 h-44 w-44 rounded-full blur-3xl", theme.glowTop].join(" ")} />
         <div className={["absolute -bottom-16 left-0 h-40 w-40 rounded-full blur-3xl", theme.glowBottom].join(" ")} />
-        <div className={`absolute inset-y-0 left-0 w-[42%] bg-gradient-to-r ${theme.beam} opacity-80`} />
       </div>
-
-      <div className="pointer-events-none absolute inset-0 rounded-[26px] border border-white/[0.03] sm:rounded-[30px]" />
 
       <div className="relative hidden sm:flex items-start justify-between gap-4">
         <div className="flex min-w-0 items-start gap-4">
           <div
             className={[
-              "flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border backdrop-blur-md",
+              "flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border",
               isDone ? theme.iconWrap : "border-white/10 bg-white/[0.03]",
             ].join(" ")}
           >
@@ -444,7 +461,7 @@ function StepRow({
           disabled={isLocked || !!ctaDisabled}
           onClick={onCta}
           className={[
-            "h-11 shrink-0 rounded-2xl border px-4 backdrop-blur-md",
+            "h-11 shrink-0 rounded-2xl border px-4",
             "disabled:opacity-100 disabled:cursor-default",
             isDone && !!ctaDisabled
               ? theme.buttonDone
@@ -460,7 +477,7 @@ function StepRow({
         <div className="flex items-start gap-3">
           <div
             className={[
-              "flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border backdrop-blur-md",
+              "flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border",
               isDone ? theme.iconWrap : "border-white/10 bg-white/[0.03]",
             ].join(" ")}
           >
@@ -487,7 +504,7 @@ function StepRow({
             disabled={isLocked || !!ctaDisabled}
             onClick={onCta}
             className={[
-              "h-11 w-full justify-center rounded-2xl border backdrop-blur-md",
+              "h-11 w-full justify-center rounded-2xl border",
               "disabled:opacity-100 disabled:cursor-default",
               isDone && !!ctaDisabled
                 ? theme.buttonDone
@@ -508,8 +525,7 @@ export default function Index() {
 
   const [loadingConnections, setLoadingConnections] = useState(true);
   const [status, setStatus] = useState<OnboardingStatus | null>(null);
-  const [asmUiLoading, setAsmUiLoading] = useState(false);
-  const [asmUiError, setAsmUiError] = useState<string | null>(null);
+  const [pixelWizardOpen, setPixelWizardOpen] = useState(false);
 
   const refreshConnections = async () => {
     setLoadingConnections(true);
@@ -545,28 +561,9 @@ export default function Index() {
   const googleConvSelected = !!st?.pixels?.googleAds?.selected;
   const googleConvConfirmed = !!st?.pixels?.googleAds?.confirmed;
 
-  const metaReadyToContinue = !!st?.readyToContinue?.meta;
-  const adsReadyToContinue = !!st?.readyToContinue?.googleAds;
-  const gaReadyToContinue = !!st?.readyToContinue?.ga4;
-
-  const metaReadyToAnalyze = !!st?.readyToAnalyze?.meta;
-  const adsReadyToAnalyze = !!st?.readyToAnalyze?.googleAds;
-  const gaReadyToAnalyze = !!st?.readyToAnalyze?.ga4;
-
-  const metaReady =
-    metaReadyToAnalyze ||
-    metaReadyToContinue ||
-    (metaConnected && hasMetaSelection && metaPixelConfirmed);
-
-  const adsReady =
-    adsReadyToAnalyze ||
-    adsReadyToContinue ||
-    (googleAdsConnected && hasAdsSelection && googleConvConfirmed);
-
-  const gaReady =
-    gaReadyToAnalyze ||
-    gaReadyToContinue ||
-    (ga4Connected && hasGa4Selection);
+  const metaReady = !!st?.readyToAnalyze?.meta || (metaConnected && hasMetaSelection && metaPixelConfirmed);
+  const adsReady = !!st?.readyToAnalyze?.googleAds || (googleAdsConnected && hasAdsSelection && googleConvConfirmed);
+  const gaReady = !!st?.readyToAnalyze?.ga4 || (ga4Connected && hasGa4Selection);
 
   const anyReady = metaReady || adsReady || gaReady;
 
@@ -602,6 +599,9 @@ export default function Index() {
 
   const connectReturnToGoogleGa4 = `${base}/?selector=1&google=ok&product=ga4`;
   const connectGoogleGa4Url = `/auth/google/ga/connect?returnTo=${encodeURIComponent(connectReturnToGoogleGa4)}`;
+
+  const [asmUiLoading, setAsmUiLoading] = useState(false);
+  const [asmUiError, setAsmUiError] = useState<string | null>(null);
 
   const openSelectorFor = async (only: ASMOnly, required?: ASMRequired, showAll = false) => {
     setAsmUiError(null);
@@ -732,6 +732,7 @@ export default function Index() {
 
     const isMobile = window.innerWidth < 768;
     if (!isMobile) return;
+
     if (!anyReady) return;
 
     const qs = getQS();
@@ -772,36 +773,11 @@ export default function Index() {
     const adsNeedsPick = googleAdsConnected && (requiredSelectionSafe.googleAds || (hasAdsMulti && !hasAdsSelection));
     const ga4NeedsPick = ga4Connected && (requiredSelectionSafe.ga4 || (hasGa4Multi && !hasGa4Selection));
 
-    const metaCanSkipPixel = metaReadyToContinue && !metaPixelSelected && !metaPixelConfirmed;
-    const adsCanSkipConversion = adsReadyToContinue && !googleConvSelected && !googleConvConfirmed;
+    const metaNeedsPixel = metaConnected && hasMetaSelection && !metaPixelSelected && !metaReady;
+    const adsNeedsConv = googleAdsConnected && hasAdsSelection && !googleConvSelected && !adsReady;
 
-    const metaNeedsPixel =
-      metaConnected &&
-      hasMetaSelection &&
-      !metaReady &&
-      !metaCanSkipPixel &&
-      !metaPixelSelected;
-
-    const adsNeedsConv =
-      googleAdsConnected &&
-      hasAdsSelection &&
-      !adsReady &&
-      !adsCanSkipConversion &&
-      !googleConvSelected;
-
-    const metaNeedsConfirm =
-      metaConnected &&
-      hasMetaSelection &&
-      !metaReady &&
-      metaPixelSelected &&
-      !metaPixelConfirmed;
-
-    const adsNeedsConfirm =
-      googleAdsConnected &&
-      hasAdsSelection &&
-      !adsReady &&
-      googleConvSelected &&
-      !googleConvConfirmed;
+    const metaNeedsConfirm = metaConnected && hasMetaSelection && metaPixelSelected && !metaPixelConfirmed && !metaReady;
+    const adsNeedsConfirm = googleAdsConnected && hasAdsSelection && googleConvSelected && !googleConvConfirmed && !adsReady;
 
     const metaIsPending = !metaReady;
     const adsIsPending = !adsReady;
@@ -839,9 +815,7 @@ export default function Index() {
             : metaNeedsPixel
               ? "Select your conversion pixel to complete the setup."
               : "Sync your Meta Ads account to unlock campaign and performance insights."
-          : metaCanSkipPixel
-            ? "Campaign and performance data are synced. You can activate a pixel later if needed."
-            : "Campaign and performance data are synced and available for AI analysis.",
+          : "Campaign and performance data are synced and available for AI analysis.",
         icon: <Infinity className="h-4 w-4 text-[#B55CFF]" />,
         state: metaReady ? ("done" as StepState) : ("todo" as StepState),
         todoLabel: metaIsPending ? "Pending" : "Completed",
@@ -849,6 +823,7 @@ export default function Index() {
         ctaDisabled: metaReady,
         onCta: () => {
           if (metaReady) return;
+
           if (metaNeedsPick) return openSelectorFor("meta", { meta: true }, true);
 
           if (!metaConnected) {
@@ -857,11 +832,13 @@ export default function Index() {
           }
 
           if (metaNeedsPixel) return openPixelSelectorFor("metaPixel");
+
           if (metaNeedsConfirm) return confirmProvider("meta");
 
           return openSelectorFor("meta", { meta: true }, true);
         },
       },
+
       {
         key: "google_ads",
         title: "Google Ads",
@@ -871,9 +848,7 @@ export default function Index() {
             : adsNeedsConv
               ? "Select your conversion action to complete the setup."
               : "Sync your Google Ads account to unlock campaign and conversion insights."
-          : adsCanSkipConversion
-            ? "Campaign data is synced. You can activate a conversion later if needed."
-            : "Campaign and conversion data are synced and ready for AI optimization.",
+          : "Campaign and conversion data are synced and ready for AI optimization.",
         icon: <Search className="h-4 w-4 text-[#B55CFF]" />,
         state: adsReady ? ("done" as StepState) : ("todo" as StepState),
         todoLabel: adsIsPending ? "Pending" : "Completed",
@@ -881,6 +856,7 @@ export default function Index() {
         ctaDisabled: adsReady,
         onCta: () => {
           if (adsReady) return;
+
           if (adsNeedsPick) return openSelectorFor("googleAds", { googleAds: true }, true);
 
           if (!googleAdsConnected) {
@@ -889,11 +865,13 @@ export default function Index() {
           }
 
           if (adsNeedsConv) return openPixelSelectorFor("googleConversion");
+
           if (adsNeedsConfirm) return confirmProvider("google_ads");
 
           return openSelectorFor("googleAds", { googleAds: true }, true);
         },
       },
+
       {
         key: "google_analytics",
         title: "Google Analytics",
@@ -933,190 +911,252 @@ export default function Index() {
     metaPixelConfirmed,
     googleConvSelected,
     googleConvConfirmed,
-    metaReadyToContinue,
-    adsReadyToContinue,
   ]);
 
   return (
     <DashboardLayout>
-      <div className="min-h-screen overflow-x-hidden bg-[#050507]">
-        <div className="overflow-x-hidden p-2.5 sm:p-6">
-          <Card className="glass-effect mx-auto w-full max-w-full overflow-hidden rounded-[30px] border border-white/[0.06] shadow-[0_20px_80px_rgba(0,0,0,0.45)] sm:rounded-[34px]">
+      <div className="min-h-screen bg-[#0B0B0D]">
+        <div className="p-4 sm:p-6">
+          <Card className="glass-effect overflow-hidden border-[#2C2530] bg-[#0F1012]">
             <div className="relative">
-              <div className="pointer-events-none absolute inset-0 opacity-70">
-                <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-[#B55CFF]/35 to-transparent" />
-                <div className="absolute -top-20 left-[8%] h-72 w-72 rounded-full bg-[#B55CFF]/10 blur-3xl" />
-                <div className="absolute top-[22%] right-[4%] h-72 w-72 rounded-full bg-[#4FE3C1]/8 blur-3xl" />
-                <div className="absolute bottom-0 left-1/2 h-60 w-[44rem] -translate-x-1/2 rounded-full bg-[#B55CFF]/8 blur-3xl" />
+              <div className="absolute inset-0 opacity-50 pointer-events-none">
+                <div className="absolute -top-28 -right-20 h-80 w-80 rounded-full blur-3xl bg-[#B55CFF]/12" />
+                <div className="absolute top-32 left-0 h-72 w-72 rounded-full blur-3xl bg-[#4FE3C1]/8" />
+                <div className="absolute -bottom-24 right-1/4 h-72 w-72 rounded-full blur-3xl bg-white/[0.03]" />
               </div>
 
-              <CardContent className="relative min-w-0 max-w-full p-2.5 sm:p-6">
-                <div className="adray-dashboard-shell relative min-w-0 max-w-full overflow-x-hidden">
-                  <div className="adray-hero-bg relative min-w-0 max-w-full overflow-hidden rounded-[30px] border border-white/[0.08] bg-[linear-gradient(180deg,rgba(18,14,28,0.94)_0%,rgba(10,10,14,0.98)_100%)] p-3.5 sm:rounded-[36px] sm:p-8">
-                    <div className="adray-hero-grid" />
-                    <div className="adray-hero-beam" />
+              <CardContent className="relative p-4 sm:p-6">
+                <style>{`
+                  @keyframes adrayShimmer {
+                    0% { transform: translateX(-120%); opacity: 0; }
+                    20% { opacity: .75; }
+                    60% { opacity: .75; }
+                    100% { transform: translateX(120%); opacity: 0; }
+                  }
 
-                    <span className="adray-particle left-[12%] top-[16%]" style={{ animationDelay: "0s" }} />
-                    <span className="adray-particle left-[18%] top-[70%]" style={{ animationDelay: ".8s" }} />
-                    <span className="adray-particle left-[62%] top-[22%]" style={{ animationDelay: "1.4s" }} />
-                    <span className="adray-particle left-[74%] top-[62%]" style={{ animationDelay: "2s" }} />
-                    <span className="adray-particle left-[48%] top-[78%]" style={{ animationDelay: "2.8s" }} />
+                  @keyframes adrayPulseFloat {
+                    0% { transform: translateY(0px); }
+                    50% { transform: translateY(-8px); }
+                    100% { transform: translateY(0px); }
+                  }
 
-                    <div className="relative z-10">
-                      <div className="mb-4">
-                        <StepProgress step={1} />
-                      </div>
+                  @keyframes adrayGlowSweep {
+                    0% { transform: translateX(-140%); opacity: 0; }
+                    25% { opacity: .7; }
+                    70% { opacity: .7; }
+                    100% { transform: translateX(140%); opacity: 0; }
+                  }
 
-                      <div className="min-w-0 max-w-[860px]">
-                        <div className="inline-flex max-w-full items-center gap-2 rounded-full border border-[#B55CFF]/20 bg-[#B55CFF]/10 px-3 py-1 text-[11px] text-[#E7D3FF] backdrop-blur-md">
-                          <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
-                          <span className="truncate">
-                            {loadingConnections
-                              ? "Checking your connected sources"
-                              : allReady
-                                ? "Your data sources are fully synchronized"
-                                : "Activate your data sources to unlock AI-ready insights"}
-                          </span>
-                        </div>
+                  @keyframes adrayReadyLift {
+                    0%, 100% { transform: translateY(0px) scale(1); }
+                    50% { transform: translateY(-1px) scale(1.01); }
+                  }
 
-                        <div className="mt-5 flex items-start gap-4">
-                          <div className="hidden h-12 w-12 shrink-0 items-center justify-center rounded-2xl border border-[#B55CFF]/20 bg-[#B55CFF]/10 shadow-[0_0_24px_rgba(181,92,255,0.12)] sm:inline-flex">
-                            <Sparkles className="h-5 w-5 text-[#D2A7FF]" />
-                          </div>
+                  .adray-hero-bg::before {
+                    content: "";
+                    position: absolute;
+                    inset: -10%;
+                    background:
+                      radial-gradient(720px 260px at 12% 18%, rgba(181,92,255,0.18), transparent 60%),
+                      radial-gradient(620px 220px at 88% 18%, rgba(79,227,193,0.12), transparent 60%),
+                      radial-gradient(660px 260px at 50% 100%, rgba(255,255,255,0.05), transparent 65%);
+                    animation: adrayPulseFloat 7s ease-in-out infinite;
+                  }
 
-                          <div className="min-w-0">
-                            <p className="text-[11px] uppercase tracking-[0.24em] text-white/38">
-                              Step 1 · Activation
-                            </p>
+                  .adray-hero-bg::after {
+                    content: "";
+                    position: absolute;
+                    top: 0;
+                    bottom: 0;
+                    left: -32%;
+                    width: 32%;
+                    background: linear-gradient(90deg, transparent, rgba(181,92,255,0.12), transparent);
+                    animation: adrayGlowSweep 4.5s ease-in-out infinite;
+                  }
 
-                            <h1 className="mt-3 max-w-[760px] text-[1.82rem] font-extrabold leading-[0.96] tracking-[-0.045em] text-white/95 sm:text-[3.65rem]">
-                              {heroTitle}
-                            </h1>
+                  .no-scrollbar::-webkit-scrollbar { display: none; }
+                  .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+                `}</style>
 
-                            <p className="mt-4 max-w-3xl text-[13px] leading-6 text-white/56 sm:text-[16px] sm:leading-7">
-                              {heroDesc}
-                            </p>
-
-                            <div className="mt-5 text-sm text-white/42">
-                              {loadingConnections ? "Loading…" : `${completedCount} of ${totalCount} connected`}
-                            </div>
-                          </div>
-                        </div>
-
-                        {asmUiError ? (
-                          <div className="mt-4 rounded-2xl border border-red-400/20 bg-red-400/10 px-4 py-3 text-sm text-red-200">
-                            {asmUiError}
-                          </div>
-                        ) : null}
-
-                        <div className="adray-progress-shell mt-5 min-w-0 max-w-full rounded-[24px] border border-white/[0.08] p-3.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)] sm:mt-7 sm:rounded-[26px] sm:p-5">
-                          <div className="flex items-center justify-between gap-3">
-                            <div className="min-w-0">
-                              <p className="text-sm font-semibold text-white/92">Progress</p>
-                              <p className="mt-1 text-xs text-white/45">
-                                {loadingConnections
-                                  ? "Loading your setup status..."
-                                  : `${pct}% connected • ${completedCount}/${totalCount}`}
-                              </p>
-                            </div>
-
-                            <div className="shrink-0 text-right text-xs text-white/55">
-                              {loadingConnections ? "Syncing..." : `${pct}%`}
-                            </div>
-                          </div>
-
-                          <div className="mt-4 h-2.5 w-full overflow-hidden rounded-full bg-white/10">
-                            <div
-                              className="h-full rounded-full bg-gradient-to-r from-[#B55CFF] via-[#C87CFF] to-[#4FE3C1] shadow-[0_0_24px_rgba(181,92,255,0.22)] transition-all duration-500"
-                              style={{ width: `${loadingConnections ? 10 : pct}%` }}
-                            />
-                          </div>
-
-                          <div className="mt-4 -mx-1 sm:mx-0">
-                            <div className="no-scrollbar flex gap-2 overflow-x-auto px-1 sm:flex-wrap sm:px-0">
-                              <Pill label="Meta Ads" done={metaReady} />
-                              <Pill label="Google Ads" done={adsReady} />
-                              <Pill label="Google Analytics" done={gaReady} />
-                            </div>
-                          </div>
-                        </div>
-                      </div>
+                  <div className="relative overflow-hidden rounded-[32px] border border-white/10 bg-white/[0.02] p-5 sm:p-8 adray-hero-bg">
+                  <div className="relative z-10">
+                    <div className="mb-5">
+                      <StepProgress step={1} />
                     </div>
-                  </div>
 
-                  {asmUiLoading ? (
-                    <div className="mt-4 rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-3 text-sm text-white/60">
-                      Opening selector...
-                    </div>
-                  ) : null}
-
-                  <div className="mt-5 grid grid-cols-1 gap-4 sm:mt-6">
-                    {steps.map((s: any, i) => (
-                      <StepRow
-                        key={s.key}
-                        index={i + 1}
-                        icon={s.icon}
-                        title={s.title}
-                        desc={s.desc}
-                        state={s.state}
-                        todoLabel={s.todoLabel}
-                        ctaLabel={s.ctaLabel}
-                        onCta={s.onCta}
-                        ctaDisabled={loadingConnections || !!s.ctaDisabled}
-                        accent={
-                          s.key === "meta"
-                            ? "emerald"
-                            : s.key === "google_ads"
-                              ? "purple"
-                              : "blue"
-                        }
-                      />
-                    ))}
-                  </div>
-
-                  {anyReady ? (
-                    <div
-                      ref={readyCtaRef}
-                      className="relative mt-6 overflow-hidden rounded-[24px] border border-white/[0.08] bg-[linear-gradient(180deg,rgba(18,14,28,0.74)_0%,rgba(11,11,16,0.92)_100%)] p-4 backdrop-blur-md sm:rounded-[30px] sm:p-6"
-                    >
-                      <div className="pointer-events-none absolute inset-0 opacity-60">
-                        <div className="absolute -top-20 right-0 h-56 w-56 rounded-full bg-[#B55CFF]/12 blur-3xl" />
-                        <div className="absolute -bottom-20 left-0 h-48 w-48 rounded-full bg-[#4FE3C1]/8 blur-3xl" />
-                        <div className="absolute inset-0 translate-x-[-120%] bg-[linear-gradient(110deg,transparent,rgba(255,255,255,0.05),transparent)] animate-[adray-shimmer_3.4s_ease-in-out_infinite]" />
+                    <div className="max-w-4xl">
+                      <div className="inline-flex items-center gap-2 rounded-full border border-[#B55CFF]/20 bg-[#B55CFF]/10 px-3 py-1 text-xs text-[#E7D3FF]">
+                        <CheckCircle2 className="h-3.5 w-3.5" />
+                        {loadingConnections
+                          ? "Checking your connected sources"
+                          : allReady
+                            ? "Your data sources are fully synchronized"
+                            : "Activate your data sources to unlock AI-ready insights"}
                       </div>
 
-                      <div className="relative flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+                      <div className="mt-5 flex items-start gap-4">
+                        <div className="hidden sm:inline-flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border border-[#B55CFF]/20 bg-[#B55CFF]/10">
+                          <Sparkles className="h-5 w-5 text-[#D2A7FF]" />
+                        </div>
+
                         <div className="min-w-0">
-                          <div className="flex items-center gap-3">
-                            <span className="relative inline-flex h-10 w-10 items-center justify-center rounded-2xl border border-[#B55CFF]/20 bg-[#B55CFF]/10 shadow-[0_0_20px_rgba(181,92,255,0.12)]">
-                              <Sparkle className="h-4 w-4 text-[#D2A7FF]" />
-                              <span className="absolute -right-1 -top-1 h-2.5 w-2.5 rounded-full border border-[#0F1012] bg-[#4FE3C1]" />
-                            </span>
+                          <p className="text-[11px] uppercase tracking-[0.18em] text-white/40">
+                            Step 1 · Activation
+                          </p>
 
-                            <div className="min-w-0">
-                              <p className="text-base font-semibold text-white/94">Your data is ready</p>
-                              <p className="mt-1 max-w-2xl text-sm leading-6 text-white/58">{readyDesc}</p>
-                            </div>
+                          <h1 className="mt-2 text-3xl font-extrabold leading-[1.04] tracking-tight text-white/95 sm:text-5xl">
+                            {heroTitle}
+                          </h1>
+
+                          <p className="mt-4 max-w-3xl text-sm leading-7 text-white/60 sm:text-base">
+                            {heroDesc}
+                          </p>
+
+                          <div className="mt-4 text-sm text-white/42">
+                            {loadingConnections ? "Loading…" : `${completedCount} of ${totalCount} connected`}
+                          </div>
+                        </div>
+                      </div>
+
+                      {asmUiError ? (
+                        <div className="mt-4 rounded-2xl border border-red-400/20 bg-red-400/10 px-4 py-3 text-sm text-red-200">
+                          {asmUiError}
+                        </div>
+                      ) : null}
+
+                      <div className="mt-6 rounded-[24px] border border-white/10 bg-[#090A0D]/80 p-4 sm:p-5">
+                        <div className="flex items-center justify-between gap-3">
+                          <div>
+                            <p className="text-sm font-semibold text-white/92">Progress</p>
+                            <p className="mt-1 text-xs text-white/45">
+                              {loadingConnections ? "Loading your setup status..." : `${pct}% connected • ${completedCount}/${totalCount}`}
+                            </p>
+                          </div>
+
+                          <div className="text-right text-xs text-white/55">
+                            {loadingConnections ? "Syncing..." : `${pct}%`}
                           </div>
                         </div>
 
-                        <Button
-                          onClick={() => nav("/laststep")}
-                          className="h-12 w-full rounded-2xl bg-[#B55CFF] px-5 text-white shadow-[0_0_24px_rgba(181,92,255,0.24)] transition-all hover:bg-[#A664FF] md:w-auto animate-[adray-ready-lift_1.5s_ease-in-out_infinite]"
-                        >
-                          <span className="mr-2">Use in AI</span>
-                          <Settings2 className="mr-1 h-4 w-4 opacity-90" />
-                          <ArrowRight className="ml-1 h-4 w-4" />
-                        </Button>
+                        <div className="mt-4 h-2.5 w-full overflow-hidden rounded-full bg-white/10">
+                          <div
+                            className="h-full rounded-full bg-gradient-to-r from-[#B55CFF] via-[#C87CFF] to-[#4FE3C1] transition-all duration-500"
+                            style={{ width: `${loadingConnections ? 10 : pct}%` }}
+                          />
+                        </div>
+
+                        <div className="mt-4 -mx-1 sm:mx-0">
+                          <div className="no-scrollbar flex gap-2 overflow-x-auto px-1 sm:flex-wrap sm:px-0">
+                            <Pill label="Meta Ads" done={metaReady} />
+                            <Pill label="Google Ads" done={adsReady} />
+                            <Pill label="Google Analytics" done={gaReady} />
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="mt-5 overflow-hidden rounded-[24px] border border-white/[0.08] bg-[linear-gradient(180deg,rgba(18,14,28,0.72)_0%,rgba(10,10,14,0.88)_100%)] p-4 backdrop-blur-md sm:mt-6 sm:rounded-[28px] sm:p-5">
+                        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+                          <div className="min-w-0">
+                            <div className="inline-flex items-center gap-2 rounded-full border border-[#B55CFF]/18 bg-[#B55CFF]/10 px-3 py-1 text-[11px] uppercase tracking-[0.22em] text-[#E6D2FF]">
+                              <Search className="h-3.5 w-3.5" />
+                              Guided Pixel Setup
+                            </div>
+
+                            <h2 className="mt-3 text-[1.1rem] font-semibold tracking-[-0.03em] text-white sm:text-[1.28rem]">
+                              Connect your website pixel
+                            </h2>
+                            <p className="mt-2 max-w-2xl text-sm leading-6 text-white/56">
+                              Detect your store type and get a guided install flow for the Adray pixel
+                              without leaving this page.
+                            </p>
+                          </div>
+
+                          <Button
+                            onClick={() => setPixelWizardOpen(true)}
+                            className="h-11 rounded-2xl bg-[#B55CFF] px-5 text-white shadow-[0_0_24px_rgba(181,92,255,0.22)] transition-all hover:bg-[#A664FF] md:w-auto"
+                          >
+                            <span>Connect Pixel</span>
+                            <ArrowRight className="h-4 w-4" />
+                          </Button>
+                        </div>
                       </div>
                     </div>
-                  ) : null}
+                  </div>
                 </div>
+
+                {asmUiLoading ? (
+                  <div className="mt-4 rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-3 text-sm text-white/60">
+                    Opening selector...
+                  </div>
+                ) : null}
+
+                <div className="mt-6 grid grid-cols-1 gap-4">
+  {steps.map((s: any, i) => (
+    <StepRow
+      key={s.key}
+      index={i + 1}
+      icon={s.icon}
+      title={s.title}
+      desc={s.desc}
+      state={s.state}
+      todoLabel={s.todoLabel}
+      ctaLabel={s.ctaLabel}
+      onCta={s.onCta}
+      ctaDisabled={loadingConnections || !!s.ctaDisabled}
+      accent={
+        s.key === "meta"
+          ? "emerald"
+          : s.key === "google_ads"
+            ? "purple"
+            : "blue"
+      }
+    />
+  ))}
+</div>
+
+                {anyReady ? (
+                  <div
+                    ref={readyCtaRef}
+                    className="relative mt-6 overflow-hidden rounded-[28px] border border-white/10 bg-white/[0.03] p-5 sm:p-6"
+                  >
+                    <div className="pointer-events-none absolute inset-0 opacity-60">
+                      <div className="absolute -top-20 right-0 h-56 w-56 rounded-full blur-3xl bg-[#B55CFF]/12" />
+                      <div className="absolute -bottom-20 left-0 h-48 w-48 rounded-full blur-3xl bg-[#4FE3C1]/8" />
+                      <div className="absolute inset-0 bg-[linear-gradient(110deg,transparent,rgba(255,255,255,0.05),transparent)] translate-x-[-120%] animate-[adrayShimmer_3.4s_ease-in-out_infinite]" />
+                    </div>
+
+                    <div className="relative flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-3">
+                          <span className="relative inline-flex h-10 w-10 items-center justify-center rounded-2xl border border-[#B55CFF]/20 bg-[#B55CFF]/10 shadow-[0_0_20px_rgba(181,92,255,0.12)]">
+                            <Sparkle className="h-4 w-4 text-[#D2A7FF]" />
+                            <span className="absolute -right-1 -top-1 h-2.5 w-2.5 rounded-full border border-[#0F1012] bg-[#4FE3C1]" />
+                          </span>
+
+                          <div>
+                            <p className="text-base font-semibold text-white/94">Your data is ready</p>
+                            <p className="mt-1 max-w-2xl text-sm leading-6 text-white/58">{readyDesc}</p>
+                          </div>
+                        </div>
+                      </div>
+
+                      <Button
+                        onClick={() => nav("/laststep")}
+                        className="h-12 w-full rounded-2xl bg-[#B55CFF] px-5 text-white shadow-[0_0_24px_rgba(181,92,255,0.24)] transition-all hover:bg-[#A664FF] md:w-auto animate-[adrayReadyLift_1.5s_ease-in-out_infinite]"
+                      >
+                        <span className="mr-2">Use in AI</span>
+                        <Settings2 className="mr-1 h-4 w-4 opacity-90" />
+                        <ArrowRight className="ml-1 h-4 w-4" />
+                      </Button>
+                    </div>
+                  </div>
+                ) : null}
               </CardContent>
             </div>
           </Card>
         </div>
       </div>
+      <PixelSetupWizard open={pixelWizardOpen} onOpenChange={setPixelWizardOpen} />
     </DashboardLayout>
   );
 }
