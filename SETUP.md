@@ -2,88 +2,79 @@
 
 Guía para clonar e inicializar el proyecto desde cero.
 
-## 1. Clonar el repositorio principal
+## 1. Clonar el repositorio
 
 ```bash
 git clone https://github.com/EnovaBusinessSolutions/adnova-app.git
 cd adnova-app
 ```
 
-## 2. Inicializar todos los submódulos
+## 2. Instalar dependencias
 
 ```bash
-git submodule update --init --recursive
+# Backend (raíz)
+npm install
+
+# Dashboard
+cd dashboard-src && npm install && cd ..
+
+# Landing
+cd landing-adray && npm install && cd ..
 ```
 
-**Nota:** Si el submódulo `plan-src` falla con `Repository not found`, es porque ese repositorio no existe o no tienes acceso. Puedes continuar con el resto; los demás submódulos se clonarán correctamente.
-
-## 3. Si las carpetas de submódulos aparecen vacías
-
-A veces los submódulos se inicializan pero el directorio de trabajo queda vacío (archivos marcados como eliminados). Para restaurarlos, ejecuta en cada submódulo:
+## 3. Configurar variables de entorno
 
 ```bash
-# bookcall-src
-cd bookcall-src
-git reset --hard HEAD
-cd ..
-
-# dashboard-src
-cd dashboard-src
-git reset --hard HEAD
-cd ..
-
-# saas-landing
-cd saas-landing
-git reset --hard HEAD
-cd ..
-
-# support-src
-cd support-src
-git reset --hard HEAD
-cd ..
+cp .env.example .env
+# Llenar los valores en .env
 ```
 
-O en PowerShell, de una vez:
-
-```powershell
-foreach ($sub in @("bookcall-src", "dashboard-src", "saas-landing", "support-src")) {
-    Push-Location $sub
-    git reset --hard HEAD
-    Pop-Location
-}
-```
-
-## 4. Submódulos del proyecto
-
-| Submódulo    | URL | Notas |
-|--------------|-----|-------|
-| saas-landing | https://github.com/EnovaBusinessSolutions/landingpagesaas-html.git | |
-| dashboard-src | https://github.com/EnovaBusinessSolutions/adnova-ai-dashboard-full.git | |
-| support-src | https://github.com/EnovaBusinessSolutions/adnova-ai-support | |
-| bookcall-src | https://github.com/EnovaBusinessSolutions/bookcall-adnova.git | |
-| plan-src | https://github.com/EnovaBusinessSolutions/adnova-plan-zen-1.git | ⚠️ Repo no accesible actualmente |
-
-## 5. Obtener últimas actualizaciones
-
-Cuando el proyecto ya esté clonado y quieras traer los últimos cambios:
+## 4. Generar Prisma client
 
 ```bash
-# Repo principal
-git pull
-
-# Todos los submódulos (a la versión registrada en el padre)
-git submodule update --init --recursive
-
-# O últimas versiones de cada submódulo
-git submodule update --remote --merge
+npm run prisma:generate
 ```
 
-## 6. Verificar estado de submódulos
+## 5. Correr en desarrollo
 
 ```bash
-git submodule status
+npm run dev
 ```
 
-- ` ` (espacio): submódulo en la versión esperada
-- `-`: submódulo no inicializado
-- `+`: submódulo en un commit distinto al registrado en el padre
+Esto levanta:
+- Backend con hot reload (nodemon) en `localhost:3000`
+- Dashboard dev server en `localhost:5173`
+- Landing dev server
+
+## 6. Build para producción
+
+```bash
+npm run build
+```
+
+## Estructura del proyecto
+
+| Directorio | Descripción |
+|---|---|
+| `backend/` | API Express + servicios + jobs |
+| `dashboard-src/` | Dashboard React+Vite (antes submodulo) |
+| `landing-adray/` | Landing page (antes submodulo) |
+| `bookcall-src/` | Página de booking (antes submodulo) |
+| `support-src/` | Página de soporte (antes submodulo) |
+| `saas-landing/` | Landing SaaS legacy (antes submodulo) |
+| `login-src/` | Login Vite+TS |
+| `frontend/` | Widget connector |
+| `public/` | Assets estáticos y builds compilados |
+
+## Branching
+
+```
+main              ← producción
+  └─ german/dev   ← staging
+       ├─ santiago/dev
+       ├─ jose/dev
+       └─ german/feature
+```
+
+- PR de branch personal → `german/dev` (staging)
+- PR de `german/dev` → `main` (producción)

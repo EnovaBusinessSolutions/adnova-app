@@ -4,8 +4,7 @@ services:
     env: node
     branch: german/dev
     autoDeploy: true
-    # Submódulos (p. ej. landing-adray): sin esto el directorio queda vacío y build:landing falla o queda desactualizado.
-    buildCommand: git submodule update --init --recursive && npm ci && npm run build:landing && npm run build:dashboard && npx prisma generate --schema=backend/prisma/schema.prisma
+    buildCommand: npm ci && npm run build:landing && npm run build:dashboard && npx prisma generate --schema=backend/prisma/schema.prisma
     startCommand: npm run prisma:push && npm run db:backfill:layer45 && node backend/index.js
     envVars:
       - key: NODE_VERSION
