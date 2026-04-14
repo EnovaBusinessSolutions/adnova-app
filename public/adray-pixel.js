@@ -913,14 +913,20 @@
 
       // Capture the playback URL from Clarity and persist it to the session.
       // This enables the "▶ Ver grabación" button in the Session Explorer.
+      // Note: clarity('metadata', cb) fires cb(playbackUrl, isNew) — only 2 guaranteed params.
+      // We extract the Clarity session ID from the URL path: /player/{projectId}/{sessionId}
       try {
-        window.clarity('metadata', function(playbackUrl, isNew, clarityUserId, claritySessionId) {
-          if (!playbackUrl || !claritySessionId) return;
+        window.clarity('metadata', function(playbackUrl, isNew) {
+          if (!playbackUrl) return;
+          var sessionIdFromUrl = null;
+          try {
+            var m = playbackUrl.match(/\/player\/[^\/]+\/([^\/\?#]+)/);
+            sessionIdFromUrl = m ? m[1] : null;
+          } catch (_) {}
           try {
             sendEvent('clarity_session_linked', {
               clarity_playback_url: playbackUrl,
-              clarity_session_id:   claritySessionId,
-              clarity_user_id:      clarityUserId || null,
+              clarity_session_id:   sessionIdFromUrl,
             });
           } catch (_) {}
         });
