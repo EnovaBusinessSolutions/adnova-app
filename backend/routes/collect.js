@@ -646,12 +646,16 @@ router.post('/', async (req, res) => {
               ipHash: undefined,
               ga4SessionSource: undefined,
               sessionEndAt: undefined,
+              claritySessionId: undefined,
+              clarityPlaybackUrl: undefined,
             },
             update: {
               ...enrichedSessionUpdate,
               ipHash: undefined,
               ga4SessionSource: undefined,
               sessionEndAt: undefined,
+              claritySessionId: undefined,
+              clarityPlaybackUrl: undefined,
             }
           });
           sessionPersisted = true;
