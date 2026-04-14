@@ -304,6 +304,7 @@ app.get("/adray-pixel.js", (req, res) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
   res.setHeader("Content-Type", "text/javascript; charset=utf-8");
+  res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
   return res.sendFile(path.join(__dirname, "../public/adray-pixel.js"));
 });
 
