@@ -3940,6 +3940,23 @@ const getAnalyticsDashboardHandler = async (req, res) => {
       };
     }));
 
+    // Enrich recentPurchases with Clarity session recording URLs.
+    {
+      const purchaseSessionIds = recentPurchases.map((p) => p.sessionId).filter(Boolean);
+      if (purchaseSessionIds.length) {
+        const claritySessions = await prisma.session.findMany({
+          where: { accountId: account_id, sessionId: { in: purchaseSessionIds } },
+          select: { sessionId: true, claritySessionId: true, clarityPlaybackUrl: true },
+        });
+        const clarityMap = new Map(claritySessions.map((s) => [s.sessionId, s]));
+        for (const p of recentPurchases) {
+          const c = p.sessionId ? clarityMap.get(p.sessionId) : null;
+          p.claritySessionId = c?.claritySessionId || null;
+          p.clarityPlaybackUrl = c?.clarityPlaybackUrl || null;
+        }
+      }
+    }
+
     // Recompute channel stats by selected attribution model over resolved conversions.
     Object.keys(channelStats).forEach((key) => {
       channelStats[key].revenue = 0;

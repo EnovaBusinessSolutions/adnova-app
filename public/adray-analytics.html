@@ -5742,7 +5742,14 @@
                         <p class="font-medium text-gray-900 mb-1">UTM URL history for this journey</p>
                         ${renderTrackedUtmHistory(purchaseUtmHistory, { emptyMessage: 'No UTM URLs have been captured yet for this selected journey.' })}
                     </div>
-                    <div class="flex items-center justify-end">
+                    <div class="flex items-center justify-end gap-2 flex-wrap">
+                        ${purchase.clarityPlaybackUrl ? `
+                        <a href="${escapeHtml(purchase.clarityPlaybackUrl)}" target="_blank" rel="noopener noreferrer"
+                           class="journey-export-btn"
+                           style="background:#5c2d91;color:#fff;text-decoration:none;display:inline-flex;align-items:center;gap:6px;">
+                            <i class="fa-solid fa-circle-play"></i>
+                            Ver grabación
+                        </a>` : ''}
                         <button type="button" class="journey-export-btn" onclick="downloadSingleJourneyCsv('${escapeInlineSingleQuotedJs(selectionKey)}')">
                             <i class="fa-solid fa-file-arrow-down"></i>
                             Download CSV
