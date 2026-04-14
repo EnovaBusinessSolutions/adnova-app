@@ -3,6 +3,7 @@
 (function() {
   const ADRAY_ENDPOINT = "https://adray-app-staging-german.onrender.com/collect";
   const EVENT_TTL_MS = 2000;
+  const ADRAY_LAST_CART_VALUE_KEY = '__adray_last_cart_value_v1';
   const sentEventMap = new Map();
   
   // Helpers
@@ -639,6 +640,17 @@
       ...eventData
     };
 
+    var normalizedCartValue = normalizePositiveCartValue(payload.cart_value);
+    if (normalizedCartValue !== null) {
+      payload.cart_value = normalizedCartValue;
+      rememberLastCartValue(normalizedCartValue);
+    } else if (eventName === 'begin_checkout') {
+      var rememberedCartValue = readLastCartValue(45 * 60 * 1000);
+      if (rememberedCartValue !== null) {
+        payload.cart_value = rememberedCartValue;
+      }
+    }
+
     const body = JSON.stringify(payload);
 
     if (navigator.sendBeacon && eventName === 'begin_checkout') {
@@ -734,6 +746,10 @@
       payload.cart_value = detectCartValue(null, 1);
     }
 
+    if (payload.cart_value === undefined || payload.cart_value === null || payload.cart_value === '') {
+      payload.cart_value = readLastCartValue(45 * 60 * 1000);
+    }
+
     sendEvent('begin_checkout', payload);
   }
 
@@ -758,6 +774,85 @@
 
     var value = Number(normalized);
     return Number.isFinite(value) ? value : null;
+  }
+
+  function normalizePositiveCartValue(value) {
+    var parsed = Number(value);
+    if (!Number.isFinite(parsed) || parsed <= 0) return null;
+    return Number(parsed.toFixed(2));
+  }
+
+  function rememberLastCartValue(value) {
+    var normalized = normalizePositiveCartValue(value);
+    if (normalized === null) return;
+
+    var snapshot = JSON.stringify({
+      value: normalized,
+      ts: Date.now()
+    });
+
+    safeStorageSet(window.sessionStorage, ADRAY_LAST_CART_VALUE_KEY, snapshot);
+    safeStorageSet(window.localStorage, ADRAY_LAST_CART_VALUE_KEY, snapshot);
+  }
+
+  function readLastCartValue(maxAgeMs) {
+    var maxAge = Number(maxAgeMs);
+    if (!Number.isFinite(maxAge) || maxAge <= 0) maxAge = 45 * 60 * 1000;
+
+    var sessionSnapshot = safeJsonParse(safeStorageGet(window.sessionStorage, ADRAY_LAST_CART_VALUE_KEY), null);
+    var localSnapshot = safeJsonParse(safeStorageGet(window.localStorage, ADRAY_LAST_CART_VALUE_KEY), null);
+
+    var snapshots = [sessionSnapshot, localSnapshot]
+      .filter(function(item) { return item && typeof item === 'object'; })
+      .map(function(item) {
+        return {
+          value: normalizePositiveCartValue(item.value),
+          ts: Number(item.ts || 0)
+        };
+      })
+      .filter(function(item) { return item.value !== null; })
+      .sort(function(a, b) {
+        return (Number(b.ts || 0) - Number(a.ts || 0));
+      });
+
+    if (!snapshots.length) return null;
+
+    var best = snapshots[0];
+    if (Number.isFinite(best.ts) && best.ts > 0) {
+      var age = Date.now() - best.ts;
+      if (age < 0 || age > maxAge) return null;
+    }
+
+    return best.value;
+  }
+
+  function detectWooStoreCartTotal() {
+    try {
+      var wpData = window.wp && window.wp.data;
+      if (!wpData || typeof wpData.select !== 'function') return null;
+
+      var cartStore = wpData.select('wc/store/cart');
+      if (!cartStore || typeof cartStore.getCartData !== 'function') return null;
+
+      var cartData = cartStore.getCartData();
+      var totals = cartData && cartData.totals ? cartData.totals : null;
+      if (!totals) return null;
+
+      var rawTotal = totals.total_price;
+      if (rawTotal === undefined || rawTotal === null || rawTotal === '') return null;
+
+      var parsedTotal = Number(rawTotal);
+      if (!Number.isFinite(parsedTotal)) return null;
+
+      var minorUnit = Number(totals.currency_minor_unit);
+      if (Number.isFinite(minorUnit) && minorUnit >= 0 && minorUnit <= 4) {
+        parsedTotal = parsedTotal / Math.pow(10, minorUnit);
+      }
+
+      return normalizePositiveCartValue(parsedTotal);
+    } catch (_) {
+      return null;
+    }
   }
 
   function detectProductName(sourceEl = null) {
@@ -899,6 +994,15 @@
     var cartTotalSelectors = [
       '.cart_totals .order-total .amount',
       '.cart_totals .cart-subtotal .amount',
+      '.woocommerce-checkout-review-order-table .order-total .woocommerce-Price-amount',
+      '.woocommerce-checkout-review-order-table .order-total .amount',
+      '#order_review .order-total .woocommerce-Price-amount',
+      '#order_review .order-total .amount',
+      '.shop_table .order-total .woocommerce-Price-amount',
+      '.shop_table .order-total .amount',
+      '.order-total .woocommerce-Price-amount',
+      '[data-cart-total]',
+      '[data-order-total]',
       '.woocommerce-mini-cart__total .amount',
       '.widget_shopping_cart_content .total .amount',
       '.mini-cart-total .amount',
@@ -909,10 +1013,44 @@
       try {
         var cartEl = document.querySelector(cartTotalSelectors[i]);
         if (!cartEl) continue;
-        var cartTotal = parseAmountFromText(cartEl.textContent || '');
+        var cartRaw = null;
+        if (cartEl.tagName === 'INPUT') {
+          cartRaw = cartEl.value || cartEl.getAttribute('value') || null;
+        }
+        if (!cartRaw) {
+          cartRaw = (cartEl.getAttribute && (
+            cartEl.getAttribute('data-cart-total') ||
+            cartEl.getAttribute('data-order-total') ||
+            cartEl.getAttribute('data-total') ||
+            cartEl.getAttribute('value')
+          )) || null;
+        }
+        var cartTotal = parseAmountFromText(cartRaw || cartEl.textContent || '');
         if (cartTotal !== null) return cartTotal;
       } catch (_) {}
     }
+
+    var cartTotalInputSelectors = [
+      'input[name="cart_total"]',
+      'input[name="order_total"]',
+      'input[name="payment_total"]',
+      'input[name="total"]',
+      'input[id*="order_total"]',
+      'input[id*="cart_total"]'
+    ];
+
+    for (var inputIndex = 0; inputIndex < cartTotalInputSelectors.length; inputIndex++) {
+      try {
+        var inputEl = document.querySelector(cartTotalInputSelectors[inputIndex]);
+        if (!inputEl) continue;
+        var inputRaw = inputEl.value || inputEl.getAttribute('value') || inputEl.getAttribute('data-value') || '';
+        var inputTotal = parseAmountFromText(inputRaw);
+        if (inputTotal !== null) return inputTotal;
+      } catch (_) {}
+    }
+
+    var wooStoreTotal = detectWooStoreCartTotal();
+    if (wooStoreTotal !== null) return wooStoreTotal;
 
     var productPrice = detectProductPrice(sourceEl);
     var normalizedQty = Number(quantity);
