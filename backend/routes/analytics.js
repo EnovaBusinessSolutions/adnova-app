@@ -3049,7 +3049,8 @@ router.get('/:account_id', async (req, res) => {
     }));
 
     // Enrich recentPurchases with Clarity session recording URLs.
-    {
+    // Wrapped in try/catch: columns may not exist yet if DB migration is pending.
+    try {
       const purchaseSessionIds = recentPurchases.map((p) => p.sessionId).filter(Boolean);
       if (purchaseSessionIds.length) {
         const claritySessions = await prisma.session.findMany({
@@ -3063,6 +3064,8 @@ router.get('/:account_id', async (req, res) => {
           p.clarityPlaybackUrl = c?.clarityPlaybackUrl || null;
         }
       }
+    } catch (_clarityEnrichErr) {
+      // Columns not yet migrated — dashboard continues working without clarity URLs.
     }
 
     // Recompute channel stats by selected attribution model over resolved conversions.
