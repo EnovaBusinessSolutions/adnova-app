@@ -198,6 +198,11 @@ function emptySignalState(extra = {}) {
     unifiedBase: null,
     encodedPayload: null,
     payload: null,
+    schemaName: null,
+    schemaVersion: null,
+    payloadSections: [],
+    payloadStats: null,
+    payloadHealth: null,
     ...extra,
   };
 }
@@ -2173,6 +2178,432 @@ function buildCampaignsSchema({ metaPack, googlePack, unifiedBase }) {
     });
 }
 
+function buildStructuredBenchmarks({ metaPack, googlePack, ga4Pack }) {
+  const meta = metaPack?.mini?.headline_kpis || null;
+  const google = googlePack?.mini?.headline_kpis || null;
+  const ga4 = ga4Pack?.mini?.data?.headline_kpis || ga4Pack?.mini?.headline_kpis || null;
+  const adsPlatforms = [
+    meta?.roas != null ? { platform: 'meta', roas: round2(meta.roas) } : null,
+    google?.roas != null ? { platform: 'google', roas: round2(google.roas) } : null,
+  ].filter(Boolean);
+  const topAdsPlatformByRoas = adsPlatforms
+    .slice()
+    .sort((a, b) => toNum(b?.roas, -Infinity) - toNum(a?.roas, -Infinity))[0] || null;
+
+  return {
+    overview: {
+      ads_platforms_present: adsPlatforms.map((row) => row.platform),
+      top_ads_platform_by_roas: topAdsPlatformByRoas?.platform || null,
+      ga4_revenue: ga4?.revenue != null ? round2(ga4.revenue) : null,
+    },
+    meta,
+    google,
+    ga4,
+  };
+}
+
+function buildStructuredPlacements({ metaPack, googlePack }) {
+  const placements = [];
+
+  const pushRows = ({ rows, platform }) => {
+    const normalized = compactArray(rows || [], 8);
+    const totalSpend = normalized.reduce((sum, row) => sum + toNum(row?.spend), 0);
+    const platformAvgRoas =
+      normalized.length > 0
+        ? normalized.reduce((sum, row) => sum + toNum(row?.roas), 0) / normalized.length
+        : null;
+
+    for (const row of normalized) {
+      const placementName = safeStr(row?.key).trim();
+      if (!placementName) continue;
+
+      placements.push({
+        platform,
+        placement: placementName,
+        last_7_spend: row?.spend != null ? round2(row.spend) : null,
+        last_7_impressions: row?.impressions != null ? round2(row.impressions) : null,
+        last_7_ctr: row?.ctr != null ? round2(row.ctr) : null,
+        last_7_cpc: row?.cpc != null ? round2(row.cpc) : null,
+        last_7_roas: row?.roas != null ? round2(row.roas) : null,
+        last_30_spend: null,
+        last_30_roas: null,
+        spend_share_pct: totalSpend > 0 && row?.spend != null ? round2((row.spend / totalSpend) * 100) : null,
+        roas_vs_platform_avg:
+          platformAvgRoas != null && row?.roas != null
+            ? round2(row.roas - platformAvgRoas)
+            : null,
+      });
+    }
+  };
+
+  pushRows({
+    rows: metaPack?.full?.breakdowns?.placement_top || metaPack?.mini?.top_placements || [],
+    platform: 'meta',
+  });
+  pushRows({
+    rows: googlePack?.full?.breakdowns?.network_top || googlePack?.mini?.top_networks || [],
+    platform: 'google',
+  });
+
+  return placements;
+}
+
+function buildStructuredDevices({ metaPack, googlePack, ga4Pack }) {
+  const devices = [];
+
+  const pushAdRows = ({ rows, platform }) => {
+    const normalized = compactArray(rows || [], 8);
+    const totalSpend = normalized.reduce((sum, row) => sum + toNum(row?.spend), 0);
+
+    for (const row of normalized) {
+      const deviceType = safeStr(row?.key).trim();
+      if (!deviceType) continue;
+
+      devices.push({
+        platform,
+        device_type: deviceType,
+        last_7_spend: row?.spend != null ? round2(row.spend) : null,
+        last_7_impressions: row?.impressions != null ? round2(row.impressions) : null,
+        last_7_clicks: row?.clicks != null ? round2(row.clicks) : null,
+        last_7_ctr: row?.ctr != null ? round2(row.ctr) : null,
+        last_7_conversions:
+          row?.conversions != null
+            ? round2(row.conversions)
+            : row?.purchases != null
+              ? round2(row.purchases)
+              : null,
+        last_7_roas: row?.roas != null ? round2(row.roas) : null,
+        last_30_spend: null,
+        last_30_roas: null,
+        spend_share_pct: totalSpend > 0 && row?.spend != null ? round2((row.spend / totalSpend) * 100) : null,
+      });
+    }
+  };
+
+  const pushGa4Rows = (rows) => {
+    for (const row of compactArray(rows || [], 8)) {
+      const deviceType = safeStr(row?.device).trim();
+      if (!deviceType) continue;
+
+      devices.push({
+        platform: 'ga4',
+        device_type: deviceType,
+        last_7_spend: null,
+        last_7_impressions: null,
+        last_7_clicks: null,
+        last_7_ctr: null,
+        last_7_conversions: row?.conversions != null ? round2(row.conversions) : null,
+        last_7_roas: null,
+        last_30_spend: null,
+        last_30_roas: null,
+        spend_share_pct: null,
+      });
+    }
+  };
+
+  pushAdRows({
+    rows: metaPack?.full?.breakdowns?.device_top || metaPack?.mini?.top_devices || [],
+    platform: 'meta',
+  });
+  pushAdRows({
+    rows: googlePack?.full?.breakdowns?.device_top || googlePack?.mini?.top_devices || [],
+    platform: 'google',
+  });
+  pushGa4Rows(ga4Pack?.mini?.data?.top_devices || ga4Pack?.mini?.top_devices || []);
+
+  return devices;
+}
+
+function buildStructuredGa4Web({ ga4Pack }) {
+  const ga4Data = ga4Pack?.mini?.data || ga4Pack?.full?.ga4 || null;
+  if (!ga4Data) return {};
+
+  return {
+    top_channels: compactArray(ga4Data?.top_channels || [], 6).map((row) => ({
+      channel: safeStr(row?.channel).trim() || null,
+      sessions: row?.sessions != null ? round2(row.sessions) : null,
+      conversions: row?.conversions != null ? round2(row.conversions) : null,
+      revenue: row?.revenue != null ? round2(row.revenue) : null,
+      engagement_rate: row?.engagementRate != null ? round2(row.engagementRate) : null,
+    })).filter((row) => row.channel),
+    top_source_medium: compactArray(ga4Data?.top_source_medium || [], 6).map((row) => ({
+      source: safeStr(row?.source).trim() || null,
+      medium: safeStr(row?.medium).trim() || null,
+      sessions: row?.sessions != null ? round2(row.sessions) : null,
+      conversions: row?.conversions != null ? round2(row.conversions) : null,
+      revenue: row?.revenue != null ? round2(row.revenue) : null,
+    })).filter((row) => row.source || row.medium),
+    top_landing_pages: compactArray(ga4Data?.top_landing_pages || [], 6).map((row) => ({
+      page: safeStr(row?.page).trim() || null,
+      sessions: row?.sessions != null ? round2(row.sessions) : null,
+      conversions: row?.conversions != null ? round2(row.conversions) : null,
+      revenue: row?.revenue != null ? round2(row.revenue) : null,
+      engagement_rate: row?.engagementRate != null ? round2(row.engagementRate) : null,
+    })).filter((row) => row.page),
+    top_events: compactArray(ga4Data?.top_events || [], 6).map((row) => ({
+      event_name: safeStr(row?.event).trim() || null,
+      count: row?.eventCount != null ? round2(row.eventCount) : null,
+      revenue: row?.revenue != null ? round2(row.revenue) : null,
+    })).filter((row) => row.event_name),
+  };
+}
+
+function buildStructuredCrossChannel({ metaPack, googlePack, ga4Pack, usablePlatforms }) {
+  if (uniqStrings(usablePlatforms, 10).length < 2) return {};
+
+  const platformMix = [];
+  const pushMixRow = (platform, kpis = {}, revenueField = null, conversionsField = null) => {
+    if (!kpis || typeof kpis !== 'object') return;
+
+    platformMix.push({
+      platform,
+      spend: kpis?.spend != null ? round2(kpis.spend) : null,
+      conversions:
+        conversionsField && kpis?.[conversionsField] != null
+          ? round2(kpis[conversionsField])
+          : null,
+      revenue:
+        revenueField && kpis?.[revenueField] != null
+          ? round2(kpis[revenueField])
+          : null,
+      roas:
+        kpis?.roas != null
+          ? round2(kpis.roas)
+          : null,
+    });
+  };
+
+  pushMixRow('meta', metaPack?.mini?.headline_kpis || null, 'purchase_value', 'purchases');
+  pushMixRow('google', googlePack?.mini?.headline_kpis || null, 'conversion_value', 'conversions');
+  pushMixRow('ga4', ga4Pack?.mini?.data?.headline_kpis || ga4Pack?.mini?.headline_kpis || null, 'revenue', 'conversions');
+
+  const adsPlatforms = platformMix.filter((row) => row.platform === 'meta' || row.platform === 'google');
+  const comparableAdsPlatforms = adsPlatforms.filter((row) => row.roas != null && row.spend != null);
+  const bestPlatformForScale = comparableAdsPlatforms.length >= 2
+    ? comparableAdsPlatforms
+      .slice()
+      .sort((a, b) => toNum(b?.roas, -Infinity) - toNum(a?.roas, -Infinity))[0] || null
+    : null;
+  const weakestPlatform = comparableAdsPlatforms.length >= 2
+    ? comparableAdsPlatforms
+      .slice()
+      .sort((a, b) => toNum(a?.roas, Infinity) - toNum(b?.roas, Infinity))[0] || null
+    : null;
+
+  const observations = [];
+  if (bestPlatformForScale?.platform && bestPlatformForScale?.roas != null && weakestPlatform?.platform) {
+    observations.push(`${bestPlatformForScale.platform} lidera eficiencia de escala con ROAS ${bestPlatformForScale.roas}.`);
+  }
+  if (weakestPlatform?.platform && weakestPlatform?.roas != null && weakestPlatform.platform !== bestPlatformForScale?.platform) {
+    observations.push(`${weakestPlatform.platform} queda rezagado en eficiencia relativa con ROAS ${weakestPlatform.roas}.`);
+  }
+  const ga4Revenue = platformMix.find((row) => row.platform === 'ga4' && row.revenue != null);
+  if (ga4Revenue?.revenue != null) {
+    observations.push(`GA4 registra revenue web de ${ga4Revenue.revenue}.`);
+  }
+
+  return {
+    platform_mix: platformMix.filter((row) => row.platform && (
+      row.spend != null ||
+      row.conversions != null ||
+      row.revenue != null ||
+      row.roas != null
+    )),
+    best_platform_for_scale: bestPlatformForScale ? bestPlatformForScale.platform : null,
+    weakest_platform: weakestPlatform ? weakestPlatform.platform : null,
+    cross_source_observations: uniqStrings(observations, 6),
+  };
+}
+
+function buildStructuredAdSets() {
+  return [];
+}
+
+function buildStructuredAds() {
+  return [];
+}
+
+function buildStructuredPayloadHealth({
+  connectedPlatforms = [],
+  usablePlatforms = [],
+  structuredSignal = {},
+}) {
+  const sectionNames = [
+    'meta',
+    'daily_index',
+    'campaigns',
+    'anomalies',
+    'benchmarks',
+    'placements',
+    'devices',
+    'ga4_web',
+    'cross_channel',
+    'ad_sets',
+    'ads',
+    'payload_stats',
+  ];
+
+  const sectionsPresent = [];
+  const sectionsEmpty = [];
+
+  for (const section of sectionNames) {
+    const value = structuredSignal?.[section];
+    const isArray = Array.isArray(value);
+    const isObject = !!value && typeof value === 'object' && !isArray;
+    const hasData =
+      isArray ? value.length > 0 :
+        isObject ? Object.keys(value).length > 0 : value != null;
+
+    if (hasData) {
+      sectionsPresent.push(section);
+    } else {
+      sectionsEmpty.push(section);
+    }
+  }
+
+  return {
+    usable_platforms: uniqStrings(usablePlatforms, 10),
+    connected_platforms: uniqStrings(connectedPlatforms, 10),
+    sections_present: sectionsPresent,
+    sections_empty: sectionsEmpty,
+    has_partial_data:
+      uniqStrings(connectedPlatforms, 10).length > uniqStrings(usablePlatforms, 10).length ||
+      sectionsEmpty.length > 0,
+  };
+}
+
+function buildCampaignAnomalyKey(campaign = {}) {
+  return safeStr(campaign?.campaign_id).trim() || safeStr(campaign?.campaign_name).trim().toLowerCase();
+}
+
+function buildStructuredAnomalies({ metaPack, googlePack, ga4Pack }) {
+  const out = [];
+
+  const pushCampaignAnomalies = ({ rows, platform, anomalyType, direction }) => {
+    for (const row of compactArray(rows || [], 6)) {
+      const campaignName = safeStr(row?.campaign_name || row?.name).trim();
+      if (!campaignName) continue;
+
+      const roas = toNum(row?.kpis?.roas, null);
+      const cpa = toNum(row?.kpis?.cpa, null);
+      const spend = toNum(row?.kpis?.spend, null);
+      const conversions = toNum(row?.kpis?.conversions, row?.kpis?.purchases);
+      const conversionValue = toNum(row?.kpis?.conversion_value, row?.kpis?.purchase_value);
+      const metric =
+        roas != null ? 'roas_platform' :
+          cpa != null ? 'cpa' :
+            spend != null ? 'spend' :
+              conversions != null ? 'conversions' :
+                conversionValue != null ? 'conversion_value' : null;
+      const currentValue =
+        metric === 'roas_platform' ? round2(roas) :
+          metric === 'cpa' ? round2(cpa) :
+            metric === 'spend' ? round2(spend) :
+              metric === 'conversions' ? round2(conversions) :
+                metric === 'conversion_value' ? round2(conversionValue) : null;
+
+      out.push({
+        rank: out.length + 1,
+        entity_type: 'campaign',
+        entity_name: campaignName,
+        campaign_id: safeStr(row?.campaign_id).trim() || null,
+        platform,
+        metric,
+        direction,
+        magnitude_pct: null,
+        prior_value: null,
+        current_value: currentValue,
+        estimated_impact: spend != null ? round2(spend) : null,
+        period: null,
+        anomaly_type: anomalyType,
+        plain_english:
+          safeStr(row?.label).trim() ||
+          `${platform} campaign "${campaignName}" flagged as ${anomalyType.replace(/_/g, ' ')}.`,
+      });
+    }
+  };
+
+  pushCampaignAnomalies({
+    rows: metaPack?.mini?.active_risks || metaPack?.mini?.risks || [],
+    platform: 'meta',
+    anomalyType: 'campaign_risk',
+    direction: 'down',
+  });
+  pushCampaignAnomalies({
+    rows: googlePack?.mini?.active_risks || googlePack?.mini?.risks || [],
+    platform: 'google',
+    anomalyType: 'campaign_risk',
+    direction: 'down',
+  });
+
+  const ga4Signals = ga4Pack?.mini?.data?.optimization_signals || ga4Pack?.mini?.optimization_signals || {};
+  const pushGa4Anomalies = ({ rows, anomalyType, direction }) => {
+    for (const row of compactArray(rows || [], 6)) {
+      const entityName = safeStr(row?.label).trim();
+      if (!entityName) continue;
+
+      const sessions = toNum(row?.sessions, null);
+      const conversions = toNum(row?.conversions, null);
+      const revenue = toNum(row?.revenue, null);
+      const engagementRate = toNum(row?.engagementRate, null);
+      const metric =
+        sessions != null ? 'sessions' :
+          conversions != null ? 'conversions' :
+            revenue != null ? 'revenue' :
+              engagementRate != null ? 'engagement_rate' : null;
+      const currentValue =
+        metric === 'sessions' ? round2(sessions) :
+          metric === 'conversions' ? round2(conversions) :
+            metric === 'revenue' ? round2(revenue) :
+              metric === 'engagement_rate' ? round2(engagementRate) : null;
+
+      out.push({
+        rank: out.length + 1,
+        entity_type: safeStr(row?.type).trim() || 'ga4_signal',
+        entity_name: entityName,
+        platform: 'ga4',
+        metric,
+        direction,
+        magnitude_pct: null,
+        prior_value: null,
+        current_value: currentValue,
+        estimated_impact: revenue != null ? round2(revenue) : null,
+        period: null,
+        anomaly_type: anomalyType,
+        plain_english:
+          `${safeStr(row?.type).trim() || 'GA4'} signal "${entityName}" flagged as ${anomalyType.replace(/_/g, ' ')}.`,
+      });
+    }
+  };
+
+  pushGa4Anomalies({
+    rows: ga4Signals?.risks || [],
+    anomalyType: 'optimization_risk',
+    direction: 'down',
+  });
+  pushGa4Anomalies({
+    rows: ga4Signals?.quick_wins || [],
+    anomalyType: 'optimization_opportunity',
+    direction: 'up',
+  });
+
+  return out;
+}
+
+function applyCampaignAnomalyFlags(campaigns, anomalies) {
+  const flagged = new Set(
+    compactArray(anomalies || [], 200)
+      .filter((item) => item?.entity_type === 'campaign')
+      .map((item) => safeStr(item?.campaign_id).trim() || safeStr(item?.entity_name).trim().toLowerCase())
+      .filter(Boolean)
+  );
+
+  return compactArray(campaigns || [], 500).map((campaign) => ({
+    ...campaign,
+    anomaly_flag: flagged.has(buildCampaignAnomalyKey(campaign)),
+  }));
+}
+
 function buildStructuredSignalSchema({
   signalPayload,
   unifiedBase,
@@ -2230,8 +2661,53 @@ function buildStructuredSignalSchema({
     googlePack,
     unifiedBase,
   });
+  const anomalies = buildStructuredAnomalies({ metaPack, googlePack, ga4Pack });
+  const flaggedCampaigns = applyCampaignAnomalyFlags(campaigns, anomalies);
+  const benchmarks = buildStructuredBenchmarks({ metaPack, googlePack, ga4Pack });
+  const placements = buildStructuredPlacements({ metaPack, googlePack });
+  const devices = buildStructuredDevices({ metaPack, googlePack, ga4Pack });
+  const ga4Web = buildStructuredGa4Web({ ga4Pack });
+  const crossChannel = buildStructuredCrossChannel({ metaPack, googlePack, ga4Pack, usablePlatforms });
+  const adSets = buildStructuredAdSets();
+  const ads = buildStructuredAds();
+  const usableSourcesCount = usablePlatforms.length;
+  const payloadStats = {
+    daily_index_rows: dailyIndex.length,
+    campaigns_count: flaggedCampaigns.length,
+    anomalies_count: anomalies.length,
+    usable_sources_count: usableSourcesCount,
+    placements_count: placements.length,
+    devices_count: devices.length,
+    ga4_top_channels_count: Array.isArray(ga4Web?.top_channels) ? ga4Web.top_channels.length : 0,
+    ga4_top_landing_pages_count: Array.isArray(ga4Web?.top_landing_pages) ? ga4Web.top_landing_pages.length : 0,
+    cross_channel_platforms_count: Array.isArray(crossChannel?.platform_mix) ? crossChannel.platform_mix.length : 0,
+    ad_sets_count: adSets.length,
+    ads_count: ads.length,
+  };
+  const payloadHealth = buildStructuredPayloadHealth({
+    connectedPlatforms,
+    usablePlatforms,
+    structuredSignal: {
+      meta: {
+        connected_sources: connectedPlatforms,
+        usable_sources: usablePlatforms,
+      },
+      daily_index: dailyIndex,
+      campaigns: flaggedCampaigns,
+      anomalies,
+      benchmarks,
+      placements,
+      devices,
+      ga4_web: ga4Web,
+      cross_channel: crossChannel,
+      ad_sets: adSets,
+      ads,
+      payload_stats: payloadStats,
+    },
+  });
 
   return {
+    schema: 'adray.signal.granular.v1',
     meta: {
       workspace_name: pickWorkspaceName({ signalPayload, unifiedBase, root }),
       snapshot_generated_at:
@@ -2245,13 +2721,27 @@ function buildStructuredSignalSchema({
       capability_tier: deriveCapabilityTier(usablePlatforms),
       account_currency: accountCurrency,
       timezone,
+      snapshot_id: safeStr(unifiedBase?.snapshotId).trim() || null,
       source_fingerprint: safeStr(sourceFingerprint).trim() || null,
       connection_fingerprint: safeStr(connectionFingerprint).trim() || null,
       source_snapshots: sourceSnapshots,
-      schema_version: 'adray.signal_schema.v1.phase2',
+      usable_sources: usablePlatforms,
+      usable_sources_count: usableSourcesCount,
+      schema_name: 'adray.signal.granular',
+      schema_version: 'v1',
     },
     daily_index: dailyIndex,
-    campaigns,
+    campaigns: flaggedCampaigns,
+    anomalies,
+    benchmarks,
+    placements,
+    devices,
+    ga4_web: ga4Web,
+    cross_channel: crossChannel,
+    ad_sets: adSets,
+    ads,
+    payload_stats: payloadStats,
+    payload_health: payloadHealth,
   };
 }
 
@@ -2282,9 +2772,22 @@ function appendStructuredSignalSchema({
 
   return {
     ...basePayload,
-    meta: structured.meta,
-    daily_index: structured.daily_index,
-    campaigns: structured.campaigns,
+    structured_signal: {
+      schema: structured.schema,
+      meta: structured.meta,
+      daily_index: structured.daily_index,
+      campaigns: structured.campaigns,
+      anomalies: structured.anomalies,
+      benchmarks: structured.benchmarks,
+      placements: structured.placements,
+      devices: structured.devices,
+      ga4_web: structured.ga4_web,
+      cross_channel: structured.cross_channel,
+      ad_sets: structured.ad_sets,
+      ads: structured.ads,
+      payload_stats: structured.payload_stats,
+      payload_health: structured.payload_health,
+    },
   };
 }
 
@@ -2906,6 +3409,11 @@ function normalizeSignalArtifactForRuntime(signal = {}, ai = {}, fallback = {}) 
         ? !!signal.usedOpenAI
         : !!ai?.usedOpenAI,
     snapshotId: signal?.snapshotId || ai?.snapshotId || fallback?.snapshotId || null,
+    schemaName: signal?.schemaName || null,
+    schemaVersion: signal?.schemaVersion || null,
+    payloadSections: Array.isArray(signal?.payloadSections) ? signal.payloadSections : [],
+    payloadStats: signal?.payloadStats || null,
+    payloadHealth: signal?.payloadHealth || null,
     contextRangeDays:
       toNum(signal?.contextRangeDays) ||
       toNum(ai?.contextRangeDays) ||
@@ -4405,6 +4913,36 @@ const finalConnectionFingerprint = buildConnectionFingerprint(latestRootForBase)
     root: encodingResult?.root || latestRootForBase || initialRoot || null,
     user: null,
   });
+  const structuredSignal = signalPayload?.structured_signal && typeof signalPayload.structured_signal === 'object'
+    ? signalPayload.structured_signal
+    : null;
+  const signalPayloadSections = [
+    'meta',
+    'daily_index',
+    'campaigns',
+    'anomalies',
+    'benchmarks',
+    'placements',
+    'devices',
+    'ga4_web',
+    'cross_channel',
+    'ad_sets',
+    'ads',
+  ].filter((section) => structuredSignal?.[section] != null);
+  const signalPayloadStats = structuredSignal?.payload_stats || {
+    daily_index_rows: Array.isArray(structuredSignal?.daily_index) ? structuredSignal.daily_index.length : 0,
+    campaigns_count: Array.isArray(structuredSignal?.campaigns) ? structuredSignal.campaigns.length : 0,
+    anomalies_count: Array.isArray(structuredSignal?.anomalies) ? structuredSignal.anomalies.length : 0,
+    usable_sources_count: Array.isArray(structuredSignal?.meta?.usable_sources) ? structuredSignal.meta.usable_sources.length : 0,
+    placements_count: Array.isArray(structuredSignal?.placements) ? structuredSignal.placements.length : 0,
+    devices_count: Array.isArray(structuredSignal?.devices) ? structuredSignal.devices.length : 0,
+    ga4_top_channels_count: Array.isArray(structuredSignal?.ga4_web?.top_channels) ? structuredSignal.ga4_web.top_channels.length : 0,
+    ga4_top_landing_pages_count: Array.isArray(structuredSignal?.ga4_web?.top_landing_pages) ? structuredSignal.ga4_web.top_landing_pages.length : 0,
+    cross_channel_platforms_count: Array.isArray(structuredSignal?.cross_channel?.platform_mix) ? structuredSignal.cross_channel.platform_mix.length : 0,
+    ad_sets_count: Array.isArray(structuredSignal?.ad_sets) ? structuredSignal.ad_sets.length : 0,
+    ads_count: Array.isArray(structuredSignal?.ads) ? structuredSignal.ads.length : 0,
+  };
+  const signalPayloadHealth = structuredSignal?.payload_health || null;
   const encodedSignalBuildable = isEncodedSignalPayloadBuildableForPdf(encodedSignalPayload);
 
   if (!encodedSignalBuildable) {
@@ -4600,6 +5138,11 @@ const finalConnectionFingerprint = buildConnectionFingerprint(latestRootForBase)
     payload: signalPayload,
     encodedPayload: encodedSignalPayload,
     unifiedBase,
+    schemaName: 'adray.signal.granular',
+    schemaVersion: 'v1',
+    payloadSections: signalPayloadSections,
+    payloadStats: signalPayloadStats,
+    payloadHealth: signalPayloadHealth,
   }),
   pdf: emptyPdfState({
     generationId: makePdfGenerationId(attemptId),
