@@ -2423,6 +2423,33 @@ function buildStructuredAds() {
   return [];
 }
 
+function isStructuredSectionShallow(section, value) {
+  if (value == null) return true;
+  if (Array.isArray(value)) return value.length === 0;
+  if (typeof value !== 'object') return false;
+
+  const keys = Object.keys(value);
+  if (keys.length === 0) return true;
+  if (section === 'benchmarks') {
+    const detailKeys = keys.filter((key) => key !== 'overview');
+    const populatedDetails = detailKeys.filter((key) => value?.[key] && Object.keys(value[key] || {}).length > 0);
+    return populatedDetails.length <= 1;
+  }
+  if (section === 'cross_channel') {
+    return !Array.isArray(value?.platform_mix) || value.platform_mix.length < 2;
+  }
+  if (section === 'ga4_web') {
+    const total =
+      (Array.isArray(value?.top_channels) ? value.top_channels.length : 0) +
+      (Array.isArray(value?.top_source_medium) ? value.top_source_medium.length : 0) +
+      (Array.isArray(value?.top_landing_pages) ? value.top_landing_pages.length : 0) +
+      (Array.isArray(value?.top_events) ? value.top_events.length : 0);
+    return total < 2;
+  }
+
+  return false;
+}
+
 function buildStructuredPayloadHealth({
   connectedPlatforms = [],
   usablePlatforms = [],
@@ -2445,6 +2472,7 @@ function buildStructuredPayloadHealth({
 
   const sectionsPresent = [];
   const sectionsEmpty = [];
+  const sectionsPartial = [];
 
   for (const section of sectionNames) {
     const value = structuredSignal?.[section];
@@ -2456,19 +2484,90 @@ function buildStructuredPayloadHealth({
 
     if (hasData) {
       sectionsPresent.push(section);
+      if (isStructuredSectionShallow(section, value)) {
+        sectionsPartial.push(section);
+      }
     } else {
       sectionsEmpty.push(section);
     }
   }
 
+  const missingExpectedSections = [];
+  const notes = [];
+  const connected = uniqStrings(connectedPlatforms, 10);
+  const usable = uniqStrings(usablePlatforms, 10);
+
+  if (structuredSignal?.ad_sets && structuredSignal.ad_sets.length === 0) {
+    missingExpectedSections.push('ad_sets');
+    notes.push('ad_sets unavailable: no safe row-level ad set data in current builder inputs');
+  }
+  if (structuredSignal?.ads && structuredSignal.ads.length === 0) {
+    missingExpectedSections.push('ads');
+    notes.push('ads unavailable: no safe ad-level identifiers in current source payload');
+  }
+  if (usable.length < 2) {
+    if (structuredSignal?.cross_channel) {
+      missingExpectedSections.push('cross_channel');
+    }
+    notes.push('cross_channel limited: only one usable platform');
+  } else if (sectionsPartial.includes('cross_channel')) {
+    notes.push('cross_channel partial: comparable ads metrics are limited');
+  }
+  if (connected.length > usable.length) {
+    notes.push('some connected platforms are not yet usable for a complete structured signal');
+  }
+
   return {
-    usable_platforms: uniqStrings(usablePlatforms, 10),
-    connected_platforms: uniqStrings(connectedPlatforms, 10),
+    usable_platforms: usable,
+    connected_platforms: connected,
     sections_present: sectionsPresent,
     sections_empty: sectionsEmpty,
+    sections_partial: sectionsPartial,
+    missing_expected_sections: uniqStrings(missingExpectedSections, 20),
+    notes: uniqStrings(notes, 10),
     has_partial_data:
-      uniqStrings(connectedPlatforms, 10).length > uniqStrings(usablePlatforms, 10).length ||
-      sectionsEmpty.length > 0,
+      connected.length > usable.length ||
+      sectionsEmpty.length > 0 ||
+      sectionsPartial.length > 0,
+  };
+}
+
+function buildStructuredNarrativeSignals(structuredSignal = {}) {
+  const anomalies = compactArray(structuredSignal?.anomalies || [], 8);
+  const campaigns = compactArray(structuredSignal?.campaigns || [], 4);
+  const placements = compactArray(structuredSignal?.placements || [], 3);
+  const devices = compactArray(structuredSignal?.devices || [], 3);
+  const healthNotes = uniqStrings(structuredSignal?.payload_health?.notes || [], 6);
+
+  return {
+    performance_drivers: uniqStrings([
+      ...campaigns
+        .filter((item) => item?.efficiency_rank_7d != null && item.efficiency_rank_7d <= 2)
+        .map((item) => `${item?.platform || 'unknown'} structured campaign driver: ${item?.campaign_name || item?.campaign_id || 'unknown'} with 7d ROAS ${item?.last_7?.roas_platform ?? 'n/a'}`),
+      ...placements
+        .filter((item) => item?.last_7_roas != null && item.last_7_roas > 1)
+        .map((item) => `${item?.platform || 'unknown'} placement driver: ${item?.placement || 'unknown'} with ROAS ${item?.last_7_roas}`),
+    ], 6),
+    conversion_bottlenecks: uniqStrings([
+      ...anomalies
+        .filter((item) => item?.direction === 'down' || item?.direction === 'risk')
+        .map((item) => item?.plain_english),
+      ...devices
+        .filter((item) => item?.last_7_roas != null && item.last_7_roas < 1)
+        .map((item) => `${item?.platform || 'unknown'} device bottleneck: ${item?.device_type || 'unknown'} with ROAS ${item?.last_7_roas}`),
+    ], 8),
+    scaling_opportunities: uniqStrings([
+      ...anomalies
+        .filter((item) => item?.direction === 'up' || item?.direction === 'opportunity')
+        .map((item) => item?.plain_english),
+    ], 6),
+    risk_flags: uniqStrings([
+      ...anomalies
+        .filter((item) => item?.direction === 'down' || item?.direction === 'risk')
+        .map((item) => item?.plain_english),
+      ...healthNotes,
+    ], 8),
+    priority_actions: healthNotes,
   };
 }
 
@@ -2478,6 +2577,18 @@ function buildCampaignAnomalyKey(campaign = {}) {
 
 function buildStructuredAnomalies({ metaPack, googlePack, ga4Pack }) {
   const out = [];
+  const pushAnomaly = (item) => {
+    if (!item?.entity_name || !item?.platform || !item?.anomaly_type) return;
+    out.push({
+      rank: out.length + 1,
+      magnitude_pct: null,
+      prior_value: null,
+      current_value: null,
+      estimated_impact: null,
+      period: null,
+      ...item,
+    });
+  };
 
   const pushCampaignAnomalies = ({ rows, platform, anomalyType, direction }) => {
     for (const row of compactArray(rows || [], 6)) {
@@ -2502,19 +2613,15 @@ function buildStructuredAnomalies({ metaPack, googlePack, ga4Pack }) {
               metric === 'conversions' ? round2(conversions) :
                 metric === 'conversion_value' ? round2(conversionValue) : null;
 
-      out.push({
-        rank: out.length + 1,
+      pushAnomaly({
         entity_type: 'campaign',
         entity_name: campaignName,
         campaign_id: safeStr(row?.campaign_id).trim() || null,
         platform,
         metric,
         direction,
-        magnitude_pct: null,
-        prior_value: null,
         current_value: currentValue,
         estimated_impact: spend != null ? round2(spend) : null,
-        period: null,
         anomaly_type: anomalyType,
         plain_english:
           safeStr(row?.label).trim() ||
@@ -2535,6 +2642,144 @@ function buildStructuredAnomalies({ metaPack, googlePack, ga4Pack }) {
     anomalyType: 'campaign_risk',
     direction: 'down',
   });
+
+  const pushDeltaAnomaly = ({ platform, deltas, metricKey, metricName, directionPositive = 'up', directionNegative = 'down', entityName }) => {
+    const value = toNum(deltas?.[metricKey], null);
+    if (value == null || Math.abs(value) < 15) return;
+    pushAnomaly({
+      entity_type: 'account',
+      entity_name: entityName,
+      platform,
+      metric: metricName,
+      direction: value >= 0 ? directionPositive : directionNegative,
+      magnitude_pct: round2(Math.abs(value)),
+      anomaly_type: `${metricName}_delta`,
+      period: metricKey.includes('30') ? 'last_30_vs_prev_30' : 'last_7_vs_prev_7',
+      plain_english: `${platform} ${metricName} changed ${round2(value)}% in the current comparison window.`,
+    });
+  };
+
+  pushDeltaAnomaly({
+    platform: 'meta',
+    deltas: metaPack?.mini?.last7_vs_prev7 || null,
+    metricKey: 'roas_pct',
+    metricName: 'roas_platform',
+    entityName: 'Meta account',
+  });
+  pushDeltaAnomaly({
+    platform: 'meta',
+    deltas: metaPack?.mini?.last7_vs_prev7 || null,
+    metricKey: 'cpa_pct',
+    metricName: 'cpa',
+    directionPositive: 'risk',
+    directionNegative: 'opportunity',
+    entityName: 'Meta account',
+  });
+  pushDeltaAnomaly({
+    platform: 'google',
+    deltas: googlePack?.mini?.last7_vs_prev7 || null,
+    metricKey: 'roas_pct',
+    metricName: 'roas_platform',
+    entityName: 'Google account',
+  });
+  pushDeltaAnomaly({
+    platform: 'google',
+    deltas: googlePack?.mini?.last7_vs_prev7 || null,
+    metricKey: 'cpa_pct',
+    metricName: 'cpa',
+    directionPositive: 'risk',
+    directionNegative: 'opportunity',
+    entityName: 'Google account',
+  });
+
+  const pushConcentrationAnomaly = ({ platform, rows, label }) => {
+    const topRows = compactArray(rows || [], 3);
+    const totalSpend = topRows.reduce((sum, row) => sum + toNum(row?.spend), 0);
+    const lead = topRows[0] || null;
+    if (!lead?.key || totalSpend <= 0) return;
+    const share = round2((toNum(lead?.spend) / totalSpend) * 100);
+    if (share < 60) return;
+
+    pushAnomaly({
+      entity_type: label,
+      entity_name: safeStr(lead?.key).trim(),
+      platform,
+      metric: 'spend_share_pct',
+      direction: 'risk',
+      magnitude_pct: share,
+      current_value: share,
+      estimated_impact: toNum(lead?.spend, null) != null ? round2(lead.spend) : null,
+      anomaly_type: `${label}_spend_concentration`,
+      plain_english: `${platform} depends heavily on ${safeStr(lead?.key).trim()} with ${share}% of tracked spend in this breakdown.`,
+    });
+  };
+
+  pushConcentrationAnomaly({
+    platform: 'meta',
+    rows: metaPack?.full?.breakdowns?.placement_top || metaPack?.mini?.top_placements || [],
+    label: 'placement',
+  });
+
+  const pushEfficiencyMismatch = ({ platform, rows, label, conversionField = 'purchases' }) => {
+    for (const row of compactArray(rows || [], 6)) {
+      const ctr = toNum(row?.ctr, null);
+      const roas = toNum(row?.roas, null);
+      const conversions = toNum(row?.[conversionField], row?.conversions);
+      if (ctr == null || ctr < 2 || roas == null || roas > 1 || conversions == null || conversions > 0) continue;
+
+      pushAnomaly({
+        entity_type: label,
+        entity_name: safeStr(row?.key).trim(),
+        platform,
+        metric: 'ctr',
+        direction: 'risk',
+        current_value: round2(ctr),
+        anomaly_type: `${label}_high_ctr_weak_conversion`,
+        plain_english: `${platform} ${label} "${safeStr(row?.key).trim()}" has strong CTR but weak conversion efficiency.`,
+      });
+    }
+  };
+
+  pushEfficiencyMismatch({
+    platform: 'meta',
+    rows: metaPack?.full?.breakdowns?.placement_top || metaPack?.mini?.top_placements || [],
+    label: 'placement',
+    conversionField: 'purchases',
+  });
+  pushEfficiencyMismatch({
+    platform: 'meta',
+    rows: metaPack?.full?.breakdowns?.device_top || metaPack?.mini?.top_devices || [],
+    label: 'device',
+    conversionField: 'purchases',
+  });
+  pushEfficiencyMismatch({
+    platform: 'google',
+    rows: googlePack?.full?.breakdowns?.device_top || googlePack?.mini?.top_devices || [],
+    label: 'device',
+    conversionField: 'conversions',
+  });
+
+  const pushReactivationOpportunity = ({ platform, rows }) => {
+    for (const row of compactArray(rows || [], 4)) {
+      const campaignName = safeStr(row?.campaign_name || row?.name).trim();
+      if (!campaignName) continue;
+      pushAnomaly({
+        entity_type: 'campaign',
+        entity_name: campaignName,
+        campaign_id: safeStr(row?.campaign_id).trim() || null,
+        platform,
+        metric: 'roas_platform',
+        direction: 'opportunity',
+        current_value: row?.kpis?.roas != null ? round2(row.kpis.roas) : null,
+        estimated_impact: row?.kpis?.spend != null ? round2(row.kpis.spend) : null,
+        anomaly_type: 'paused_winner_reactivation',
+        plain_english: `${platform} paused winner "${campaignName}" looks like a reactivation opportunity.`,
+      });
+    }
+  };
+
+  pushReactivationOpportunity({ platform: 'meta', rows: metaPack?.mini?.paused_winners || [] });
+  pushReactivationOpportunity({ platform: 'google', rows: googlePack?.mini?.paused_winners || [] });
 
   const ga4Signals = ga4Pack?.mini?.data?.optimization_signals || ga4Pack?.mini?.optimization_signals || {};
   const pushGa4Anomalies = ({ rows, anomalyType, direction }) => {
@@ -2557,18 +2802,14 @@ function buildStructuredAnomalies({ metaPack, googlePack, ga4Pack }) {
             metric === 'revenue' ? round2(revenue) :
               metric === 'engagement_rate' ? round2(engagementRate) : null;
 
-      out.push({
-        rank: out.length + 1,
+      pushAnomaly({
         entity_type: safeStr(row?.type).trim() || 'ga4_signal',
         entity_name: entityName,
         platform: 'ga4',
         metric,
         direction,
-        magnitude_pct: null,
-        prior_value: null,
         current_value: currentValue,
         estimated_impact: revenue != null ? round2(revenue) : null,
-        period: null,
         anomaly_type: anomalyType,
         plain_english:
           `${safeStr(row?.type).trim() || 'GA4'} signal "${entityName}" flagged as ${anomalyType.replace(/_/g, ' ')}.`,
@@ -2587,7 +2828,7 @@ function buildStructuredAnomalies({ metaPack, googlePack, ga4Pack }) {
     direction: 'up',
   });
 
-  return out;
+  return compactArray(out, 12);
 }
 
 function applyCampaignAnomalyFlags(campaigns, anomalies) {
@@ -2769,9 +3010,39 @@ function appendStructuredSignalSchema({
     sourceFingerprint,
     connectionFingerprint,
   });
+  const structuredNarrative = buildStructuredNarrativeSignals(structured);
 
   return {
     ...basePayload,
+    performance_drivers: uniqStrings([
+      ...(basePayload?.performance_drivers || []),
+      ...(structuredNarrative.performance_drivers || []),
+    ], 12),
+    conversion_bottlenecks: uniqStrings([
+      ...(basePayload?.conversion_bottlenecks || []),
+      ...(structuredNarrative.conversion_bottlenecks || []),
+    ], 12),
+    scaling_opportunities: uniqStrings([
+      ...(basePayload?.scaling_opportunities || []),
+      ...(structuredNarrative.scaling_opportunities || []),
+    ], 12),
+    risk_flags: uniqStrings([
+      ...(basePayload?.risk_flags || []),
+      ...(structuredNarrative.risk_flags || []),
+    ], 12),
+    prompt_hints: uniqStrings([
+      ...(basePayload?.prompt_hints || []),
+      ...(structured?.payload_health?.notes || []),
+    ], 20),
+    summary: {
+      ...(basePayload?.summary || {}),
+      priority_actions: uniqStrings([
+        ...((basePayload?.summary && Array.isArray(basePayload.summary.priority_actions))
+          ? basePayload.summary.priority_actions
+          : []),
+        ...(structuredNarrative.priority_actions || []),
+      ], 14),
+    },
     structured_signal: {
       schema: structured.schema,
       meta: structured.meta,
