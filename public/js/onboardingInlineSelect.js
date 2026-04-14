@@ -480,25 +480,12 @@ await _post('/api/onboarding/reset', { source: 'asm', target });
         font-size: 14px;
         letter-spacing: .18px;
         display:flex;
-        gap:10px;
         align-items:center;
         color: var(--asm-text);
       }
 
       .asm-title::before{
-        content:"*";
-        display:inline-flex;
-        width: 26px;
-        height: 26px;
-        align-items:center;
-        justify-content:center;
-        border-radius: 999px;
-        background: linear-gradient(180deg, rgba(181,92,255,.18), rgba(181,92,255,.08));
-        border: 1px solid rgba(181,92,255,.26);
-        color: rgba(224,196,255,.95);
-        box-shadow:
-          inset 0 1px 0 rgba(255,255,255,.05),
-          0 0 18px rgba(181,92,255,.22);
+        content:none;
       }
 
       .asm-sub{
