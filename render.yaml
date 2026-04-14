@@ -2,7 +2,10 @@ services:
   - type: web
     name: adnova-ai
     env: node
-    buildCommand: npm cache clean --force && rm -rf /opt/render/.cache/_cacache && npm ci && npm run build:landing && npx prisma generate --schema=backend/prisma/schema.prisma
+    branch: german/dev
+    autoDeploy: true
+    # Submódulos (p. ej. landing-adray): sin esto el directorio queda vacío y build:landing falla o queda desactualizado.
+    buildCommand: git submodule update --init --recursive && npm ci && npm run build:landing && npm run build:dashboard && npx prisma generate --schema=backend/prisma/schema.prisma
     startCommand: npm run prisma:push && npm run db:backfill:layer45 && node backend/index.js
     envVars:
       - key: NODE_VERSION
@@ -11,7 +14,9 @@ services:
   - type: worker
     name: adnova-ai-mcp-worker
     env: node
-    buildCommand: npm cache clean --force && rm -rf /opt/render/.cache/_cacache && npm ci
+    branch: german/dev
+    autoDeploy: true
+    buildCommand: npm ci
     startCommand: npm run worker:mcp
     envVars:
       - key: NODE_VERSION

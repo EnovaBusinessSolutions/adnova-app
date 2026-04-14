@@ -1,2138 +1,4 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AdRay Analytics Dashboard</title>
-    <!-- Tailwind CSS -->
-    <script src="https://cdn.tailwindcss.com"></script>
-    <!-- Chart.js -->
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <!-- Font Awesome -->
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    <style>
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
 
-        @font-face {
-            font-family: "Ulm Grotesk";
-            src: url("/fonts/UlmGrotesk-Bold.otf") format("opentype");
-            font-weight: 700;
-            font-style: normal;
-            font-display: swap;
-        }
-
-        :root {
-            --dash-bg: #0b0b0d;
-            --dash-panel: rgba(21, 18, 26, 0.96);
-            --dash-panel-strong: rgba(31, 24, 40, 0.98);
-            --dash-panel-soft: rgba(255, 255, 255, 0.03);
-            --dash-border: rgba(44, 37, 48, 0.96);
-            --dash-border-strong: rgba(181, 92, 255, 0.24);
-            --dash-text: #e5d3ff;
-            --dash-muted: #9a8ca8;
-            --dash-soft: #b095e4;
-            --dash-accent: #b55cff;
-            --dash-accent-strong: #9d5bff;
-            --dash-success: #7ef0c8;
-            --dash-warning: #f3c77a;
-            --dash-shadow: 0 24px 60px rgba(0, 0, 0, 0.34);
-            --dash-radius: 28px;
-        }
-
-        body.adray-dashboard {
-            font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-            background:
-                radial-gradient(1200px 560px at 8% -10%, rgba(181, 92, 255, 0.13), transparent 58%),
-                radial-gradient(900px 520px at 100% 0%, rgba(157, 91, 255, 0.08), transparent 52%),
-                linear-gradient(180deg, #0b0b0d 0%, #050508 100%);
-            color: var(--dash-text);
-            min-height: 100vh;
-        }
-
-        body.adray-dashboard::before {
-            content: '';
-            position: fixed;
-            inset: 0;
-            pointer-events: none;
-            background-image:
-                linear-gradient(rgba(255,255,255,0.02) 1px, transparent 1px),
-                linear-gradient(90deg, rgba(255,255,255,0.02) 1px, transparent 1px);
-            background-size: 48px 48px;
-            mask-image: radial-gradient(circle at center, rgba(0,0,0,0.45), transparent 92%);
-            opacity: 0.1;
-        }
-
-        .dashboard-shell {
-            position: relative;
-            z-index: 1;
-            width: 100%;
-        }
-
-        .dashboard-section-heading {
-            margin-bottom: 0.75rem;
-        }
-
-        .dashboard-section-grid,
-        .dashboard-support-grid {
-            align-items: stretch;
-        }
-
-        .dashboard-section-grid > *,
-        .dashboard-support-grid > * {
-            min-width: 0;
-        }
-
-        .dashboard-hero {
-            position: sticky;
-            top: 1rem;
-            z-index: 30;
-            background: linear-gradient(180deg, rgba(21, 18, 26, 0.96) 0%, rgba(15, 12, 20, 0.94) 100%);
-            border: 1px solid var(--dash-border-strong);
-            border-radius: 34px;
-            box-shadow: var(--dash-shadow);
-            padding: 1.65rem 1.75rem;
-            backdrop-filter: blur(18px);
-        }
-
-        .dashboard-kicker,
-        .panel-kicker {
-            font-size: 0.72rem;
-            letter-spacing: 0.18em;
-            text-transform: uppercase;
-            color: var(--dash-soft);
-            font-weight: 700;
-        }
-
-        .dashboard-section-heading .panel-kicker,
-        .dashboard-section-heading .panel-title {
-            color: var(--dash-text) !important;
-        }
-
-        .dashboard-section-heading .panel-kicker {
-            color: var(--dash-soft) !important;
-        }
-
-        .session-toolbar-btn,
-        .session-close-btn,
-        .session-compare-trigger,
-        .session-clear-btn,
-        .session-filter-select,
-        .session-peer-pill,
-        .session-compare-pill {
-            border: 1px solid rgba(202, 138, 229, 0.18) !important;
-            background: rgba(225, 216, 243, 0.06) !important;
-            color: var(--dash-text) !important;
-            box-shadow: inset 0 1px 0 rgba(255,255,255,0.04);
-        }
-
-        .session-toolbar-btn:hover,
-        .session-close-btn:hover,
-        .session-clear-btn:hover,
-        .session-peer-pill:hover,
-        .session-compare-pill:hover {
-            background: rgba(225, 216, 243, 0.1) !important;
-            border-color: rgba(202, 138, 229, 0.32) !important;
-        }
-
-        .session-compare-trigger {
-            background: linear-gradient(135deg, rgba(202, 138, 229, 0.18) 0%, rgba(126, 240, 200, 0.08) 100%) !important;
-            color: var(--dash-accent) !important;
-        }
-
-        .session-compare-trigger:hover {
-            background: linear-gradient(135deg, rgba(202, 138, 229, 0.24) 0%, rgba(126, 240, 200, 0.14) 100%) !important;
-        }
-
-        .session-summary-card,
-        .session-visual-card,
-        .session-pattern-card,
-        .session-compare-panel,
-        .session-metric-card,
-        .session-order-card,
-        .session-pattern-item,
-        .session-side-card,
-        .session-timeline-item {
-            background: linear-gradient(180deg, rgba(30, 20, 47, 0.96) 0%, rgba(16, 10, 25, 0.94) 100%) !important;
-            border: 1px solid rgba(202, 138, 229, 0.16) !important;
-            box-shadow: 0 18px 48px rgba(0, 0, 0, 0.24) !important;
-        }
-
-        .session-visual-card {
-            background: linear-gradient(135deg, rgba(52, 28, 90, 0.92) 0%, rgba(14, 26, 49, 0.9) 100%) !important;
-        }
-
-        .session-pattern-card,
-        .session-pattern-item {
-            background: linear-gradient(135deg, rgba(68, 35, 25, 0.92) 0%, rgba(19, 32, 27, 0.9) 100%) !important;
-        }
-
-        .session-peer-pill.is-current {
-            background: linear-gradient(135deg, rgba(202, 138, 229, 0.84) 0%, rgba(181, 92, 255, 0.88) 100%) !important;
-            border-color: rgba(202, 138, 229, 0.65) !important;
-            color: #120a1f !important;
-        }
-
-        .session-peer-pill.is-current span {
-            color: inherit !important;
-        }
-
-        .session-compare-pill {
-            border-radius: 999px;
-        }
-
-        .session-metric-card-value {
-            color: var(--dash-text) !important;
-        }
-
-        .session-meta-copy {
-            color: var(--dash-soft) !important;
-        }
-
-        .session-accent-copy,
-        .session-accent-copy p {
-            color: var(--dash-accent) !important;
-        }
-
-        .session-positive-copy,
-        .session-positive-copy p {
-            color: var(--dash-success) !important;
-        }
-
-        .session-warning-copy,
-        .session-warning-copy p {
-            color: var(--dash-warning) !important;
-        }
-
-        .session-flow-step:not(:last-child)::after {
-            background: linear-gradient(90deg, rgba(202, 138, 229, 0.85) 0%, rgba(126, 240, 200, 0.72) 100%);
-        }
-
-        .pattern-rate-bar {
-            background: rgba(225, 216, 243, 0.12) !important;
-        }
-
-        .session-compare-current-bar {
-            background: linear-gradient(90deg, rgba(202, 138, 229, 0.92) 0%, rgba(181, 92, 255, 0.85) 100%) !important;
-        }
-
-        .session-compare-peer-bar {
-            background: linear-gradient(90deg, rgba(124, 168, 255, 0.88) 0%, rgba(164, 139, 190, 0.78) 100%) !important;
-        }
-
-        .dashboard-title,
-        .panel-title,
-        .brand-mark {
-            font-family: "Ulm Grotesk", 'Inter', sans-serif;
-            letter-spacing: -0.03em;
-        }
-
-        .dashboard-title {
-            font-size: clamp(2.2rem, 5vw, 3.6rem);
-            line-height: 0.95;
-            margin-top: 0.4rem;
-        }
-
-        .dashboard-subtitle,
-        .panel-subtitle {
-            color: var(--dash-muted);
-            line-height: 1.5;
-        }
-
-        .panel-title {
-            font-size: 1.35rem;
-        }
-
-        .brand-mark {
-            display: inline-flex;
-            align-items: center;
-            gap: 0.4rem;
-            padding: 0.72rem 1.1rem;
-            border-radius: 14px;
-            border: 1px solid rgba(181, 92, 255, 0.14);
-            background: rgba(44, 37, 48, 0.62);
-            color: #e8b8ff !important;
-            box-shadow: inset 0 1px 0 rgba(255,255,255,0.03);
-            line-height: 1;
-        }
-
-        .brand-mark span {
-            color: var(--dash-muted) !important;
-        }
-
-        .ops-control {
-            display: inline-flex;
-            align-items: center;
-            gap: 0.6rem;
-            border-radius: 18px;
-            border: 1px solid rgba(181, 92, 255, 0.18);
-            background: rgba(44, 37, 48, 0.48);
-            color: var(--dash-text);
-            padding: 0.85rem 1.1rem;
-            backdrop-filter: blur(14px);
-            box-shadow: inset 0 1px 0 rgba(255,255,255,0.03);
-        }
-
-        .ops-refresh-btn {
-            border: 1px solid rgba(181, 92, 255, 0.2);
-            border-radius: 18px;
-            background: linear-gradient(135deg, rgba(181, 92, 255, 0.22) 0%, rgba(157, 91, 255, 0.14) 100%);
-            color: #f4edff;
-            box-shadow: 0 16px 30px rgba(0, 0, 0, 0.18), inset 0 1px 0 rgba(255,255,255,0.05);
-        }
-
-        .ops-refresh-btn:hover {
-            background: linear-gradient(135deg, rgba(181, 92, 255, 0.34) 0%, rgba(157, 91, 255, 0.24) 100%);
-            border-color: rgba(181, 92, 255, 0.34);
-        }
-
-        .live-feed-badge {
-            background: rgba(126, 240, 200, 0.14) !important;
-            border: 1px solid rgba(126, 240, 200, 0.55) !important;
-            color: #7ef0c8 !important;
-            box-shadow: 0 0 22px rgba(126, 240, 200, 0.22), inset 0 1px 0 rgba(255,255,255,0.04);
-            text-shadow: 0 0 12px rgba(126, 240, 200, 0.2);
-        }
-
-        .ops-panel,
-        .adray-dashboard #metric-carousel-track > .metric-card-slide > div,
-        .adray-dashboard #session-detail-panel > div {
-            display: block !important;
-            position: relative;
-            background: linear-gradient(180deg, rgba(31, 24, 40, 0.92) 0%, rgba(18, 14, 24, 0.98) 100%) !important;
-            border: 1px solid rgba(181, 92, 255, 0.12) !important;
-            border-radius: var(--dash-radius) !important;
-            box-shadow: var(--dash-shadow) !important;
-            backdrop-filter: blur(12px);
-        }
-
-        .dashboard-section-grid .ops-panel,
-        .dashboard-support-grid .ops-panel {
-            min-height: 22rem;
-        }
-
-        .dashboard-support-grid .ops-panel,
-        .dashboard-section-grid .ops-panel,
-        .dashboard-section-grid .ops-panel p,
-        .dashboard-support-grid .ops-panel p,
-        .dashboard-section-grid .ops-panel h3,
-        .dashboard-support-grid .ops-panel h3,
-        .dashboard-section-grid .ops-panel h4,
-        .dashboard-support-grid .ops-panel h4,
-        .dashboard-section-grid .ops-panel span,
-        .dashboard-support-grid .ops-panel span,
-        .dashboard-section-grid .ops-panel div,
-        .dashboard-support-grid .ops-panel div,
-        .dashboard-section-grid .ops-panel th,
-        .dashboard-support-grid .ops-panel th,
-        .dashboard-section-grid .ops-panel td,
-        .dashboard-support-grid .ops-panel td,
-        .dashboard-section-grid .ops-panel label,
-        .dashboard-support-grid .ops-panel label {
-            color: inherit;
-        }
-
-        .dashboard-section-grid .ops-panel::before,
-        .dashboard-support-grid .ops-panel::before {
-            content: '';
-            position: absolute;
-            inset: 0;
-            border-radius: inherit;
-            pointer-events: none;
-            box-shadow: inset 0 1px 0 rgba(255,255,255,0.04);
-        }
-
-        .adray-dashboard .ops-subpanel,
-        .adray-dashboard .ops-panel .bg-white,
-        .adray-dashboard #session-detail-panel .bg-gray-50,
-        .adray-dashboard #session-detail-panel .bg-white,
-        .adray-dashboard #session-detail-panel .bg-slate-50,
-        .adray-dashboard #session-detail-panel .bg-indigo-50,
-        .adray-dashboard #session-detail-panel .bg-amber-50,
-        .adray-dashboard #session-detail-panel .bg-emerald-50,
-        .adray-dashboard #session-detail-panel .bg-cyan-50,
-        .adray-dashboard .ops-panel .bg-gray-50,
-        #user-explorer-panel .bg-white {
-            background: var(--dash-panel-soft) !important;
-            border-color: rgba(202, 138, 229, 0.12) !important;
-        }
-
-        .ops-panel .border-gray-100,
-        .ops-panel .border-gray-200,
-        .ops-panel .border-gray-300,
-        .ops-panel .border-slate-200,
-        .ops-panel .border-indigo-100,
-        .ops-panel .border-amber-100,
-        .ops-panel .border-indigo-200,
-        #session-detail-panel .border-gray-100,
-        #session-detail-panel .border-gray-200,
-        #session-detail-panel .border-gray-300,
-        #session-detail-panel .border-slate-200,
-        #session-detail-panel .border-indigo-100,
-        #session-detail-panel .border-amber-100,
-        #session-detail-panel .border-indigo-200 {
-            border-color: var(--dash-border) !important;
-        }
-
-        .dashboard-hero .text-gray-900,
-        .dashboard-hero .text-gray-800,
-        .dashboard-hero .text-slate-600,
-        .dashboard-hero .text-slate-700,
-        .ops-panel .text-gray-900,
-        .ops-panel .text-gray-800,
-        .ops-panel .text-slate-600,
-        .ops-panel .text-slate-700,
-        #metric-carousel-track > .metric-card-slide > div .text-gray-900,
-        #metric-carousel-track > .metric-card-slide > div .text-gray-800,
-        #session-detail-panel .text-gray-900,
-        #session-detail-panel .text-gray-800,
-        #session-detail-panel .text-slate-600,
-        #session-detail-panel .text-slate-700,
-        nav .text-gray-900,
-        nav .text-gray-800 {
-            color: var(--dash-text) !important;
-        }
-
-        .dashboard-hero .text-gray-700,
-        .dashboard-hero .text-gray-600,
-        .dashboard-hero .text-gray-500,
-        .dashboard-hero .text-gray-400,
-        .ops-panel .text-gray-700,
-        .ops-panel .text-gray-600,
-        .ops-panel .text-gray-500,
-        .ops-panel .text-gray-400,
-        #metric-carousel-track > .metric-card-slide > div .text-gray-700,
-        #metric-carousel-track > .metric-card-slide > div .text-gray-600,
-        #metric-carousel-track > .metric-card-slide > div .text-gray-500,
-        #metric-carousel-track > .metric-card-slide > div .text-gray-400,
-        #session-detail-panel .text-gray-700,
-        #session-detail-panel .text-gray-600,
-        #session-detail-panel .text-gray-500,
-        #session-detail-panel .text-gray-400,
-        nav .text-gray-700,
-        nav .text-gray-600,
-        nav .text-gray-500,
-        nav .text-gray-400 {
-            color: var(--dash-muted) !important;
-        }
-
-        .dashboard-hero .text-indigo-600,
-        .dashboard-hero .text-indigo-700,
-        .dashboard-hero .text-blue-500,
-        .dashboard-hero .text-green-600,
-        .dashboard-hero .text-sky-700,
-        .dashboard-hero .text-emerald-700,
-        .dashboard-hero .text-emerald-600,
-        .dashboard-hero .text-amber-600,
-        .ops-panel .text-indigo-600,
-        .ops-panel .text-indigo-700,
-        .ops-panel .text-blue-500,
-        .ops-panel .text-green-600,
-        .ops-panel .text-sky-700,
-        .ops-panel .text-emerald-700,
-        .ops-panel .text-emerald-600,
-        .ops-panel .text-amber-600,
-        #metric-carousel-track > .metric-card-slide > div .text-indigo-600,
-        #metric-carousel-track > .metric-card-slide > div .text-indigo-700,
-        #session-detail-panel .text-indigo-600,
-        #session-detail-panel .text-indigo-700,
-        #session-detail-panel .text-blue-500,
-        #session-detail-panel .text-green-600,
-        #session-detail-panel .text-sky-700,
-        #session-detail-panel .text-emerald-700,
-        #session-detail-panel .text-emerald-600,
-        #session-detail-panel .text-amber-600,
-        nav .text-indigo-600,
-        nav .text-indigo-700 {
-            color: var(--dash-accent) !important;
-        }
-
-        .ops-panel .shadow,
-        .ops-panel .shadow-sm,
-        .ops-panel .shadow-lg,
-        .ops-panel .shadow-2xl,
-        #metric-carousel-track > .metric-card-slide > div .shadow,
-        #metric-carousel-track > .metric-card-slide > div .shadow-sm,
-        #metric-carousel-track > .metric-card-slide > div .shadow-lg,
-        #metric-carousel-track > .metric-card-slide > div .shadow-2xl,
-        #session-detail-panel .shadow,
-        #session-detail-panel .shadow-sm,
-        #session-detail-panel .shadow-lg,
-        #session-detail-panel .shadow-2xl {
-            box-shadow: var(--dash-shadow) !important;
-        }
-
-        .adray-dashboard nav {
-            background: rgba(17, 14, 24, 0.92) !important;
-            border-bottom: 1px solid rgba(181, 92, 255, 0.12) !important;
-            box-shadow: 0 18px 40px rgba(0, 0, 0, 0.22);
-            backdrop-filter: blur(18px);
-        }
-
-        .dashboard-hero select,
-        .dashboard-hero input,
-        .dashboard-hero button,
-        .ops-panel select,
-        .ops-panel input,
-        .ops-panel button,
-        #session-detail-panel select,
-        #session-detail-panel input,
-        #session-detail-panel button {
-            color: var(--dash-text);
-        }
-
-        .dashboard-hero select,
-        .ops-panel select,
-        #session-detail-panel select {
-            background: rgba(17, 14, 24, 0.92) !important;
-            border: 1px solid rgba(181, 92, 255, 0.18) !important;
-            color: var(--dash-text) !important;
-            box-shadow: inset 0 1px 0 rgba(255,255,255,0.04);
-        }
-
-        .dashboard-hero select option,
-        .ops-panel select option,
-        #session-detail-panel select option {
-            background: #120a1f;
-            color: #f4f1ff;
-        }
-
-        .dashboard-hero select,
-        .dashboard-hero input[type="date"],
-        .ops-panel select,
-        .ops-panel input[type="date"],
-        #session-detail-panel select,
-        #session-detail-panel input[type="date"] {
-            background: transparent;
-        }
-
-        .dashboard-hero input[type="text"],
-        .dashboard-hero input[type="search"],
-        .ops-panel input[type="text"],
-        .ops-panel input[type="search"],
-        .ops-panel input[type="number"],
-        #session-detail-panel input[type="text"],
-        #session-detail-panel input[type="search"],
-        #user-explorer-panel input[type="text"] {
-            background: rgba(17, 14, 24, 0.92) !important;
-            border: 1px solid rgba(181, 92, 255, 0.18) !important;
-            color: var(--dash-text) !important;
-            box-shadow: inset 0 1px 0 rgba(255,255,255,0.04);
-        }
-
-        .dashboard-hero input::placeholder,
-        .ops-panel input::placeholder,
-        #session-detail-panel input::placeholder,
-        #user-explorer-panel input::placeholder {
-            color: var(--dash-muted) !important;
-        }
-
-        .ops-panel button.bg-white,
-        .ops-panel select.bg-white,
-        .dashboard-hero button.bg-white,
-        .dashboard-hero select.bg-white,
-        #session-detail-panel button.bg-white,
-        #session-detail-panel select.bg-white {
-            background: rgba(225, 216, 243, 0.06) !important;
-            border-color: rgba(202, 138, 229, 0.18) !important;
-        }
-
-        nav .bg-indigo-50 {
-            background: rgba(225, 216, 243, 0.06) !important;
-        }
-
-        .ops-panel table thead tr,
-        #session-detail-panel table thead tr {
-            border-color: rgba(202, 138, 229, 0.18) !important;
-        }
-
-        .ops-panel thead th,
-        #session-detail-panel thead th {
-            text-transform: uppercase;
-            letter-spacing: 0.12em;
-            font-size: 0.68rem;
-            color: var(--dash-soft) !important;
-            font-weight: 700;
-        }
-
-        #session-detail-panel h4 {
-            font-family: "Ulm Grotesk", 'Inter', sans-serif;
-            letter-spacing: -0.02em;
-        }
-
-        #session-detail-panel .text-xs.uppercase,
-        .dashboard-hero .uppercase.tracking-wide,
-        .ops-panel .uppercase.tracking-wide,
-        #session-detail-panel .uppercase.tracking-wide {
-            letter-spacing: 0.14em;
-        }
-
-        #recent-purchases-list tr,
-        #feed-container > div {
-            border-color: rgba(202, 138, 229, 0.12) !important;
-        }
-
-        #recent-purchases-list tr:hover,
-        #feed-container > div:hover {
-            background: rgba(225, 216, 243, 0.05) !important;
-        }
-
-        #feed-container .feed-item .feed-extra {
-            max-height: 0;
-            opacity: 0;
-            overflow: hidden;
-            transition: max-height 180ms ease, opacity 180ms ease;
-        }
-
-        #feed-container .feed-item:hover .feed-extra,
-        #feed-container .feed-item:focus-within .feed-extra {
-            max-height: 7rem;
-            opacity: 1;
-        }
-
-        .live-feed-shell {
-            height: auto !important;
-            max-height: none !important;
-            min-height: auto !important;
-            align-self: flex-start;
-            overflow: hidden;
-        }
-
-        #feed-container {
-            max-height: 26rem;
-            overflow-y: auto;
-        }
-
-        #feed-container {
-            overflow-y: auto !important;
-            overscroll-behavior: contain;
-        }
-
-        .complete-orders-scroll {
-            max-height: 30rem;
-            overflow-x: auto;
-            overflow-y: auto;
-            overscroll-behavior: contain;
-            padding-right: 0.2rem;
-        }
-
-        #session-detail-orders {
-            max-height: 20rem;
-            overflow-y: auto;
-            overscroll-behavior: contain;
-            padding-right: 0.2rem;
-        }
-
-        #session-detail-timeline {
-            max-height: 24rem;
-            overflow-y: auto;
-            overscroll-behavior: contain;
-            padding-right: 0.2rem;
-        }
-
-        .complete-orders-scroll::-webkit-scrollbar,
-        #session-detail-orders::-webkit-scrollbar,
-        #session-detail-timeline::-webkit-scrollbar {
-            width: 9px;
-            height: 9px;
-        }
-
-        .complete-orders-scroll::-webkit-scrollbar-thumb,
-        #session-detail-orders::-webkit-scrollbar-thumb,
-        #session-detail-timeline::-webkit-scrollbar-thumb {
-            background: rgba(202, 138, 229, 0.35);
-            border-radius: 999px;
-        }
-
-        #wp-online-card {
-            border-top: 1px solid rgba(202, 138, 229, 0.15);
-            border-bottom: 1px solid rgba(202, 138, 229, 0.15);
-        }
-
-        #wp-online-list {
-            max-height: 11.5rem;
-            overflow-y: auto;
-            padding-right: 0.2rem;
-        }
-
-        .wp-user-pill {
-            border-radius: 0.8rem;
-            padding: 0.62rem 0.7rem;
-            border: 1px solid transparent;
-            box-shadow: 0 8px 20px rgba(0, 0, 0, 0.22);
-        }
-
-        .wp-user-pill .wp-user-name {
-            color: #ffffff;
-            font-size: 0.84rem;
-            font-weight: 700;
-            line-height: 1.15;
-        }
-
-        .wp-user-pill .wp-user-meta {
-            color: rgba(241, 245, 249, 0.92);
-            font-size: 0.73rem;
-        }
-
-        .wp-user-pill .wp-user-session {
-            color: #fef3c7;
-            font-size: 0.72rem;
-            font-weight: 600;
-        }
-
-        .wp-user-pill .wp-user-extra {
-            max-height: 0;
-            opacity: 0;
-            overflow: hidden;
-            transition: max-height 180ms ease, opacity 180ms ease;
-        }
-
-        .wp-user-pill:hover .wp-user-extra,
-        .wp-user-pill:focus-within .wp-user-extra {
-            max-height: 3.8rem;
-            opacity: 1;
-            margin-top: 0.18rem;
-        }
-
-        .wp-user-pill.is-a {
-            background: linear-gradient(135deg, rgba(79, 70, 229, 0.88), rgba(168, 85, 247, 0.92));
-            border-color: rgba(196, 181, 253, 0.48);
-        }
-
-        .wp-user-pill.is-b {
-            background: linear-gradient(135deg, rgba(3, 105, 161, 0.88), rgba(14, 116, 144, 0.94));
-            border-color: rgba(125, 211, 252, 0.45);
-        }
-
-        .wp-user-pill.is-c {
-            background: linear-gradient(135deg, rgba(190, 24, 93, 0.9), rgba(251, 113, 133, 0.9));
-            border-color: rgba(253, 164, 175, 0.5);
-        }
-
-        .wp-user-pill.is-d {
-            background: linear-gradient(135deg, rgba(14, 116, 144, 0.9), rgba(45, 212, 191, 0.85));
-            border-color: rgba(153, 246, 228, 0.48);
-        }
-
-        .attribution-journey-focus {
-            min-height: 18rem;
-        }
-
-        .journey-rail-wrap {
-            position: relative;
-            padding: 0.9rem 0.4rem 0.35rem;
-        }
-
-        .journey-rail-line {
-            position: absolute;
-            left: 1.2rem;
-            right: 1.2rem;
-            top: 2.05rem;
-            height: 2px;
-            background: linear-gradient(90deg, rgba(202, 138, 229, 0.25), rgba(202, 138, 229, 0.6));
-            pointer-events: none;
-        }
-
-        .journey-rail {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
-            gap: 0.65rem;
-            position: relative;
-            z-index: 1;
-        }
-
-        .journey-node {
-            border: 1px solid rgba(202, 138, 229, 0.26);
-            background: rgba(225, 216, 243, 0.08);
-            border-radius: 0.85rem;
-            min-height: 3.1rem;
-            padding: 0.52rem 0.56rem;
-            display: flex;
-            flex-direction: column;
-            justify-content: center;
-            gap: 0.16rem;
-            box-shadow: 0 10px 24px rgba(0, 0, 0, 0.18);
-            transition: transform 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
-            cursor: pointer;
-        }
-
-        .journey-node:hover,
-        .journey-node.is-active {
-            transform: translateY(-2px);
-            border-color: rgba(202, 138, 229, 0.55);
-            box-shadow: 0 14px 28px rgba(0, 0, 0, 0.28);
-        }
-
-        .journey-node-title {
-            display: inline-flex;
-            align-items: center;
-            gap: 0.35rem;
-            font-size: 0.82rem;
-            font-weight: 700;
-            color: var(--dash-text);
-            line-height: 1.15;
-        }
-
-        .journey-node-sub {
-            font-size: 0.67rem;
-            letter-spacing: 0.06em;
-            text-transform: uppercase;
-            color: var(--dash-soft);
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
-        }
-
-        .journey-node-detail {
-            margin-top: 0.7rem;
-            border: 1px solid rgba(202, 138, 229, 0.24);
-            background: rgba(225, 216, 243, 0.06);
-            border-radius: 0.8rem;
-            padding: 0.6rem 0.7rem;
-            display: grid;
-            grid-template-columns: repeat(2, minmax(0, 1fr));
-            gap: 0.45rem;
-        }
-
-        .journey-node-detail p {
-            font-size: 0.71rem;
-            color: var(--dash-muted);
-            margin: 0;
-        }
-
-        .attribution-journey-history {
-            max-height: 22rem;
-            overflow-y: auto;
-            padding-right: 0.25rem;
-        }
-
-        .attribution-journey-history::-webkit-scrollbar {
-            width: 8px;
-        }
-
-        .attribution-journey-history::-webkit-scrollbar-thumb {
-            background: rgba(202, 138, 229, 0.35);
-            border-radius: 999px;
-        }
-
-        .journey-chip {
-            display: inline-flex;
-            align-items: center;
-            gap: 0.35rem;
-            padding: 0.26rem 0.58rem;
-            border-radius: 999px;
-            border: 1px solid rgba(202, 138, 229, 0.28);
-            background: rgba(225, 216, 243, 0.08);
-            font-size: 0.7rem;
-            color: var(--dash-text);
-            text-transform: uppercase;
-            letter-spacing: 0.08em;
-            font-weight: 700;
-            position: relative;
-            cursor: help;
-        }
-
-        .journey-chip[data-tooltip]::after {
-            content: attr(data-tooltip);
-            position: absolute;
-            bottom: 100%;
-            left: 50%;
-            transform: translateX(-50%);
-            background-color: var(--dash-text);
-            color: var(--dash-panel);
-            padding: 0.5rem 0.75rem;
-            border-radius: 6px;
-            font-size: 0.75rem;
-            font-weight: 400;
-            white-space: nowrap;
-            margin-bottom: 0.5rem;
-            opacity: 0;
-            pointer-events: none;
-            transition: opacity 0.2s ease;
-            z-index: 10;
-            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
-            text-transform: none;
-            letter-spacing: normal;
-        }
-
-        .journey-chip[data-tooltip]::before {
-            content: '';
-            position: absolute;
-            bottom: calc(100% - 4px);
-            left: 50%;
-            transform: translateX(-50%);
-            border: 6px solid transparent;
-            border-top-color: var(--dash-text);
-            opacity: 0;
-            pointer-events: none;
-            transition: opacity 0.2s ease;
-            z-index: 10;
-        }
-
-        .journey-chip[data-tooltip]:hover::after,
-        .journey-chip[data-tooltip]:hover::before {
-            opacity: 1;
-        }
-
-        .journey-chip.is-google,
-        .journey-step.is-google {
-            border-color: rgba(251, 191, 36, 0.5);
-            background: linear-gradient(135deg, rgba(180, 83, 9, 0.36), rgba(251, 191, 36, 0.2));
-        }
-
-        .journey-chip.is-meta,
-        .journey-step.is-meta {
-            border-color: rgba(96, 165, 250, 0.55);
-            background: linear-gradient(135deg, rgba(29, 78, 216, 0.34), rgba(96, 165, 250, 0.2));
-        }
-
-        .journey-chip.is-tiktok,
-        .journey-step.is-tiktok {
-            border-color: rgba(45, 212, 191, 0.55);
-            background: linear-gradient(135deg, rgba(13, 148, 136, 0.34), rgba(45, 212, 191, 0.2));
-        }
-
-        .journey-chip.is-organic,
-        .journey-step.is-organic {
-            border-color: rgba(134, 239, 172, 0.45);
-            background: linear-gradient(135deg, rgba(22, 101, 52, 0.32), rgba(74, 222, 128, 0.18));
-        }
-
-        .journey-channel-legend {
-            display: flex;
-            align-items: center;
-            gap: 0.4rem;
-            flex-wrap: wrap;
-            margin-top: 0.65rem;
-        }
-
-        .journey-channel-legend .journey-chip {
-            font-size: 0.62rem;
-            padding: 0.22rem 0.48rem;
-        }
-
-        .journey-filter-channel {
-            cursor: pointer;
-            transition: transform 140ms ease, box-shadow 140ms ease, opacity 140ms ease;
-            opacity: 0.72;
-        }
-
-        .journey-filter-channel:hover,
-        .journey-filter-channel.is-active {
-            opacity: 1;
-            transform: translateY(-1px);
-            box-shadow: 0 8px 16px rgba(0, 0, 0, 0.22);
-        }
-
-        .journey-customer-bubbles {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 0.4rem;
-            margin-bottom: 0.55rem;
-        }
-
-        .journey-customer-bubble {
-            border: 1px solid rgba(202, 138, 229, 0.28);
-            background: rgba(225, 216, 243, 0.08);
-            color: var(--dash-text);
-            border-radius: 999px;
-            font-size: 0.66rem;
-            font-weight: 700;
-            text-transform: uppercase;
-            letter-spacing: 0.07em;
-            padding: 0.22rem 0.5rem;
-            cursor: pointer;
-            opacity: 0.78;
-        }
-
-        .journey-customer-bubble:hover,
-        .journey-customer-bubble.is-active {
-            opacity: 1;
-            border-color: rgba(202, 138, 229, 0.52);
-            box-shadow: 0 8px 18px rgba(0, 0, 0, 0.24);
-        }
-
-        .journey-meta-grid {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 0.35rem;
-            margin-bottom: 0.2rem;
-        }
-
-        .journey-timeline {
-            position: relative;
-            max-height: 18.2rem;
-            overflow-y: auto;
-            padding: 0.25rem 0.1rem 0.2rem 1.35rem;
-            margin-top: 0.2rem;
-        }
-
-        .journey-timeline-sticky {
-            position: sticky;
-            top: 0;
-            z-index: 3;
-            display: inline-flex;
-            align-items: center;
-            gap: 0.3rem;
-            font-size: 0.64rem;
-            text-transform: uppercase;
-            letter-spacing: 0.08em;
-            color: var(--dash-soft);
-            background: rgba(20, 12, 37, 0.9);
-            border: 1px solid rgba(202, 138, 229, 0.2);
-            border-radius: 999px;
-            padding: 0.18rem 0.45rem;
-            margin: 0 0 0.45rem 0;
-            backdrop-filter: blur(4px);
-        }
-
-        .journey-mode-toggle {
-            display: inline-flex;
-            align-items: center;
-            gap: 0.24rem;
-            border: 1px solid rgba(202, 138, 229, 0.2);
-            border-radius: 999px;
-            padding: 0.18rem;
-            background: rgba(225, 216, 243, 0.06);
-        }
-
-        .journey-mode-btn {
-            border: 0;
-            border-radius: 999px;
-            padding: 0.2rem 0.48rem;
-            font-size: 0.62rem;
-            font-weight: 700;
-            text-transform: uppercase;
-            letter-spacing: 0.06em;
-            color: var(--dash-soft);
-            background: transparent;
-            cursor: pointer;
-        }
-
-        .journey-mode-btn.is-active {
-            color: var(--dash-text);
-            background: rgba(202, 138, 229, 0.24);
-            border: 1px solid rgba(202, 138, 229, 0.35);
-        }
-
-        .journey-timeline::-webkit-scrollbar {
-            width: 8px;
-        }
-
-        .journey-timeline::-webkit-scrollbar-thumb {
-            background: rgba(202, 138, 229, 0.34);
-            border-radius: 999px;
-        }
-
-        .journey-timeline::before {
-            content: "";
-            position: absolute;
-            left: 0.5rem;
-            top: 0.2rem;
-            bottom: 0.2rem;
-            width: 2px;
-            background: linear-gradient(180deg, rgba(202, 138, 229, 0.55), rgba(202, 138, 229, 0.1));
-        }
-
-        .journey-event {
-            position: relative;
-            border: 1px solid rgba(202, 138, 229, 0.24);
-            background: rgba(225, 216, 243, 0.07);
-            border-radius: 0.78rem;
-            padding: 0.48rem 0.56rem;
-            margin-bottom: 0.48rem;
-            transition: border-color 140ms ease, transform 140ms ease, box-shadow 140ms ease;
-        }
-
-        .journey-event::before {
-            content: "";
-            position: absolute;
-            left: -1.05rem;
-            top: 0.78rem;
-            width: 0.56rem;
-            height: 0.56rem;
-            border-radius: 999px;
-            background: #ca8ae5;
-            box-shadow: 0 0 0 4px rgba(202, 138, 229, 0.2);
-        }
-
-        .journey-event.is-google::before { background: #f59e0b; box-shadow: 0 0 0 4px rgba(245, 158, 11, 0.22); }
-        .journey-event.is-meta::before { background: #60a5fa; box-shadow: 0 0 0 4px rgba(96, 165, 250, 0.22); }
-        .journey-event.is-tiktok::before { background: #2dd4bf; box-shadow: 0 0 0 4px rgba(45, 212, 191, 0.22); }
-        .journey-event.is-organic::before { background: #4ade80; box-shadow: 0 0 0 4px rgba(74, 222, 128, 0.2); }
-
-        .journey-event:hover,
-        .journey-event:focus-within {
-            border-color: rgba(202, 138, 229, 0.52);
-            transform: translateY(-1px);
-            box-shadow: 0 8px 20px rgba(0, 0, 0, 0.24);
-        }
-
-        .journey-event-head {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            gap: 0.5rem;
-        }
-
-        .journey-event-title {
-            display: inline-flex;
-            align-items: center;
-            gap: 0.35rem;
-            font-size: 0.84rem;
-            font-weight: 700;
-            color: var(--dash-text);
-        }
-
-        .journey-event-time {
-            font-size: 0.67rem;
-            color: var(--dash-soft);
-            letter-spacing: 0.04em;
-        }
-
-        .journey-event-detail {
-            margin-top: 0.32rem;
-            max-height: 0;
-            opacity: 0;
-            overflow: hidden;
-            transition: max-height 160ms ease, opacity 160ms ease;
-        }
-
-        .journey-event:hover .journey-event-detail,
-        .journey-event:focus-within .journey-event-detail {
-            max-height: 8rem;
-            opacity: 1;
-        }
-
-        .journey-event-detail p {
-            margin: 0.08rem 0;
-            font-size: 0.7rem;
-            color: var(--dash-muted);
-        }
-
-        .journey-event-icon {
-            position: relative;
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-        }
-
-        .journey-event-icon[data-tooltip]::after {
-            content: attr(data-tooltip);
-            position: absolute;
-            bottom: calc(100% + 0.45rem);
-            left: 50%;
-            transform: translateX(-50%);
-            background: var(--dash-text);
-            color: var(--dash-panel);
-            padding: 0.45rem 0.65rem;
-            border-radius: 0.55rem;
-            font-size: 0.72rem;
-            font-weight: 500;
-            white-space: nowrap;
-            opacity: 0;
-            pointer-events: none;
-            transition: opacity 0.18s ease;
-            box-shadow: 0 10px 24px rgba(0, 0, 0, 0.24);
-            z-index: 20;
-            text-transform: none;
-            letter-spacing: normal;
-        }
-
-        .journey-event-icon[data-tooltip]::before {
-            content: '';
-            position: absolute;
-            bottom: calc(100% + 0.08rem);
-            left: 50%;
-            transform: translateX(-50%);
-            border: 6px solid transparent;
-            border-top-color: var(--dash-text);
-            opacity: 0;
-            pointer-events: none;
-            transition: opacity 0.18s ease;
-            z-index: 20;
-        }
-
-        .journey-event-icon[data-tooltip]:hover::after,
-        .journey-event-icon[data-tooltip]:hover::before {
-            opacity: 1;
-        }
-
-        .journey-flow {
-            display: flex;
-            align-items: center;
-            flex-wrap: wrap;
-            gap: 0.45rem;
-        }
-
-        .journey-step {
-            display: inline-flex;
-            align-items: center;
-            gap: 0.4rem;
-            border-radius: 0.8rem;
-            border: 1px solid rgba(202, 138, 229, 0.22);
-            background: rgba(225, 216, 243, 0.07);
-            padding: 0.4rem 0.55rem;
-            font-size: 0.78rem;
-            color: var(--dash-text);
-            font-weight: 600;
-        }
-
-        .journey-sankey {
-            display: grid;
-            grid-template-columns: repeat(5, minmax(0, 1fr));
-            gap: 0.4rem;
-            margin-top: 0.25rem;
-        }
-
-        .journey-sankey-node {
-            border: 1px solid rgba(202, 138, 229, 0.24);
-            background: rgba(225, 216, 243, 0.08);
-            border-radius: 0.62rem;
-            min-height: 2.05rem;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 0.67rem;
-            letter-spacing: 0.06em;
-            font-weight: 700;
-            color: var(--dash-text);
-            text-transform: uppercase;
-        }
-
-        .journey-sankey-node.is-google { border-color: rgba(251, 191, 36, 0.45); }
-        .journey-sankey-node.is-meta { border-color: rgba(96, 165, 250, 0.52); }
-        .journey-sankey-node.is-tiktok { border-color: rgba(45, 212, 191, 0.52); }
-        .journey-sankey-node.is-organic { border-color: rgba(134, 239, 172, 0.44); }
-
-        .journey-anim {
-            opacity: 0;
-            transform: translateY(6px) scale(0.98);
-            animation: journeyRise 360ms ease forwards;
-        }
-
-        @keyframes journeyRise {
-            to {
-                opacity: 1;
-                transform: translateY(0) scale(1);
-            }
-        }
-
-        .journey-node.is-google,
-        .journey-node-detail.is-google {
-            border-color: rgba(251, 191, 36, 0.45);
-            background: linear-gradient(135deg, rgba(180, 83, 9, 0.24), rgba(251, 191, 36, 0.1));
-        }
-
-        .journey-node.is-meta,
-        .journey-node-detail.is-meta {
-            border-color: rgba(96, 165, 250, 0.5);
-            background: linear-gradient(135deg, rgba(29, 78, 216, 0.24), rgba(96, 165, 250, 0.11));
-        }
-
-        .journey-node.is-tiktok,
-        .journey-node-detail.is-tiktok {
-            border-color: rgba(45, 212, 191, 0.5);
-            background: linear-gradient(135deg, rgba(13, 148, 136, 0.22), rgba(45, 212, 191, 0.1));
-        }
-
-        .journey-node.is-organic,
-        .journey-node-detail.is-organic {
-            border-color: rgba(134, 239, 172, 0.42);
-            background: linear-gradient(135deg, rgba(22, 101, 52, 0.2), rgba(74, 222, 128, 0.1));
-        }
-
-        .journey-arrow {
-            color: rgba(202, 138, 229, 0.88);
-            font-size: 0.74rem;
-        }
-
-        .journey-compact-card {
-            border: 1px solid rgba(202, 138, 229, 0.18);
-            border-radius: 0.9rem;
-            background: rgba(225, 216, 243, 0.07);
-            padding: 0.7rem;
-        }
-
-        .profile-priority-banner {
-            border: 1px solid rgba(202, 138, 229, 0.2);
-            background: linear-gradient(135deg, rgba(76, 29, 149, 0.26), rgba(12, 8, 19, 0.88));
-            border-radius: 1rem;
-            padding: 0.9rem 1rem;
-        }
-
-        .profile-priority-banner .focus-title {
-            color: #f4f1ff;
-            font-size: 0.88rem;
-            font-weight: 700;
-            letter-spacing: 0.04em;
-            text-transform: uppercase;
-        }
-
-        .profile-priority-banner .focus-copy {
-            color: rgba(232, 223, 247, 0.88);
-            font-size: 0.78rem;
-            margin-top: 0.2rem;
-        }
-
-        .profile-focus-grid {
-            margin-top: 0.7rem;
-            display: grid;
-            grid-template-columns: repeat(3, minmax(0, 1fr));
-            gap: 0.55rem;
-        }
-
-        .profile-focus-pill {
-            background: rgba(225, 216, 243, 0.08);
-            border: 1px solid rgba(202, 138, 229, 0.22);
-            border-radius: 0.7rem;
-            padding: 0.52rem 0.58rem;
-        }
-
-        .profile-focus-pill .label {
-            font-size: 0.64rem;
-            text-transform: uppercase;
-            letter-spacing: 0.12em;
-            color: rgba(202, 138, 229, 0.95);
-            font-weight: 700;
-        }
-
-        .profile-focus-pill .value {
-            margin-top: 0.22rem;
-            font-size: 0.84rem;
-            font-weight: 700;
-            color: #f8f6ff;
-        }
-
-        @media (max-width: 1024px) {
-            .live-feed-shell {
-                height: 34rem !important;
-                max-height: 34rem !important;
-                min-height: 34rem !important;
-            }
-
-            .profile-focus-grid {
-                grid-template-columns: 1fr;
-            }
-        }
-
-        .adray-dashboard .metric-pill {
-            display: inline-flex;
-            align-items: center;
-            gap: 0.5rem;
-            border-radius: 999px;
-            background: rgba(225, 216, 243, 0.06);
-            border: 1px solid rgba(202, 138, 229, 0.14);
-            padding: 0.45rem 0.8rem;
-            color: var(--dash-muted);
-            font-size: 0.8rem;
-        }
-
-        .adray-dashboard .metric-card-slide dt,
-        .adray-dashboard .metric-card-slide .text-xs,
-        .adray-dashboard .panel-kicker {
-            color: var(--dash-soft) !important;
-        }
-
-        .adray-dashboard .metric-card-slide .text-2xl,
-        .adray-dashboard .metric-card-slide .text-xl,
-        .adray-dashboard .metric-card-slide .text-lg {
-            color: var(--dash-text) !important;
-        }
-
-        .adray-dashboard .metric-card-slide .flex-shrink-0 {
-            border-radius: 14px !important;
-            box-shadow: 0 14px 32px rgba(0, 0, 0, 0.28);
-        }
-
-        .feed-item {
-            background: rgba(36, 28, 49, 0.72) !important;
-            border: 1px solid rgba(181, 92, 255, 0.12) !important;
-            border-left-width: 3px !important;
-            border-radius: 18px !important;
-            box-shadow: none !important;
-        }
-
-        .feed-item .live-feed-user-link,
-        .feed-item .live-feed-always-visible-user {
-            color: var(--dash-accent) !important;
-        }
-
-        .adray-dashboard canvas {
-            filter: saturate(1.05);
-        }
-
-        .adray-dashboard #session-detail-panel {
-            scroll-margin-top: 90px;
-        }
-
-        .animate-pulse-slow {
-            animation: pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite;
-        }
-        @keyframes pulse {
-            0%, 100% { opacity: 1; }
-            50% { opacity: .7; }
-        }
-        .feed-item-enter {
-            animation: slideIn 0.3s ease-out forwards;
-        }
-        .metric-carousel-viewport {
-            overflow-x: auto;
-            overflow-y: visible;
-            scroll-behavior: smooth;
-            /* scrollbar-width: none; */
-            /* -ms-overflow-style: none; */
-            padding-bottom: 0.8rem;
-        }
-
-        .metric-carousel-viewport::-webkit-scrollbar {
-            height: 8px;
-        }
-        .metric-carousel-viewport::-webkit-scrollbar-track {
-            background: var(--dash-panel-soft);
-            border-radius: 8px;
-        }
-        .metric-carousel-viewport::-webkit-scrollbar-thumb {
-            background: var(--dash-soft);
-            border-radius: 8px;
-        }
-        .metric-carousel-viewport::-webkit-scrollbar-thumb:hover {
-            background: var(--dash-accent);
-        }
-
-        .metric-card-slide {
-            flex: 0 0 75%;
-            min-width: 75%;
-        }
-        @media (min-width: 640px) {
-            .metric-card-slide {
-                flex-basis: 33.333%;
-                min-width: 33.333%;
-            }
-        }
-        @media (min-width: 1024px) {
-            .metric-card-slide {
-                flex-basis: 25%;
-                min-width: 25%;
-            }
-        }
-        .metric-carousel-track {
-            width: max-content;
-        }
-        .session-flow-step {
-            position: relative;
-            min-width: 120px;
-        }
-        .session-flow-step:not(:last-child)::after {
-            content: '';
-            position: absolute;
-            top: 24px;
-            right: -18px;
-            width: 24px;
-            height: 2px;
-            background: linear-gradient(90deg, rgba(181, 92, 255, 0.9) 0%, rgba(157, 91, 255, 0.72) 100%);
-        }
-        .pattern-rate-bar > span {
-            transition: width 0.35s ease;
-        }
-        #user-explorer-panel {
-            display: flex !important;
-            flex-direction: column;
-            height: 100vh;
-            max-height: 100vh;
-            overflow: hidden;
-            background: linear-gradient(180deg, rgba(26, 17, 41, 0.98) 0%, rgba(12, 8, 19, 0.96) 100%);
-            border-left: 1px solid var(--dash-border);
-            box-shadow: var(--dash-shadow);
-        }
-        #user-explorer-panel .ue-header {
-            background: var(--dash-panel-soft);
-            border-bottom: 1px solid var(--dash-border);
-        }
-        #ue-content {
-            flex: 1 1 auto;
-            min-height: 0;
-            overflow-y: auto !important;
-            overscroll-behavior: contain;
-            -webkit-overflow-scrolling: touch;
-            background: rgba(12, 8, 19, 0.82) !important;
-        }
-        #user-explorer-panel .bg-gray-50 {
-            background: var(--dash-panel-soft) !important;
-            border-color: var(--dash-border) !important;
-        }
-        #user-explorer-panel .border-gray-200,
-        #user-explorer-panel .border-indigo-100 {
-            border-color: var(--dash-border) !important;
-        }
-        #user-explorer-panel .text-gray-900,
-        #user-explorer-panel .text-gray-800,
-        #user-explorer-panel .text-gray-700,
-        #user-explorer-panel .text-gray-600,
-        #user-explorer-panel .text-gray-500 {
-            color: var(--dash-text) !important;
-        }
-        #ue-content::-webkit-scrollbar {
-            width: 10px;
-        }
-        #ue-content::-webkit-scrollbar-thumb {
-            background: rgba(202, 138, 229, 0.35);
-            border-radius: 999px;
-        }
-        @keyframes slideIn {
-            from { opacity: 0; transform: translateY(-10px); }
-            to { opacity: 1; transform: translateY(0); }
-        }
-    </style>
-</head>
-<body class="adray-dashboard min-h-screen">
-
-    <!-- Main Content -->
-    <main class="dashboard-shell w-full px-4 sm:px-6 lg:px-10 py-8">
-        
-        <!-- Header & Controls -->
-        <div class="dashboard-hero mb-8">
-            <div class="flex gap-3 flex-wrap justify-start">
-                <div class="ops-control relative" id="shop-switcher">
-                    <label class="text-xs text-gray-500 mr-2">Store</label>
-                    <button
-                        id="shop-switcher-button"
-                        type="button"
-                        class="flex items-center gap-2 text-left text-sm bg-transparent focus:outline-none"
-                        aria-haspopup="true"
-                        aria-expanded="false"
-                    >
-                        <span id="shop-name" class="font-medium text-[#F4ECFF]">Loading store...</span>
-                        <span id="shop-type-badge" class="journey-chip text-[10px] px-2 py-0.5">Store</span>
-                        <i class="fa-solid fa-chevron-down text-[10px] text-[#BBA5D6]"></i>
-                    </button>
-
-                    <div
-                        id="shop-switcher-menu"
-                        class="absolute left-0 top-full z-50 mt-2 hidden w-80 overflow-hidden rounded-2xl border border-[#30243F] bg-[#130F1D] shadow-[0_24px_60px_rgba(0,0,0,0.42)]"
-                    >
-                        <div class="border-b border-[#2B2139] px-4 py-3">
-                            <p class="text-[11px] font-semibold uppercase tracking-[0.24em] text-[#A792C0]">Store selector</p>
-                            <p class="mt-1 text-xs text-[#8F7EA8]">Shows stores already known in this browser or session.</p>
-                        </div>
-                        <div id="shop-switcher-options" class="max-h-72 overflow-y-auto p-2"></div>
-                    </div>
-                </div>
-                <div class="ops-control">
-                    <label for="date-preset" class="text-xs text-gray-500 mr-2">Range</label>
-                    <select id="date-preset" onchange="onDatePresetChange()" class="text-sm bg-transparent focus:outline-none">
-                        <option value="7d">7 days</option>
-                        <option value="30d" selected>30 days</option>
-                        <option value="90d">90 days</option>
-                        <option value="365d">12 months</option>
-                        <option value="all">All</option>
-                        <option value="custom">Custom</option>
-                    </select>
-                </div>
-                <input id="history-limit" type="hidden" value="all" />
-                <div class="ops-control">
-                    <label for="start-date" class="text-xs text-gray-500 mr-2">Start</label>
-                    <input id="start-date" type="date" class="text-sm bg-transparent focus:outline-none" />
-                </div>
-                <div class="ops-control">
-                    <label for="end-date" class="text-xs text-gray-500 mr-2">End</label>
-                    <input id="end-date" type="date" class="text-sm bg-transparent focus:outline-none" />
-                </div>
-                <div class="ops-control">
-                    <label for="attribution-model" class="text-xs text-gray-500 mr-2">Model</label>
-                    <select id="attribution-model" onchange="onAttributionModelChange()" class="text-sm bg-transparent focus:outline-none">
-                        <option value="last_touch" selected>LastClick</option>
-                        <option value="first_touch">FirstClick</option>
-                        <option value="linear">Linear</option>
-                        <option value="meta">Meta</option>
-                        <option value="google_ads">GoogleAds</option>
-                    </select>
-                </div>
-                <button onclick="fetchAnalytics()" class="ops-refresh-btn inline-flex items-center px-4 py-2 shadow-sm text-sm font-medium focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500">
-                    <i class="fas fa-sync-alt mr-2"></i> Refresh
-                </button>
-            </div>
-        </div>
-
-        <!-- Metric Cards -->
-        <div class="mb-8">
-            <div class="dashboard-section-heading flex items-center justify-between mb-3">
-                <div>
-                    <p class="panel-kicker">Core KPI</p>
-                    <h3 class="panel-title text-lg font-medium text-gray-900">Key Metrics</h3>
-                </div>
-            </div>
-            <div id="metric-carousel-viewport" class="metric-carousel-viewport">
-                <div id="metric-carousel-track" class="metric-carousel-track flex">
-            <!-- Revenue -->
-            <div class="metric-card-slide pr-5 box-border">
-            <div class="bg-white overflow-hidden shadow rounded-lg h-full">
-                <div class="p-5">
-                    <div class="flex items-center">
-                        <div class="flex-shrink-0 bg-indigo-500 rounded-md p-3">
-                            <i class="fas fa-dollar-sign text-white text-lg"></i>
-                        </div>
-                        <div class="ml-5 w-0 flex-1">
-                            <dl>
-                                <dt class="text-sm font-medium text-gray-500 truncate">Total Revenue</dt>
-                                <dd class="flex items-baseline">
-                                    <div class="text-2xl font-semibold text-gray-900" id="total-revenue">$0.00</div>
-                                </dd>
-                            </dl>
-                        </div>
-                    </div>
-                </div>
-            </div>
-            </div>
-
-<!-- Total Orders -->
-            <div class="metric-card-slide pr-5 box-border">
-            <div class="bg-white overflow-hidden shadow rounded-lg h-full">
-                <div class="p-5">
-                    <div class="flex items-center">
-                        <div class="flex-shrink-0 bg-teal-500 rounded-md p-3">
-                            <i class="fas fa-boxes text-white text-lg"></i>
-                        </div>
-                        <div class="ml-5 w-0 flex-1">
-                            <dl>
-                                <dt class="text-sm font-medium text-gray-500 truncate">Total Orders</dt>
-                                <dd class="flex items-baseline">
-                                    <div class="text-2xl font-semibold text-gray-900" id="total-orders">0</div>
-                                </dd>
-                            </dl>
-                        </div>
-                    </div>
-                </div>
-            </div>
-            </div>
-
-            <!-- Attributed Orders -->
-            <div class="metric-card-slide pr-5 box-border">
-            <div class="bg-white overflow-hidden shadow rounded-lg h-full">
-                <div class="p-5">
-                    <div class="flex items-center">
-                        <div class="flex-shrink-0 bg-green-500 rounded-md p-3">
-                            <i class="fas fa-shopping-cart text-white text-lg"></i>
-                        </div>
-                        <div class="ml-5 w-0 flex-1">
-                            <dl>
-                                <dt class="text-sm font-medium text-gray-500 truncate">Orders Atribuidos</dt>
-                                <dd class="flex items-baseline">
-                                    <div class="text-2xl font-semibold text-gray-900" id="attributed-orders">0</div>
-                                </dd>
-                            </dl>
-                        </div>
-                    </div>
-                </div>
-            </div>
-            </div>
-
-            <!-- Sessions -->
-            <div class="metric-card-slide pr-5 box-border">
-            <div class="bg-white overflow-hidden shadow rounded-lg h-full">
-                <div class="p-5">
-                    <div class="flex items-center">
-                        <div class="flex-shrink-0 bg-sky-500 rounded-md p-3">
-                            <i class="fas fa-users text-white text-lg"></i>
-                        </div>
-                        <div class="ml-5 w-0 flex-1">
-                            <dl>
-                                <dt class="text-sm font-medium text-gray-500 truncate">Sessions</dt>
-                                <dd class="flex items-baseline">
-                                    <div class="text-2xl font-semibold text-gray-900" id="total-sessions">0</div>
-                                </dd>
-                            </dl>
-                        </div>
-                    </div>
-                </div>
-            </div>
-            </div>
-
-            <!-- Conversion Rate -->
-            <div class="metric-card-slide pr-5 box-border">
-            <div class="bg-white overflow-hidden shadow rounded-lg h-full">
-                <div class="p-5">
-                    <div class="flex items-center">
-                        <div class="flex-shrink-0 bg-cyan-600 rounded-md p-3">
-                            <i class="fas fa-chart-line text-white text-lg"></i>
-                        </div>
-                        <div class="ml-5 w-0 flex-1">
-                            <dl>
-                                <dt class="text-sm font-medium text-gray-500 truncate">Conversion Rate</dt>
-                                <dd class="flex items-baseline">
-                                    <div class="text-2xl font-semibold text-gray-900" id="conversion-rate">0%</div>
-                                </dd>
-                            </dl>
-                        </div>
-                    </div>
-                </div>
-            </div>
-            </div>
-
-            <!-- Page Views -->
-            <div class="metric-card-slide pr-5 box-border">
-            <div class="bg-white overflow-hidden shadow rounded-lg h-full">
-                <div class="p-5">
-                    <div class="flex items-center">
-                        <div class="flex-shrink-0 bg-blue-500 rounded-md p-3">
-                            <i class="fas fa-eye text-white text-lg"></i>
-                        </div>
-                        <div class="ml-5 w-0 flex-1">
-                            <dl>
-                                <dt class="text-sm font-medium text-gray-500 truncate">Page Views</dt>
-                                <dd class="flex items-baseline">
-                                    <div class="text-2xl font-semibold text-gray-900" id="page-views">0</div>
-                                </dd>
-                            </dl>
-                        </div>
-                    </div>
-                </div>
-            </div>
-            </div>
-
-            <!-- View Item -->
-            <div class="metric-card-slide pr-5 box-border">
-            <div class="bg-white overflow-hidden shadow rounded-lg h-full">
-                <div class="p-5">
-                    <div class="flex items-center">
-                        <div class="flex-shrink-0 bg-teal-500 rounded-md p-3">
-                            <i class="fas fa-box-open text-white text-lg"></i>
-                        </div>
-                        <div class="ml-5 w-0 flex-1">
-                            <dl>
-                                <dt class="text-sm font-medium text-gray-500 truncate">View Item</dt>
-                                <dd class="flex items-baseline">
-                                    <div class="text-2xl font-semibold text-gray-900" id="view-item">0</div>
-                                </dd>
-                            </dl>
-                        </div>
-                    </div>
-                </div>
-            </div>
-            </div>
-
-            <!-- Add To Cart -->
-            <div class="metric-card-slide pr-5 box-border">
-            <div class="bg-white overflow-hidden shadow rounded-lg h-full">
-                <div class="p-5">
-                    <div class="flex items-center">
-                        <div class="flex-shrink-0 bg-amber-500 rounded-md p-3">
-                            <i class="fas fa-cart-plus text-white text-lg"></i>
-                        </div>
-                        <div class="ml-5 w-0 flex-1">
-                            <dl>
-                                <dt class="text-sm font-medium text-gray-500 truncate">Add To Cart</dt>
-                                <dd class="flex items-baseline">
-                                    <div class="text-2xl font-semibold text-gray-900" id="add-to-cart">0</div>
-                                </dd>
-                            </dl>
-                        </div>
-                    </div>
-                </div>
-            </div>
-            </div>
-
-            <!-- Begin Checkout -->
-            <div class="metric-card-slide pr-5 box-border">
-            <div class="bg-white overflow-hidden shadow rounded-lg h-full">
-                <div class="p-5">
-                    <div class="flex items-center">
-                        <div class="flex-shrink-0 bg-purple-500 rounded-md p-3">
-                            <i class="fas fa-credit-card text-white text-lg"></i>
-                        </div>
-                        <div class="ml-5 w-0 flex-1">
-                            <dl>
-                                <dt class="text-sm font-medium text-gray-500 truncate">Begin Checkout</dt>
-                                <dd class="flex items-baseline">
-                                    <div class="text-2xl font-semibold text-gray-900" id="begin-checkout">0</div>
-                                </dd>
-                            </dl>
-                        </div>
-                    </div>
-                </div>
-            </div>
-            </div>
-
-            <!-- Purchase Events -->
-            <div class="metric-card-slide pr-5 box-border">
-            <div class="bg-white overflow-hidden shadow rounded-lg h-full">
-                <div class="p-5">
-                    <div class="flex items-center">
-                        <div class="flex-shrink-0 bg-emerald-600 rounded-md p-3">
-                            <i class="fas fa-check-circle text-white text-lg"></i>
-                        </div>
-                        <div class="ml-5 w-0 flex-1">
-                            <dl>
-                                <dt class="text-sm font-medium text-gray-500 truncate">Purchase Events</dt>
-                                <dd class="flex items-baseline">
-                                    <div class="text-2xl font-semibold text-gray-900" id="purchase-events">0</div>
-                                </dd>
-                            </dl>
-                        </div>
-                    </div>
-                </div>
-            </div>
-            </div>
-
-            <!-- Unattributed Orders -->
-            <div class="metric-card-slide pr-5 box-border">
-            <div class="bg-white overflow-hidden shadow rounded-lg h-full">
-                <div class="p-5">
-                    <div class="flex items-center">
-                        <div class="flex-shrink-0 bg-rose-500 rounded-md p-3">
-                            <i class="fas fa-unlink text-white text-lg"></i>
-                        </div>
-                        <div class="ml-5 w-0 flex-1">
-                            <dl>
-                                <dt class="text-sm font-medium text-gray-500 truncate">Unattributed Orders</dt>
-                                <dd class="flex items-baseline">
-                                    <div class="text-2xl font-semibold text-gray-900" id="unattributed-orders">0</div>
-                                </dd>
-                            </dl>
-                        </div>
-                    </div>
-                </div>
-            </div>
-            </div>
-
-            <!-- Unattributed Revenue -->
-            <div class="metric-card-slide pr-5 box-border">
-            <div class="bg-white overflow-hidden shadow rounded-lg h-full">
-                <div class="p-5">
-                    <div class="flex items-center">
-                        <div class="flex-shrink-0 bg-orange-500 rounded-md p-3">
-                            <i class="fas fa-ban text-white text-lg"></i>
-                        </div>
-                        <div class="ml-5 w-0 flex-1">
-                            <dl>
-                                <dt class="text-sm font-medium text-gray-500 truncate">Unattributed Revenue</dt>
-                                <dd class="flex items-baseline">
-                                    <div class="text-2xl font-semibold text-gray-900" id="unattributed-revenue">$0.00</div>
-                                </dd>
-                            </dl>
-                        </div>
-                    </div>
-                </div>
-            </div>
-            </div>
-
-            <!-- Meta Ads -->
-            <div class="metric-card-slide pr-5 box-border" id="slide-meta-roas">
-            <div class="bg-white overflow-hidden shadow rounded-lg h-full" style="border-left: 4px solid #1877F2;">
-                <div class="p-5">
-                    <div class="flex items-center">
-                        <div class="flex-shrink-0" style="background-color: #1877F2; border-radius: 0.375rem; padding: 0.75rem;">
-                            <i class="fab fa-meta text-white text-lg w-5 h-5 flex items-center justify-center"></i>
-                        </div>
-                        <div class="ml-5 w-0 flex-1">
-                            <dl>
-                                <dt class="text-sm font-medium text-gray-500 truncate">Meta ROAS (Invertido: <span id="meta-spend">$0.00</span>)</dt>
-                                <dd class="flex items-baseline">
-                                    <div class="text-2xl font-semibold text-gray-900" id="meta-roas">-</div>
-                                </dd>
-                            </dl>
-                        </div>
-                    </div>
-                </div>
-            </div>
-            </div>
-
-            <!-- Google Ads -->
-            <div class="metric-card-slide pr-5 box-border" id="slide-google-roas">
-            <div class="bg-white overflow-hidden shadow rounded-lg h-full" style="border-left: 4px solid #EA4335;">
-                <div class="p-5">
-                    <div class="flex items-center">
-                        <div class="flex-shrink-0" style="background-color: #EA4335; border-radius: 0.375rem; padding: 0.75rem;">
-                            <i class="fab fa-google text-white text-lg w-5 h-5 flex items-center justify-center"></i>
-                        </div>
-                        <div class="ml-5 w-0 flex-1">
-                            <dl>
-                                <dt class="text-sm font-medium text-gray-500 truncate">Google ROAS (Invertido: <span id="google-spend">$0.00</span>)</dt>
-                                <dd class="flex items-baseline">
-                                    <div class="text-2xl font-semibold text-gray-900" id="google-roas">-</div>
-                                </dd>
-                            </dl>
-                        </div>
-                    </div>
-                </div>
-            </div>
-            </div>
-
-            <!-- TikTok Ads -->
-            <div class="metric-card-slide pr-5 box-border" id="slide-tiktok-roas">
-            <div class="bg-white overflow-hidden shadow rounded-lg h-full" style="border-left: 4px solid #000000;">
-                <div class="p-5">
-                    <div class="flex items-center">
-                        <div class="flex-shrink-0" style="background-color: #000000; border-radius: 0.375rem; padding: 0.75rem;">
-                            <i class="fab fa-tiktok text-white text-lg w-5 h-5 flex items-center justify-center"></i>
-                        </div>
-                        <div class="ml-5 w-0 flex-1">
-                            <dl>
-                                <dt class="text-sm font-medium text-gray-500 truncate">TikTok ROAS (Invertido: <span id="tiktok-spend">$0.00</span>)</dt>
-                                <dd class="flex items-baseline">
-                                    <div class="text-2xl font-semibold text-gray-900" id="tiktok-roas">-</div>
-                                </dd>
-                            </dl>
-                        </div>
-                    </div>
-                </div>
-            </div>
-            </div>
-
-                </div>
-            </div>
-        </div>
-
-        <!-- Top Row: Live Feed + Recommendations -->
-        <div class="dashboard-section-grid grid grid-cols-1 lg:grid-cols-3 gap-8 items-stretch">
-            <div class="lg:col-span-1 h-full">
-                <div class="ops-panel live-feed-shell flex h-full flex-col">
-                    <div class="px-6 py-4 border-b border-gray-200 bg-gray-50 rounded-t-lg flex justify-between items-center">
-                        <div>
-                            <p class="panel-kicker">Real time</p>
-                            <h3 class="panel-title text-lg leading-6 font-medium text-gray-900">Live Feed</h3>
-                        </div>
-                        <span class="live-feed-badge inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium">
-                            Live
-                        </span>
-                    </div>
-                    <div class="flex-1 overflow-y-auto p-4 space-y-4" id="feed-container">
-                        <div class="text-center text-gray-400 text-sm py-8" id="feed-placeholder">
-                            Waiting for events...
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <div class="lg:col-span-2 h-full">
-                <div class="ops-panel h-full p-6">
-                    <div class="flex items-start justify-between gap-4 flex-wrap mb-4">
-                        <div>
-                            <h3 class="panel-title text-lg leading-6 font-medium" style="color: #f8fafc;">Conversion paths</h3>
-                            <div class="journey-channel-legend mt-3" id="journey-channel-legend" aria-label="Leyenda de canales">
-                                <button type="button" class="journey-chip journey-filter-channel is-active" data-channel="all"><i class="fa-solid fa-layer-group"></i>All</button>
-                                <button type="button" class="journey-chip journey-filter-channel is-meta" data-channel="meta"><i class="fa-brands fa-meta"></i>Meta</button>
-                                <button type="button" class="journey-chip journey-filter-channel is-google" data-channel="google"><i class="fa-brands fa-google"></i>Google</button>
-                                <button type="button" class="journey-chip journey-filter-channel is-tiktok" data-channel="tiktok"><i class="fa-brands fa-tiktok"></i>TikTok</button>
-                                <button type="button" class="journey-chip journey-filter-channel is-organic" data-channel="organic"><i class="fa-solid fa-globe"></i>Orgánico</button>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="grid grid-cols-1 xl:grid-cols-2 gap-6">
-                        <div class="session-pattern-card rounded-xl p-4">
-                            <h4 class="text-sm font-semibold mb-3" style="color: #e2e8f0;">Historical Conversion Journeys</h4>
-                            <div id="attribution-journey-history" class="attribution-journey-history space-y-3"></div>
-                        </div>
-                        <div class="session-visual-card rounded-xl p-4">
-                            <h4 class="text-sm font-semibold mb-3" style="color: #e2e8f0;">Selected Journey</h4>
-                            <div id="attribution-journey-focus" class="attribution-journey-focus space-y-4"></div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <!-- Charts Row: Attribution + Trend -->
-        <div class="mt-8 grid grid-cols-1 lg:grid-cols-2 gap-8 items-stretch">
-            <div class="ops-panel p-6 h-full">
-                <div class="flex items-center justify-between mb-4">
-                    <div>
-                        <p class="panel-kicker">Commercial</p>
-                        <h3 class="panel-title text-lg leading-6 font-medium text-gray-900">ROAS Comparison (AdNova vs Native)</h3>
-                    </div>
-                    <span id="attribution-model-badge" class="text-xs text-gray-500">Model: LastClick</span>
-                </div>
-                <div class="relative h-64">
-                    <canvas id="attributionChart"></canvas>
-                </div>
-            </div>
-
-            <div class="ops-panel p-6 h-full">
-                <p class="panel-kicker">Distribution</p>
-                  <h3 class="panel-title text-lg leading-6 font-medium text-gray-900 mb-1">Attributed Orders</h3>
-                  <div class="relative h-64 flex items-center justify-between">
-                      <div class="w-2/3 h-full relative">
-                          <canvas id="attributionPieChart"></canvas>
-                      </div>
-                      <div id="pieChartLegend" class="w-1/3 flex flex-col justify-center space-y-3 pl-4 overflow-y-auto max-h-full"></div>
-                  </div>
-            </div>
-        </div>
-
-        <section id="session-detail-panel" class="hidden" aria-hidden="true">
-            <div class="ops-panel overflow-hidden border border-gray-200">
-                <div class="px-6 py-4 border-b border-gray-200 flex items-center justify-between gap-4 flex-wrap">
-                    <div>
-                        <p class="panel-kicker">Exploration</p>
-                        <h3 class="panel-title text-lg font-semibold text-gray-900">Session Explorer</h3>
-                        <p class="text-sm text-gray-500" id="session-detail-title">Users históricos</p>
-                    </div>
-                    <div class="flex items-center gap-3">
-                        <button id="session-detail-close" type="button" class="session-close-btn inline-flex items-center justify-center w-10 h-10 rounded-full text-gray-700 hover:bg-gray-50">
-                            <i class="fas fa-times"></i>
-                        </button>
-                    </div>
-                </div>
-                <div class="p-6 space-y-6">
-                    <div id="profile-priority-banner" class="profile-priority-banner"></div>
-                    <div class="grid grid-cols-1 xl:grid-cols-2 gap-6">
-                        <div class="session-pattern-card rounded-xl p-4">
-                            <h4 class="text-sm font-semibold text-gray-900 mb-3">Recomendaciones accionables</h4>
-                            <div class="space-y-4" id="session-detail-actions"></div>
-                        </div>
-                        <div class="session-summary-card rounded-xl p-4">
-                            <h4 class="text-sm font-semibold text-gray-900 mb-3">Qué suele comprar</h4>
-                            <div class="space-y-4" id="session-detail-affinity"></div>
-                        </div>
-                    </div>
-                    <div class="flex flex-col xl:flex-row xl:items-center xl:justify-between gap-4">
-                        <div class="flex items-center gap-2 flex-wrap">
-                            <button id="session-peer-prev" type="button" class="session-toolbar-btn inline-flex items-center px-3 py-2 rounded-lg text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed">
-                                <i class="fas fa-chevron-left mr-2"></i> Sesión previa
-                            </button>
-                            <button id="session-peer-next" type="button" class="session-toolbar-btn inline-flex items-center px-3 py-2 rounded-lg text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed">
-                                Siguiente sesión <i class="fas fa-chevron-right ml-2"></i>
-                            </button>
-                            <button id="session-compare-recommended" type="button" class="session-compare-trigger hidden inline-flex items-center px-3 py-2 rounded-lg text-sm text-indigo-700 hover:bg-indigo-100 disabled:opacity-50 disabled:cursor-not-allowed">
-                                <i class="fas fa-sparkles mr-2"></i> Comparación sugerida
-                            </button>
-                        </div>
-                        <div class="flex items-center gap-2 flex-wrap">
-                            <label for="session-timeline-filter" class="text-xs uppercase tracking-wide text-gray-500">Timeline</label>
-                            <select id="session-timeline-filter" class="session-filter-select text-sm rounded-lg px-3 py-2 bg-white">
-                                <option value="all">Todos</option>
-                                <option value="funnel">Funnel</option>
-                                <option value="commerce">Commerce</option>
-                                <option value="content">Contenido</option>
-                            </select>
-                        </div>
-                    </div>
-                    <div>
-                        <p class="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-2">Perfiles y sesiones relacionadas</p>
-                        <div id="session-peer-list" class="flex flex-wrap gap-2"></div>
-                        <p id="session-compare-recommended-note" class="mt-2 text-xs text-gray-500"></p>
-                    </div>
-                    <div id="session-compare-panel" class="session-compare-panel hidden rounded-2xl p-5">
-                        <div class="flex items-center justify-between gap-4 flex-wrap mb-4">
-                            <div>
-                                <h4 class="text-sm font-semibold text-gray-900">Comparación lado a lado</h4>
-                                <p class="text-xs text-gray-500" id="session-compare-title">Selecciona una sesión relacionada to compare.</p>
-                            </div>
-                            <button id="session-compare-clear" type="button" class="session-clear-btn inline-flex items-center px-3 py-2 rounded-lg text-sm text-gray-700 hover:bg-gray-50">
-                                Limpiar comparación
-                            </button>
-                        </div>
-                        <div id="session-compare-content" class="space-y-4"></div>
-                    </div>
-                    <div class="grid grid-cols-1 md:grid-cols-4 gap-4" id="session-detail-metrics"></div>
-                    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                        <div class="session-summary-card rounded-xl p-4">
-                            <h4 class="text-sm font-semibold text-gray-900 mb-3">Resumen</h4>
-                            <div class="space-y-2 text-sm text-gray-600" id="session-detail-summary"></div>
-                        </div>
-                        <div class="session-summary-card rounded-xl p-4">
-                            <h4 class="text-sm font-semibold text-gray-900 mb-3">Órdenes del perfil</h4>
-                            <div class="space-y-2 text-sm text-gray-600" id="session-detail-orders"></div>
-                        </div>
-                    </div>
-                    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                        <div class="session-summary-card rounded-xl p-4">
-                            <h4 class="text-sm font-semibold text-gray-900 mb-3">Attribution y signals</h4>
-                            <div class="space-y-2 text-sm text-gray-600" id="session-detail-attribution"></div>
-                        </div>
-                        <div class="session-summary-card rounded-xl p-4">
-                            <h4 class="text-sm font-semibold text-gray-900 mb-3">Path y productos</h4>
-                            <div class="space-y-3 text-sm text-gray-600" id="session-detail-journey"></div>
-                        </div>
-                    </div>
-                    <div class="grid grid-cols-1 xl:grid-cols-2 gap-6">
-                        <div class="session-visual-card rounded-xl p-4">
-                            <h4 class="text-sm font-semibold text-gray-900 mb-3">Mapa visual de la sesión</h4>
-                            <div id="session-detail-visual" class="flex flex-wrap gap-6 items-start"></div>
-                        </div>
-                        <div class="session-pattern-card rounded-xl p-4">
-                            <h4 class="text-sm font-semibold text-gray-900 mb-3">Patrones y próximos pasos</h4>
-                            <div class="space-y-4" id="session-detail-patterns"></div>
-                        </div>
-                    </div>
-                    <div class="session-summary-card rounded-xl p-4">
-                        <h4 class="text-sm font-semibold text-gray-900 mb-3">Timeline de eventos</h4>
-                        <div class="space-y-3" id="session-detail-timeline"></div>
-                    </div>
-                </div>
-            </div>
-        </section>
-
-        <!-- New: Pixel Health + Supporting Panels + Top Products -->
-<div class="dashboard-support-grid grid grid-cols-1 lg:grid-cols-2 gap-8 mt-8">
-    <div class="ops-panel p-6">
-                    <div class="flex items-center justify-between mb-4 gap-3 flex-wrap">
-                        <div>
-                            <p class="panel-kicker">Investment</p>
-                            <h3 class="panel-title text-lg leading-6 font-medium text-gray-900">Paid Media</h3>
-                            <p class="panel-subtitle text-sm mt-1">Compara gasto, revenue y ROAS para decidir si el tráfico está justificando la inversión.</p>
-                        </div>
-                        <span id="pm-link-status" class="text-xs font-semibold uppercase tracking-wide text-gray-500">No conectado</span>
-                    </div>
-                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        <div class="bg-gray-50 rounded-lg p-4">
-                            <div class="text-xs font-semibold uppercase tracking-wide text-gray-500">Meta Ads</div>
-                            <div class="mt-2 text-lg font-semibold text-gray-900" id="pm-meta-status">-</div>
-                            <div class="mt-1 text-sm text-gray-500">Spend: <span id="pm-meta-spend">$0.00</span></div>
-                            <div class="mt-1 text-sm text-gray-500">Revenue: <span id="pm-meta-revenue">$0.00</span></div>
-                            <div class="mt-1 text-sm text-gray-500">ROAS: <span id="pm-meta-roas">-</span></div>
-                            <div class="mt-1 text-xs text-gray-500">Cuenta conectada: <span id="pm-meta-account" class="font-medium">-</span></div>
-                            <div class="mt-1 text-xs text-gray-500">Campaña principal: <span id="pm-meta-campaign" class="font-medium">-</span></div>
-                            <div class="mt-1 text-xs text-gray-400" id="pm-meta-sync">Sin datos live todavía</div>
-                            <div class="mt-2 flex flex-col items-start gap-2">
-                                <select id="pm-meta-account-select" class="text-xs border border-gray-300 rounded-md px-2 py-1 bg-white w-full"></select>
-                                <button id="pm-meta-account-apply" class="text-xs font-semibold px-2 py-1 rounded-md border border-gray-300 bg-white hover:bg-gray-50">Cambiar</button>
-                            </div>
-                            <div class="mt-1 text-[11px] text-gray-400" id="pm-meta-account-feedback"></div>
-                        </div>
-                        <div class="bg-gray-50 rounded-lg p-4">
-                            <div class="text-xs font-semibold uppercase tracking-wide text-gray-500">Google Ads</div>
-                            <div class="mt-2 text-lg font-semibold text-gray-900" id="pm-google-status">-</div>
-                            <div class="mt-1 text-sm text-gray-500">Spend: <span id="pm-google-spend">$0.00</span></div>
-                            <div class="mt-1 text-sm text-gray-500">Revenue: <span id="pm-google-revenue">$0.00</span></div>
-                            <div class="mt-1 text-sm text-gray-500">ROAS: <span id="pm-google-roas">-</span></div>
-                            <div class="mt-1 text-xs text-gray-500">Cuenta conectada: <span id="pm-google-account" class="font-medium">-</span></div>
-                            <div class="mt-1 text-xs text-gray-500">Campaña principal: <span id="pm-google-campaign" class="font-medium">-</span></div>
-                            <div class="mt-1 text-xs text-gray-400" id="pm-google-sync">Sin datos live todavía</div>
-                            <div class="mt-2 flex flex-col items-start gap-2">
-                                <select id="pm-google-account-select" class="text-xs border border-gray-300 rounded-md px-2 py-1 bg-white w-full"></select>
-                                <button id="pm-google-account-apply" class="text-xs font-semibold px-2 py-1 rounded-md border border-gray-300 bg-white hover:bg-gray-50">Cambiar</button>
-                            </div>
-                            <div class="mt-1 text-[11px] text-gray-400" id="pm-google-account-feedback"></div>
-                        </div>
-                    </div>
-    </div> <!-- Close Paid Media Panel -->
-
-    <!-- Data Enrichment Panel -->
-<div class="ops-panel p-6" id="data-enrichment-panel">
-    <div class="flex items-center justify-between mb-4">
-        <div>
-            <p class="panel-kicker">Data Pipeline</p>
-            <h3 class="panel-title text-lg leading-6 font-medium text-gray-900 mb-1">Data Enrichment</h3>
-            <p class="panel-subtitle text-sm mb-0">Accurate data signals sent per order to their respective attribution platform.</p>
-        </div>
-        <div>
-            <label class="inline-flex items-center cursor-pointer">
-                <input type="checkbox" id="de-toggle" class="sr-only peer" checked onchange="toggleDataEnrichment(this)">
-                <div class="relative w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-indigo-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600"></div>
-                <span class="ms-3 text-sm font-medium text-gray-500" id="de-toggle-text">Active</span>
-            </label>
-        </div>
-    </div>
-    <div class="overflow-y-auto pr-2 space-y-1" style="max-height: 400px;" id="de-payload-list">
-        <p class="text-sm text-gray-400">Waiting for recent orders...</p>
-    </div>
-</div>
-</div>
-
-</main>
-
-    <!-- Data Enrichment Modal -->
-    <script>
         let currentShopId = null;
         let currentAttributionModel = 'last_touch';
         let attributionChartInstance = null;
@@ -2164,6 +30,7 @@
             profileKey: 'all',
             profileSearch: '',
             profileSort: 'orders',
+            selectedJourneyKey: '',
         };
         let selectedJourneyTimelineMode = 'condensed';
         let sessionExplorerState = {
@@ -2196,6 +63,7 @@
         const KNOWN_SHOPS_STORAGE_KEY = 'adray_analytics_known_shops';
         const MAX_KNOWN_SHOPS = 12;
         let authorizedShopOptions = [];
+        let hasRenderedInitialAnalytics = false;
 
         function logAnalyticsDebug(message, payload = {}) {
             try {
@@ -2203,6 +71,50 @@
             } catch (error) {
                 // noop
             }
+        }
+
+        function setAnalyticsLoadingState(active, {
+            mode = hasRenderedInitialAnalytics ? 'refresh' : 'boot',
+            title = '',
+            copy = '',
+        } = {}) {
+            const body = document.body;
+            const overlay = document.getElementById('analytics-loader');
+            const overlayTitle = document.getElementById('analytics-loader-title');
+            const overlayCopy = document.getElementById('analytics-loader-copy');
+            const indicator = document.getElementById('analytics-refresh-indicator');
+            const indicatorTitle = document.getElementById('analytics-refresh-title');
+            const indicatorCopy = document.getElementById('analytics-refresh-copy');
+
+            if (overlayTitle && title) overlayTitle.textContent = title;
+            if (overlayCopy && copy) overlayCopy.textContent = copy;
+            if (indicatorTitle && title) indicatorTitle.textContent = title;
+            if (indicatorCopy && copy) indicatorCopy.textContent = copy;
+
+            if (!body) return;
+
+            if (!active) {
+                body.dataset.analyticsLoading = 'idle';
+                if (overlay) overlay.classList.add('is-hidden');
+                if (indicator) indicator.classList.remove('is-visible');
+                return;
+            }
+
+            body.dataset.analyticsLoading = mode;
+
+            if (mode === 'boot' && !hasRenderedInitialAnalytics) {
+                if (overlay) overlay.classList.remove('is-hidden');
+                if (indicator) indicator.classList.remove('is-visible');
+                return;
+            }
+
+            if (overlay) overlay.classList.add('is-hidden');
+            if (indicator) indicator.classList.add('is-visible');
+        }
+
+        function markAnalyticsReady() {
+            hasRenderedInitialAnalytics = true;
+            setAnalyticsLoadingState(false);
         }
 
         function formatDateInputValue(date) {
@@ -2556,6 +468,105 @@
             renderShopSwitcherOptions();
         }
 
+        let activeTooltipTarget = null;
+        let globalTooltipEl = null;
+
+        function ensureGlobalTooltipEl() {
+            if (globalTooltipEl && document.body.contains(globalTooltipEl)) return globalTooltipEl;
+            globalTooltipEl = document.createElement('div');
+            globalTooltipEl.id = 'adray-global-tooltip';
+            globalTooltipEl.setAttribute('role', 'tooltip');
+            document.body.appendChild(globalTooltipEl);
+            return globalTooltipEl;
+        }
+
+        function positionGlobalTooltip(target) {
+            const tooltip = ensureGlobalTooltipEl();
+            if (!target) return;
+
+            tooltip.style.left = '0px';
+            tooltip.style.top = '0px';
+            tooltip.style.visibility = 'hidden';
+            tooltip.classList.add('is-visible');
+
+            const rect = target.getBoundingClientRect();
+            const pad = 10;
+            const tooltipRect = tooltip.getBoundingClientRect();
+            const maxLeft = Math.max(pad, window.innerWidth - tooltipRect.width - pad);
+            const centeredLeft = rect.left + (rect.width / 2) - (tooltipRect.width / 2);
+            const left = Math.min(maxLeft, Math.max(pad, centeredLeft));
+
+            let top = rect.top - tooltipRect.height - 10;
+            if (top < pad) {
+                top = Math.min(window.innerHeight - tooltipRect.height - pad, rect.bottom + 10);
+            }
+
+            tooltip.style.left = `${left}px`;
+            tooltip.style.top = `${Math.max(pad, top)}px`;
+            tooltip.style.visibility = 'visible';
+        }
+
+        function showGlobalTooltip(target) {
+            const tooltipText = String(target?.getAttribute('data-tooltip') || '').trim();
+            if (!tooltipText) return hideGlobalTooltip();
+            activeTooltipTarget = target;
+            const tooltip = ensureGlobalTooltipEl();
+            tooltip.textContent = tooltipText;
+            tooltip.classList.add('is-visible');
+            positionGlobalTooltip(target);
+        }
+
+        function hideGlobalTooltip() {
+            activeTooltipTarget = null;
+            if (!globalTooltipEl) return;
+            globalTooltipEl.classList.remove('is-visible');
+            globalTooltipEl.style.visibility = 'hidden';
+        }
+
+        function initializeGlobalTooltipPortal() {
+            if (document.body?.dataset?.adrayTooltipPortal === 'ready') return;
+            ensureGlobalTooltipEl();
+            if (document.body) {
+                document.body.dataset.adrayTooltipPortal = 'ready';
+                document.body.classList.add('tooltip-portal-ready');
+            }
+
+            document.addEventListener('mouseover', (event) => {
+                const target = event.target instanceof Element ? event.target.closest('[data-tooltip]') : null;
+                if (!target) return;
+                showGlobalTooltip(target);
+            });
+
+            document.addEventListener('mouseout', (event) => {
+                if (!activeTooltipTarget) return;
+                const next = event.relatedTarget instanceof Element ? event.relatedTarget.closest('[data-tooltip]') : null;
+                if (next === activeTooltipTarget) return;
+                if (next) {
+                    showGlobalTooltip(next);
+                    return;
+                }
+                hideGlobalTooltip();
+            });
+
+            document.addEventListener('focusin', (event) => {
+                const target = event.target instanceof Element ? event.target.closest('[data-tooltip]') : null;
+                if (!target) return;
+                showGlobalTooltip(target);
+            });
+
+            document.addEventListener('focusout', () => {
+                hideGlobalTooltip();
+            });
+
+            document.addEventListener('scroll', () => {
+                if (activeTooltipTarget) positionGlobalTooltip(activeTooltipTarget);
+            }, true);
+
+            window.addEventListener('resize', () => {
+                if (activeTooltipTarget) positionGlobalTooltip(activeTooltipTarget);
+            });
+        }
+
         function resolvePublicShopId() {
             const fromUrl = getShopIdFromUrl();
             if (fromUrl) {
@@ -2574,6 +585,13 @@
             initializeDateControls();
             initializeMetricCarousel();
             initializeShopSwitcher();
+            initializeGlobalTooltipPortal();
+            initializeLiveFeedScrollbar();
+            setAnalyticsLoadingState(true, {
+                mode: 'boot',
+                title: 'Connecting your store',
+                copy: 'Checking the active session and preparing the embedded attribution dashboard.',
+            });
 
             // Check URL purely for overrides (for admins or explicit intent)
             const fromUrl = getShopIdFromUrl();
@@ -2636,6 +654,7 @@
                         });
                         updateShopHeader('Select store', 'store');
                         renderShopSwitcherOptions(authorizedShops.length ? authorizedShops : (sessionShop ? [{ shop: sessionShop, type: sessionType }] : []));
+                        setAnalyticsLoadingState(false);
                         return;
                     }
 
@@ -2655,11 +674,10 @@
                         inferredType,
                     });
 
-                    // Load initial data
-                    await fetchAnalytics();
                     connectLiveFeed();
                     startWordPressUsersPolling();
                     loadSessionExplorerOverview();
+                    await fetchAnalytics();
                     return;
                 }
             } catch (error) {
@@ -2678,10 +696,10 @@
                     currentShopId,
                     inferredType,
                 });
-                await fetchAnalytics();
                 connectLiveFeed();
                 startWordPressUsersPolling();
                 loadSessionExplorerOverview();
+                await fetchAnalytics();
             } else {
                 logAnalyticsDebug('public fallback mode has no shop', {
                     fromUrl,
@@ -2689,6 +707,7 @@
                 });
                 updateShopHeader('Select store', 'store');
                 renderShopSwitcherOptions();
+                setAnalyticsLoadingState(false);
             }
         }
 
@@ -2864,14 +883,68 @@
             return first.charAt(0).toUpperCase() + first.slice(1).toLowerCase();
         }
 
-        function humanReadableChannel(channel) {
-            const value = String(channel || '').trim().toLowerCase();
+        function normalizeAttributionToken(value) {
+            return String(value || '')
+                .trim()
+                .toLowerCase()
+                .replace(/[_-]+/g, ' ')
+                .replace(/\s+/g, ' ');
+        }
+
+        function toTitleCaseWords(value = '') {
+            return String(value || '')
+                .split(' ')
+                .filter(Boolean)
+                .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+                .join(' ');
+        }
+
+        function humanizeAttributionPlatform(platform = '') {
+            const normalized = normalizeAttributionToken(platform);
+            if (!normalized || normalized === '-' || normalized === 'none' || normalized === 'direct') return '';
+
+            if (normalized.includes('google')) return 'Google';
+            if (normalized.includes('facebook') || normalized.includes('instagram') || normalized.includes('meta')) return 'Meta';
+            if (normalized.includes('tiktok')) return 'TikTok';
+            if (normalized.includes('yahoo')) return 'Yahoo';
+            if (normalized.includes('bing')) return 'Bing';
+            if (normalized.includes('duckduckgo')) return 'DuckDuckGo';
+            if (normalized.includes('hostinger')) return 'Hostinger';
+            if (normalized.includes('klaviyo')) return 'Klaviyo';
+            if (normalized.includes('mailchimp')) return 'Mailchimp';
+            if (normalized.includes('hubspot')) return 'HubSpot';
+            if (normalized.includes('linkedin')) return 'LinkedIn';
+            if (normalized.includes('pinterest')) return 'Pinterest';
+            if (normalized.includes('whatsapp')) return 'WhatsApp';
+            if (normalized.includes('referral')) return 'Referral';
+
+            const hostLike = normalized
+                .replace(/^https?:\/\//, '')
+                .replace(/^www\./, '')
+                .split('/')[0]
+                .trim();
+            const base = (hostLike.split('.')[0] || normalized).replace(/[-_]+/g, ' ');
+            return toTitleCaseWords(base);
+        }
+
+        function humanReadableChannel(channel, platform = '') {
+            const value = normalizeAttributionToken(channel);
+            const platformLabel = humanizeAttributionPlatform(platform);
             if (!value) return 'Channel';
-            if (value.includes('meta') || value.includes('facebook') || value.includes('instagram')) return 'Meta';
-            if (value.includes('google')) return 'Google';
-            if (value.includes('tiktok')) return 'TikTok';
-            if (value.includes('organic')) return 'Organic';
-            return value.charAt(0).toUpperCase() + value.slice(1);
+            if (value === 'unattributed' || value === 'none') return 'Unattributed';
+            if (value === 'multi touch') return 'Multi-touch';
+            if (value.includes('meta') || value.includes('facebook') || value.includes('instagram')) return 'Meta Ads';
+            if (value === 'google') return 'Google Ads';
+            if (value === 'paid search' || value === 'cpc' || value === 'ppc') return platformLabel ? `${platformLabel} Ads` : 'Paid Search';
+            if (value.includes('tiktok')) return 'TikTok Ads';
+            if (value === 'organic search') return platformLabel ? `${platformLabel} Search` : 'Organic Search';
+            if (value === 'organic social') return platformLabel ? `${platformLabel} Organic` : 'Organic Social';
+            if (value === 'organic') return platformLabel ? `${platformLabel} Organic` : 'Organic';
+            if (value === 'direct') return 'Direct';
+            if (value === 'referral') return platformLabel ? `${platformLabel} Referral` : 'Referral';
+            if (value === 'email') return platformLabel ? `${platformLabel} Email` : 'Email';
+            if (value === 'other') return platformLabel ? `${platformLabel} Other` : 'Other';
+            return toTitleCaseWords(value);
         }
 
         function humanReadableSessionLabel({ linkedUserLabel = '', sessionId = '' } = {}) {
@@ -2881,13 +954,23 @@
             return 'Session';
         }
 
-        function normalizeAttributionChannel(channel) {
-            const value = String(channel || '').trim().toLowerCase();
-            if (value.includes('meta') || value.includes('facebook') || value.includes('instagram')) return 'meta';
-            if (value.includes('google') || value.includes('search') || value.includes('adwords')) return 'google';
-            if (value.includes('tiktok')) return 'tiktok';
-            if (value.includes('organic') || value.includes('direct') || value.includes('referral')) return 'organic';
-            return 'other';
+        function normalizeAttributionChannel(channel, platform = '') {
+            const value = normalizeAttributionToken(channel);
+            const platformValue = normalizeAttributionToken(platform);
+            const combined = `${value} ${platformValue}`.trim();
+            if (!combined || value === 'unattributed' || value === 'none') return 'unattributed';
+            if (combined.includes('tiktok') || combined.includes('ttclid')) return 'tiktok';
+            if (/(facebook|instagram|meta|fbclid)/.test(combined)) return 'meta';
+            if (/(google|adwords|gclid)/.test(combined)) return 'google';
+            if (value === 'paid search' || value === 'cpc' || value === 'ppc') return platformValue.includes('google') ? 'google' : 'other';
+            if (value === 'paid social') {
+                if (platformValue.includes('tiktok')) return 'tiktok';
+                if (/(facebook|instagram|meta)/.test(platformValue)) return 'meta';
+                return 'other';
+            }
+            if (value === 'organic search' || value === 'organic social') return 'organic';
+            if (/(organic|seo|direct|referral|email|newsletter|klaviyo|mailchimp|sendgrid|brevo|hubspot|activecampaign|convertkit|yahoo|bing|duckduckgo|baidu|hostinger|linktr|affiliate|partner|whatsapp|sms)/.test(combined)) return 'organic';
+            return value === 'other' ? 'other' : 'other';
         }
 
         function resolvePurchaseCustomerName(purchase = {}) {
@@ -2906,6 +989,61 @@
 
             const hit = candidates.find((value) => String(value || '').trim());
             return String(hit || '').trim();
+        }
+
+        function resolvePurchaseCustomerEmail(purchase = {}) {
+            const directCandidates = [
+                purchase.customerEmail,
+                purchase.email,
+                purchase.billingEmail,
+                purchase.shippingEmail,
+                purchase.userEmail,
+            ];
+
+            const directHit = directCandidates.find((value) => String(value || '').trim());
+            if (directHit) return String(directHit || '').trim().toLowerCase();
+
+            const events = Array.isArray(purchase.events) ? purchase.events : [];
+            for (const event of events) {
+                const eventCandidates = [
+                    event?.customerEmail,
+                    event?.email,
+                    event?.userEmail,
+                    event?.payload?.customerEmail,
+                    event?.payload?.customer_email,
+                    event?.payload?.email,
+                    event?.payload?.user_email,
+                    event?.rawPayload?.customerEmail,
+                    event?.rawPayload?.customer_email,
+                    event?.rawPayload?.email,
+                    event?.rawPayload?.user_email,
+                ];
+                const eventHit = eventCandidates.find((value) => String(value || '').trim());
+                if (eventHit) return String(eventHit || '').trim().toLowerCase();
+            }
+
+            return '';
+        }
+
+        function resolvePurchaseDisplayIdentity(purchase = {}) {
+            const rawName = String(resolvePurchaseCustomerName(purchase) || '').trim();
+            const rawEmail = String(resolvePurchaseCustomerEmail(purchase) || '').trim();
+
+            let cleanName = rawName;
+            if (cleanName && !cleanName.includes('@')) {
+                cleanName = cleanName.replace(/^.*?\bfor\s+/i, '').trim();
+                cleanName = cleanName.replace(/[._-]+/g, ' ').replace(/\s+/g, ' ').trim();
+                cleanName = toTitleCaseWords(cleanName.toLowerCase());
+            }
+
+            if (!cleanName && rawEmail) {
+                cleanName = toTitleCaseWords(rawEmail.split('@')[0].replace(/[._-]+/g, ' ').trim().toLowerCase());
+            }
+
+            return {
+                name: cleanName || 'Customer',
+                email: rawEmail,
+            };
         }
 
         function resolveOnlineUserIdentity({ sessionId = null, userKey = null } = {}) {
@@ -3064,28 +1202,28 @@
                 const profile = payload.profile || {};
                 const metrics = payload.metrics || {};
                 const compareHint = payload.patterns?.recommendedComparison?.sessionId
-                    ? `Comparación recomendada: ${payload.patterns.recommendedComparison.sessionId}`
-                    : 'Abre una sesión relacionada to compare comportamiento.';
+                    ? `Suggested comparison: ${payload.patterns.recommendedComparison.sessionId}`
+                    : 'Open a related session to compare behavior.';
 
                 el.innerHTML = `
-                    <p class="focus-title">Prioridad Perfil + Sesión</p>
-                    <p class="focus-copy">Esto es lo más crítico del dashboard: identificar al perfil, ver qué compra y comparar su recorrido contra otras sesiones.</p>
+                    <p class="focus-title">Profile + Session Priority</p>
+                    <p class="focus-copy">This is the most critical part of the dashboard: identify the profile, see what they buy, and compare their journey against other sessions.</p>
                     <div class="profile-focus-grid">
                         <div class="profile-focus-pill">
                             <p class="label">Current Profile</p>
                             <p class="value">${profile.profileLabel || '-'}</p>
                         </div>
                         <div class="profile-focus-pill">
-                            <p class="label">Órdenes del perfil</p>
+                            <p class="label">Profile orders</p>
                             <p class="value">${profile.historicalOrderCount || 0}</p>
                         </div>
                         <div class="profile-focus-pill">
-                            <p class="label">Sessions relacionadas</p>
+                            <p class="label">Related sessions</p>
                             <p class="value">${payload.patterns?.peerSessionCount || 0}</p>
                         </div>
                     </div>
                     <p class="focus-copy">${compareHint}</p>
-                    <p class="focus-copy">Conectados ahora: ${connectedCount}${connectedNames ? ` · ${connectedNames}` : ''}.</p>
+                    <p class="focus-copy">Connected now: ${connectedCount}${connectedNames ? ` · ${connectedNames}` : ''}.</p>
                 `;
                 return;
             }
@@ -3096,41 +1234,41 @@
                 .slice()
                 .sort((a, b) => Number(b.totalRevenue || 0) - Number(a.totalRevenue || 0))
                 .slice(0, 2)
-                .map((p) => `${p.profileLabel || 'Perfil'} (${formatCurrency(p.totalRevenue || 0)})`)
+                .map((p) => `${p.profileLabel || 'Profile'} (${formatCurrency(p.totalRevenue || 0)})`)
                 .join(' · ');
 
             el.innerHTML = `
-                <p class="focus-title">Centro de Perfiles</p>
-                <p class="focus-copy">Haz foco aquí para decisiones de negocio: quién está conectado ahora, qué suelen comprar y cómo comparan contra perfiles históricos.</p>
+                <p class="focus-title">Profile Center</p>
+                <p class="focus-copy">Focus here for business decisions: who is connected now, what they usually buy, and how they compare against historical profiles.</p>
                 <div class="profile-focus-grid">
                     <div class="profile-focus-pill">
-                        <p class="label">Conectados ahora</p>
+                        <p class="label">Connected now</p>
                         <p class="value">${connectedCount}</p>
                     </div>
                     <div class="profile-focus-pill">
-                        <p class="label">Perfiles históricos</p>
+                        <p class="label">Historical profiles</p>
                         <p class="value">${summary.totalProfiles || 0}</p>
                     </div>
                     <div class="profile-focus-pill">
-                        <p class="label">Revenue histórico</p>
+                        <p class="label">Historical revenue</p>
                         <p class="value">${formatCurrency(summary.totalRevenue || 0)}</p>
                     </div>
                 </div>
-                <p class="focus-copy">Top compradores: ${topBuyers || 'Sin suficientes datos todavía.'}</p>
-                <p class="focus-copy">Conectados detectados: ${connectedNames || (wpUsersOnlineState.hasError ? 'Error al consultar estado online.' : 'Sin usuarios conectados recientes.')}</p>
+                <p class="focus-copy">Top buyers: ${topBuyers || 'Not enough data yet.'}</p>
+                <p class="focus-copy">Detected connected users: ${connectedNames || (wpUsersOnlineState.hasError ? 'Error checking online status.' : 'No recently connected users.')}</p>
             `;
         }
 
         function renderActionCards(recommendations = []) {
             if (!Array.isArray(recommendations) || !recommendations.length) {
-                return '<p class="text-sm text-gray-500">Todavía no hay recomendaciones accionables.</p>';
+                return '<p class="text-sm text-gray-500">There are no actionable recommendations yet.</p>';
             }
 
             return recommendations.slice(0, 2).map((item) => `
                 <div class="session-pattern-item rounded-xl p-4">
-                    <p class="text-sm font-semibold text-gray-900">${item.title || 'Recomendación'}</p>
+                    <p class="text-sm font-semibold text-gray-900">${item.title || 'Recommendation'}</p>
                     <p class="mt-1 text-sm text-gray-600">${item.detail || '-'}</p>
-                    <p class="session-positive-copy mt-2 text-xs font-medium uppercase tracking-wide">Acción inmediata</p>
+                    <p class="session-positive-copy mt-2 text-xs font-medium uppercase tracking-wide">Immediate action</p>
                     <p class="session-positive-copy text-sm">${item.action || '-'}</p>
                 </div>
             `).join('');
@@ -3141,15 +1279,15 @@
                 ? topProducts.slice(0, 3).map((item) => `
                     <div class="session-side-card rounded-xl p-4">
                         <p class="text-sm font-semibold text-gray-900">${item.name || 'Product'}</p>
-                        <p class="mt-1 text-sm text-gray-600">${item.orderCount || 0} orders · ${item.units || 0} unidades · ${formatCurrency(item.revenue || 0)}</p>
+                        <p class="mt-1 text-sm text-gray-600">${item.orderCount || 0} orders · ${item.units || 0} units · ${formatCurrency(item.revenue || 0)}</p>
                     </div>
                 `).join('')
-                : '<p class="text-sm text-gray-500">Sin afinidad de compra suficiente todavía.</p>';
+                : '<p class="text-sm text-gray-500">Not enough purchase affinity yet.</p>';
 
             const pairingHtml = Array.isArray(topPairings) && topPairings.length
                 ? `
                     <div class="session-side-card rounded-xl p-4">
-                        <p class="text-xs font-semibold uppercase tracking-wide text-gray-500">Bundles probables</p>
+                        <p class="text-xs font-semibold uppercase tracking-wide text-gray-500">Likely bundles</p>
                         <div class="mt-2 space-y-1 text-sm text-gray-600">
                             ${topPairings.slice(0, 2).map((pair) => `<p>${pair.primary} + ${pair.secondary} · ${pair.orders} orders</p>`).join('')}
                         </div>
@@ -3192,11 +1330,21 @@
         }
 
         function resolveChannelTone(channel, platform) {
-            const key = String(channel + ' ' + platform).toLowerCase();        
-            if (key.includes('organic') || key.includes('referral') || key.includes('direct')) return 'is-organic';
-            if (key.includes('google') || key.includes('search')) return 'is-google';
-            if (key.includes('facebook') || key.includes('meta') || key.includes('instagram')) return 'is-meta';
-            if (key.includes('tiktok')) return 'is-tiktok';
+            const rawChannel = String(channel || '').trim().toLowerCase();
+            const normalizedChannel = normalizeAttributionChannel(rawChannel, platform || '');
+            if (rawChannel.includes('other') || rawChannel.includes('unattributed')) return '';
+            if (normalizedChannel === 'organic') return 'is-organic';
+            if (normalizedChannel === 'google') return 'is-google';
+            if (normalizedChannel === 'meta') return 'is-meta';
+            if (normalizedChannel === 'tiktok') return 'is-tiktok';
+
+            const rawPlatform = String(platform || '').trim().toLowerCase();
+            const normalizedPlatform = normalizeAttributionChannel(rawPlatform, rawChannel);
+            if (normalizedPlatform === 'organic') return 'is-organic';
+            if (normalizedPlatform === 'google') return 'is-google';
+            if (normalizedPlatform === 'meta') return 'is-meta';
+            if (normalizedPlatform === 'tiktok') return 'is-tiktok';
+            return '';
         }
 
         function scoreJourneySignal(purchase = {}) {
@@ -3230,7 +1378,7 @@
                 const pathCurrent = normalizeJourneyPath(current.pageUrl || current.url || current.landingPageUrl || '');
                 const pathNext = normalizeJourneyPath(ev.pageUrl || ev.url || ev.landingPageUrl || '');
                 
-                // Si el evento tiene el mismo nombre y exactamente el mismo path que el anterior, lo omitimos para sumar su duración al evento original
+                // If the event has the same name and exactly the same path as the previous one, skip it and keep the original event as the retained step
                 if (nameCurrent === nameNext && pathCurrent === pathNext) {
                     continue; 
                 }
@@ -3261,10 +1409,15 @@
             if (key === 'view_item') return 'View Product';
             if (key === 'add_to_cart') return 'Add to Cart';
             if (key === 'begin_checkout') return 'Begin Checkout';
-            if (key === 'purchase') return 'Purchase';
+            if (isPurchaseJourneyEventName(key)) return 'Purchase';
             if (key === 'user_logged_in' || key === 'user_login' || key === 'login') return 'Login';
             if (key === 'lead' || key === 'generate_lead') return 'Lead';
             return key ? key.replace(/_/g, ' ').replace(/\b\w/g, (m) => m.toUpperCase()) : 'Event';
+        }
+
+        function isPurchaseJourneyEventName(rawName = '') {
+            const key = String(rawName || '').trim().toLowerCase();
+            return ['purchase', 'order_completed', 'checkout_completed', 'order_create', 'orders_create'].includes(key);
         }
 
         function formatDurationCompact(seconds) {
@@ -3281,7 +1434,21 @@
                 return { events: sorted, dropped: 0 };
             }
 
-            const keyEventNames = new Set(['view_item', 'add_to_cart', 'begin_checkout', 'purchase', 'user_logged_in', 'user_login', 'login', 'lead', 'generate_lead']);
+            const keyEventNames = new Set([
+                'view_item',
+                'add_to_cart',
+                'begin_checkout',
+                'purchase',
+                'order_completed',
+                'checkout_completed',
+                'order_create',
+                'orders_create',
+                'user_logged_in',
+                'user_login',
+                'login',
+                'lead',
+                'generate_lead'
+            ]);
             const selectedIndexes = new Set([0, sorted.length - 1]);
             const pageViewIndexes = [];
 
@@ -3319,6 +1486,7 @@
                 eventName: '__condensed__',
                 createdAt: compact[insertAt - 1]?.createdAt || compact[insertAt - 1]?.collectedAt || null,
                 _ts: compact[insertAt - 1]?._ts || Date.now(),
+                _sessionGroupIndex: compact[insertAt - 1]?._sessionGroupIndex,
                 _detailLines: [`Skipped ${dropped} low-signal events to keep this readable.`],
             };
 
@@ -3342,7 +1510,7 @@
                 
             const sorted = dedupeAdjacentIdenticalEvents(sortedRaw);
 
-            const visible = sorted; // FORCED TO FULL BY REQUEST
+            const visible = mode === 'full' ? sorted : condenseSessionEvents(sorted).events;
 
             return visible.map((event, index) => {
                 if (event.eventName === '__condensed__') {
@@ -3393,15 +1561,19 @@
                     fullTime: timeStr,
                     originalName: originalEventName,
                     detailLines,
+                    tooltip: `${describeJourneyTone(tone)} ${originalEventName}${pagePath && pagePath !== '-' ? ` on ${pagePath}` : ''}`.trim(),
                     tone,
                 };
             });
         }
 
-        function buildPurchaseTimelineEvents(purchase = {}) {
+        function buildPurchaseTimelineEvents(purchase = {}, options = {}) {
             const tone = resolveChannelTone(purchase.attributedChannel, purchase.attributedPlatform);
-            const landing = normalizeJourneyPath(purchase.landingPageUrl || purchase.attributionDebug?.payloadPageUrl || purchase.pageUrl || '');
-            const campaign = purchase.attributedCampaign || purchase.attributionDebug?.payloadUtmCampaign || '-';
+            const landingInfo = options.landingInfo || resolvePurchaseLandingInfo(purchase, options.events || []);
+            const landing = landingInfo.landing;
+            const sourceDescriptor = resolveAttributedSourceDescriptor(purchase);
+            const campaign = sourceDescriptor.label;
+            const sourceTypeLabel = humanReadableAttributionLabelType(sourceDescriptor.type);
             const clickId = purchase.attributedClickId || '-';
             const purchasedAt = formatRecentPurchaseDate(purchase);
 
@@ -3413,9 +1585,10 @@
                     time: purchasedAt,
                     fullTime: purchasedAt,
                     detailLines: [
-                        `Campaign: ${campaign}`,
+                        `Attributed ${sourceTypeLabel}: ${campaign}`,
                         `Click ID: ${clickId}`,
                     ],
+                    tooltip: `Primary attribution touchpoint. ${humanReadableChannel(purchase.attributedChannel || 'unattributed', purchase.attributedPlatform || '')} ${campaign && campaign !== 'No campaign' ? `${sourceTypeLabel} ${campaign}` : 'source'}${clickId && clickId !== '-' ? ` with click id ${shortenJourneyIdentifier(clickId)}` : ''}.`,
                     tone,
                 },
             ];
@@ -3428,6 +1601,7 @@
                     time: purchasedAt,
                     fullTime: purchasedAt,
                     detailLines: [`Page: ${landing}`],
+                    tooltip: `First landing page captured for this stitched journey from ${landingInfo.chosenSource || 'the stitched events'}.`,
                     tone,
                 });
             }
@@ -3442,10 +1616,734 @@
                     `Order: ${purchase.orderNumber || purchase.orderId || '-'}`,
                     `Revenue: ${formatCurrencyWithCode(Number(purchase.revenue || 0), purchase.currency || 'MXN')}`,
                 ],
+                tooltip: 'Final conversion event used as the anchor for backward stitching.',
                 tone: 'is-organic',
             });
 
             return entries;
+        }
+
+        function getJourneyEventPayload(event = {}) {
+            if (event?.rawPayload && typeof event.rawPayload === 'object') return event.rawPayload;
+            if (event?.payload && typeof event.payload === 'object') return event.payload;
+            return {};
+        }
+
+        function formatJourneySpan(seconds) {
+            const value = Number(seconds || 0);
+            if (!Number.isFinite(value) || value <= 0) return '<1m';
+            if (value >= 86400) return `${Math.round(value / 86400)}d`;
+            if (value >= 3600) return `${Math.round(value / 3600)}h`;
+            return formatDurationCompact(value);
+        }
+
+        function describeJourneyTone(tone = '') {
+            if (tone === 'is-google') return 'Google touchpoint inferred for this event.';
+            if (tone === 'is-meta') return 'Meta touchpoint inferred for this event.';
+            if (tone === 'is-tiktok') return 'TikTok touchpoint inferred for this event.';
+            if (tone === 'is-organic') return 'Organic, direct, or referral touchpoint inferred for this event.';
+            return 'No clear channel was detected for this event yet.';
+        }
+
+        function shortenJourneyIdentifier(value = '') {
+            const raw = String(value || '').trim();
+            if (!raw) return '';
+            if (raw.length <= 10) return raw;
+            return `${raw.slice(0, 4)}...${raw.slice(-4)}`;
+        }
+
+        function resolvePurchaseLandingInfo(purchase = {}, events = []) {
+            const safeEvents = Array.isArray(events) ? events : [];
+            const firstEventWithPage = safeEvents.find((event) => {
+                const payload = getJourneyEventPayload(event);
+                return event?.pageUrl || event?.url || payload?.pageUrl || payload?.page_url || payload?.url;
+            }) || null;
+
+            const candidates = [
+                { label: 'purchase.landingPageUrl', value: purchase.landingPageUrl || '' },
+                { label: 'attributionDebug.payloadPageUrl', value: purchase.attributionDebug?.payloadPageUrl || '' },
+                { label: 'purchase.pageUrl', value: purchase.pageUrl || '' },
+                { label: 'first stitched event pageUrl', value: firstEventWithPage?.pageUrl || firstEventWithPage?.url || '' },
+                { label: 'first stitched payload pageUrl', value: (() => {
+                    const payload = getJourneyEventPayload(firstEventWithPage || {});
+                    return payload.pageUrl || payload.page_url || payload.url || '';
+                })() },
+            ];
+
+            const chosenCandidate = candidates.find((candidate) => String(candidate.value || '').trim()) || null;
+            const landing = chosenCandidate ? normalizeJourneyPath(chosenCandidate.value) : '-';
+            const landingDisplay = landing && landing !== '-' ? landing : 'No landing captured';
+            const orderRef = purchase.orderNumber || purchase.orderId || purchase.checkoutToken || 'unknown';
+
+            console.info('[Journey Landing]', {
+                orderRef,
+                chosenSource: chosenCandidate?.label || 'none',
+                landing: landingDisplay,
+                candidates: candidates.map((candidate) => ({
+                    source: candidate.label,
+                    value: candidate.value || null,
+                    normalizedPath: candidate.value ? normalizeJourneyPath(candidate.value) : null,
+                })),
+            });
+
+            return {
+                landing,
+                landingDisplay,
+                chosenSource: chosenCandidate?.label || '',
+            };
+        }
+
+        function resolveJourneyReferrerLabel(referrer = '') {
+            const value = String(referrer || '').trim();
+            if (!value) return '';
+            try {
+                return new URL(value).hostname.replace(/^www\./i, '');
+            } catch (_) {
+                return value;
+            }
+        }
+
+        function resolveJourneyTouchpoint({ payload = {}, purchase = {} } = {}) {
+            const utmSource = String(payload.utm_source || payload.utmSource || '').trim().toLowerCase();
+            const utmMedium = String(payload.utm_medium || payload.utmMedium || '').trim().toLowerCase();
+            const utmCampaign = String(payload.utm_campaign || payload.utmCampaign || '').trim();
+            const referrer = String(payload.referrer || payload.referer || '').trim();
+            const referrerLabel = resolveJourneyReferrerLabel(referrer);
+            const gclid = String(payload.gclid || '').trim();
+            const fbclid = String(payload.fbclid || payload.fbc || payload._fbc || '').trim();
+            const ttclid = String(payload.ttclid || '').trim();
+            const fallbackChannel = normalizeAttributionChannel(purchase.attributedChannel || '', purchase.attributedPlatform || '');
+            const fallbackSource = resolveAttributedSourceDescriptor(purchase);
+            const fallbackCampaign = String(fallbackSource.label || '').trim();
+            const fallbackClickId = String(purchase.attributedClickId || '').trim();
+
+            let channelKey = 'organic';
+            let label = 'Direct';
+            let reason = 'No explicit campaign or click id was found in this session.';
+            let clickId = '';
+
+            if (fbclid) {
+                channelKey = 'meta';
+                label = 'Meta Ads';
+                reason = 'Matched by Meta click id.';
+                clickId = fbclid;
+            } else if (ttclid) {
+                channelKey = 'tiktok';
+                label = 'TikTok Ads';
+                reason = 'Matched by TikTok click id.';
+                clickId = ttclid;
+            } else if (gclid || (utmSource.includes('google') && /(cpc|paid|search|ads)/.test(utmMedium))) {
+                channelKey = 'google';
+                label = 'Google Ads';
+                reason = gclid ? 'Matched by Google click id.' : 'Paid Google UTM detected.';
+                clickId = gclid;
+            } else if (utmSource.includes('meta') || utmSource.includes('facebook') || utmSource.includes('instagram')) {
+                channelKey = 'meta';
+                label = /(organic|social)/.test(utmMedium) ? 'Meta Organic' : 'Meta Ads';
+                reason = 'Detected from Meta UTM source.';
+            } else if (utmSource.includes('tiktok')) {
+                channelKey = 'tiktok';
+                label = /(organic|social)/.test(utmMedium) ? 'TikTok Organic' : 'TikTok Ads';
+                reason = 'Detected from TikTok UTM source.';
+            } else if (utmSource.includes('google')) {
+                channelKey = /(cpc|paid|search|ads)/.test(utmMedium) ? 'google' : 'organic';
+                label = channelKey === 'google' ? 'Google Ads' : 'Google Organic';
+                reason = 'Detected from Google UTM source.';
+            } else if (referrerLabel.includes('google')) {
+                channelKey = 'organic';
+                label = 'Google Organic';
+                reason = `Referrer ${referrerLabel} indicates search traffic.`;
+            } else if (referrerLabel.includes('facebook') || referrerLabel.includes('instagram')) {
+                channelKey = 'organic';
+                label = 'Meta Organic';
+                reason = `Referrer ${referrerLabel} indicates social traffic.`;
+            } else if (referrerLabel.includes('tiktok')) {
+                channelKey = 'organic';
+                label = 'TikTok Organic';
+                reason = `Referrer ${referrerLabel} indicates social traffic.`;
+            } else if (utmSource) {
+                channelKey = normalizeAttributionChannel(utmSource);
+                label = humanReadableChannel(utmSource, referrerLabel || utmSource);
+                reason = `UTM source ${utmSource} was captured in this session.`;
+            } else if (referrerLabel) {
+                channelKey = 'organic';
+                label = 'Referral';
+                reason = `Referrer ${referrerLabel} stitched this session.`;
+            } else if (fallbackChannel && fallbackChannel !== 'other') {
+                channelKey = fallbackChannel;
+                label = `${humanReadableChannel(purchase.attributedChannel || fallbackChannel, purchase.attributedPlatform || '')} inferred`;
+                reason = 'Inherited from the final attributed purchase when this session had no explicit source.';
+                clickId = fallbackClickId;
+            }
+
+            const campaign = utmCampaign || fallbackCampaign || '';
+            const campaignSourceType = utmCampaign
+                ? 'campaign'
+                : (fallbackSource.type || 'campaign');
+            const tone = resolveChannelTone(channelKey, label) || '';
+            const icon = resolveChannelIcon(channelKey, label);
+            const subLabel = campaign
+                ? `Attributed ${humanReadableAttributionLabelType(campaignSourceType)}: ${campaign}`
+                : clickId
+                    ? `Click ID: ${shortenJourneyIdentifier(clickId)}`
+                    : referrerLabel
+                        ? `Referrer: ${referrerLabel}`
+                        : 'No campaign metadata';
+
+            return {
+                channelKey,
+                label,
+                reason,
+                campaign,
+                clickId,
+                referrerLabel,
+                utmSource,
+                utmMedium,
+                sourceType: campaignSourceType,
+                tone,
+                icon,
+                subLabel,
+            };
+        }
+
+        function buildJourneySessionAttributionSentence(group = {}, options = {}) {
+            const touchpoint = group.touchpoint || {};
+            const sessionLabel = String(options.sessionLabel || group.label || 'This session').trim();
+            const entryPage = group.entryPage && group.entryPage !== '-' ? group.entryPage : '';
+            const campaign = String(touchpoint.campaign || '').trim();
+            const sourceTypeLabel = humanReadableAttributionLabelType(touchpoint.sourceType || 'campaign');
+            const clickId = String(touchpoint.clickId || '').trim();
+            const referrerLabel = String(touchpoint.referrerLabel || '').trim();
+            const channelLabel = String(touchpoint.label || 'Direct').trim();
+            const actionCopy = String(group.actionCopy || '').trim();
+            const lowerLabel = channelLabel.toLowerCase();
+
+            let intro = `${sessionLabel} opened directly because no new ad click or campaign was captured before the return`;
+            if (clickId && campaign) {
+                intro = `${sessionLabel} opened after a ${channelLabel} click from ${sourceTypeLabel} ${campaign} (${shortenJourneyIdentifier(clickId)})`;
+            } else if (clickId) {
+                intro = `${sessionLabel} opened after a ${channelLabel} click (${shortenJourneyIdentifier(clickId)})`;
+            } else if (campaign) {
+                intro = `${sessionLabel} opened through ${channelLabel} ${sourceTypeLabel} ${campaign}`;
+            } else if (referrerLabel) {
+                intro = `${sessionLabel} opened from ${channelLabel} traffic coming from ${referrerLabel}`;
+            } else if (lowerLabel.includes('direct')) {
+                intro = `${sessionLabel} opened directly because no new ad click or campaign was captured before the return`;
+            } else if (lowerLabel.includes('referral')) {
+                intro = `${sessionLabel} opened from a referral source`;
+            } else if (lowerLabel.includes('organic')) {
+                intro = `${sessionLabel} opened through ${channelLabel} with no paid click id captured`;
+            } else if (lowerLabel.includes('inferred')) {
+                intro = `${sessionLabel} was inferred from the final purchase attribution when this session had no fresh source metadata`;
+            } else {
+                intro = `${sessionLabel} opened through ${channelLabel}`;
+            }
+
+            const landingCopy = entryPage ? `, landing on ${entryPage}` : ', returning to the site';
+            const actionSentence = actionCopy ? ` ${actionCopy}` : '';
+            return `${intro}${landingCopy}.${actionSentence}`.trim();
+        }
+
+        function buildJourneyReturnConnectorSentence(nextGroup = {}) {
+            if (!nextGroup || typeof nextGroup !== 'object') return 'The user returned and continued the stitched journey.';
+            const sentence = buildJourneySessionAttributionSentence(nextGroup, {
+                sessionLabel: nextGroup.label || 'The next session',
+            });
+            return sentence.replace(/^Session \d+\s+/i, 'The user ');
+        }
+
+        function summarizeJourneyGroupActions(events = []) {
+            const ordered = Array.from(new Set(
+                (Array.isArray(events) ? events : [])
+                    .map((event) => normalizeEventNameHuman(event.eventName || event.name))
+                    .filter(Boolean)
+            ));
+            return ordered.slice(0, 3);
+        }
+
+        function buildPurchaseSessionStory(purchase = {}) {
+            const availableEvents = Array.isArray(purchase.events)
+                ? purchase.events
+                : (Array.isArray(purchase.stitchedEvents) ? purchase.stitchedEvents : []);
+            const purchaseTimestamp = new Date(purchase.platformCreatedAt || purchase.createdAt || Date.now()).getTime();
+
+            const rawEvents = availableEvents
+                .map((event) => {
+                    const payload = getJourneyEventPayload(event);
+                    const eventTs = new Date(event.createdAt || event.collectedAt || purchase.platformCreatedAt || purchase.createdAt || 0).getTime();
+                    const pageUrl = event.pageUrl || event.url || payload.pageUrl || payload.page_url || payload.url || '';
+                    return {
+                        ...event,
+                        _ts: eventTs,
+                        _payload: payload,
+                        _pagePath: normalizeJourneyPath(pageUrl),
+                    };
+                })
+                .filter((event) => Number.isFinite(event._ts))
+                .sort((a, b) => a._ts - b._ts);
+
+            const dedupedEvents = dedupeAdjacentIdenticalEvents(rawEvents);
+            const groups = [];
+            const fallbackUserKey = String(purchase.userKey || '').trim();
+            const maxSessionGapMs = 30 * 60 * 1000;
+
+            dedupedEvents.forEach((event) => {
+                const sessionId = String(event.sessionId || '').trim();
+                const userKey = String(event.userKey || fallbackUserKey || '').trim();
+                const groupingKey = sessionId || (userKey ? `user:${userKey}` : 'anonymous');
+                const previous = groups[groups.length - 1];
+                const shouldStartNewGroup = !previous
+                    || previous.groupingKey !== groupingKey
+                    || (!sessionId && (event._ts - previous.lastTs) > maxSessionGapMs);
+
+                if (shouldStartNewGroup) {
+                    groups.push({
+                        groupingKey,
+                        sessionId,
+                        userKey,
+                        startedTs: event._ts,
+                        endedTs: event._ts,
+                        lastTs: event._ts,
+                        events: [event],
+                    });
+                    return;
+                }
+
+                previous.events.push(event);
+                previous.endedTs = event._ts;
+                previous.lastTs = event._ts;
+                if (!previous.sessionId && sessionId) previous.sessionId = sessionId;
+                if (!previous.userKey && userKey) previous.userKey = userKey;
+            });
+
+            const normalizedGroups = groups.map((group, index) => {
+                const firstEvent = group.events[0] || {};
+                const lastEvent = group.events[group.events.length - 1] || {};
+                const touchpointEvent = group.events.find((event) => {
+                    const payload = event._payload || {};
+                    return payload.fbclid || payload.fbc || payload._fbc || payload.gclid || payload.ttclid || payload.utm_source || payload.utmSource || payload.referrer || payload.referer;
+                }) || firstEvent;
+                const touchpoint = resolveJourneyTouchpoint({ payload: touchpointEvent._payload || {}, purchase });
+                const eventNames = summarizeJourneyGroupActions(group.events);
+                const entryPage = group.events.find((event) => event._pagePath && event._pagePath !== '-')?._pagePath || '-';
+                const exitPage = [...group.events].reverse().find((event) => event._pagePath && event._pagePath !== '-')?._pagePath || entryPage;
+                const eventCount = group.events.length;
+                const durationSeconds = Math.max(0, (group.endedTs - group.startedTs) / 1000);
+                const lastPurchaseEvent = [...group.events].reverse().find((event) => isPurchaseJourneyEventName(event.eventName || event.name || '')) || null;
+                const containsPurchase = Boolean(lastPurchaseEvent);
+                const containsCheckout = group.events.some((event) => String(event.eventName || event.name || '').toLowerCase() === 'begin_checkout');
+                const containsCart = group.events.some((event) => String(event.eventName || event.name || '').toLowerCase() === 'add_to_cart');
+                const containsLogin = group.events.some((event) => /login/.test(String(event.eventName || event.name || '').toLowerCase()));
+
+                let actionCopy = 'Browsing and consideration.';
+                if (containsPurchase) actionCopy = 'Purchase completed in this session.';
+                else if (containsCheckout) actionCopy = 'Reached checkout in this session.';
+                else if (containsCart) actionCopy = 'Added product(s) to cart.';
+                else if (containsLogin) actionCopy = 'User identified with a login event.';
+
+                const stitchedCopy = buildJourneySessionAttributionSentence({
+                    label: `Session ${index + 1}`,
+                    entryPage,
+                    touchpoint,
+                    actionCopy,
+                });
+
+                return {
+                    label: `Session ${index + 1}`,
+                    sessionId: group.sessionId,
+                    userKey: group.userKey,
+                    startedAt: new Date(group.startedTs).toISOString(),
+                    endedAt: new Date(group.endedTs).toISOString(),
+                    timeLabel: formatDateTimeMx(group.startedTs),
+                    durationLabel: formatJourneySpan(durationSeconds),
+                    eventCount,
+                    entryPage,
+                    exitPage,
+                    eventNames,
+                    containsPurchase,
+                    purchaseAt: lastPurchaseEvent
+                        ? new Date(lastPurchaseEvent._ts).toISOString()
+                        : (index === groups.length - 1 && Number.isFinite(purchaseTimestamp) ? new Date(purchaseTimestamp).toISOString() : null),
+                    isPurchaseAnchorSession: index === groups.length - 1,
+                    touchpoint,
+                    tone: touchpoint.tone || '',
+                    icon: touchpoint.icon || 'fa-solid fa-route',
+                    sessionIdShort: shortenJourneyIdentifier(group.sessionId),
+                    userKeyShort: shortenJourneyIdentifier(group.userKey),
+                    actionCopy,
+                    stitchedCopy,
+                };
+            });
+
+            const firstGroupTs = normalizedGroups[0]?.startedAt ? new Date(normalizedGroups[0].startedAt).getTime() : purchaseTimestamp;
+            const totalSpanSeconds = Math.max(0, (purchaseTimestamp - firstGroupTs) / 1000);
+            const channelTrail = normalizedGroups
+                .map((group) => group.touchpoint?.label || '')
+                .filter(Boolean)
+                .slice(0, 4);
+
+            return {
+                hasRealEvents: normalizedGroups.length > 0,
+                groups: normalizedGroups,
+                totalSessions: normalizedGroups.length || ((purchase.sessionId || purchase.orderId || purchase.checkoutToken) ? 1 : 0),
+                totalEvents: dedupedEvents.length,
+                totalSpanLabel: formatJourneySpan(totalSpanSeconds),
+                channelTrail,
+            };
+        }
+
+        function formatJourneySessionGapLabel(seconds = 0) {
+            const value = Math.max(0, Number(seconds || 0));
+            if (!Number.isFinite(value) || value <= 0) return 'Returns moments later';
+            if (value >= 86400) {
+                const days = Math.max(1, Math.round(value / 86400));
+                return `Returns ${days} day${days === 1 ? '' : 's'} later`;
+            }
+            if (value >= 3600) {
+                const hours = Math.max(1, Math.round(value / 3600));
+                return `Returns ${hours} hour${hours === 1 ? '' : 's'} later`;
+            }
+            if (value >= 60) {
+                const minutes = Math.max(1, Math.round(value / 60));
+                return `Returns ${minutes} minute${minutes === 1 ? '' : 's'} later`;
+            }
+            const secs = Math.max(1, Math.round(value));
+            return `Returns ${secs} second${secs === 1 ? '' : 's'} later`;
+        }
+
+        function buildPurchaseSessionTimelineEvents(events = [], story = {}, options = {}) {
+            const baseEvents = Array.isArray(events) ? events.map((event) => ({ ...event })) : [];
+            const groups = Array.isArray(story.groups) ? story.groups : [];
+            if (!baseEvents.length || !groups.length) return baseEvents;
+
+            const timeline = [];
+
+            groups.forEach((group, index) => {
+                const sessionLabel = group.label || `Session ${index + 1}`;
+                const sessionEvents = baseEvents
+                    .filter((event) => Number(event.sessionGroupIndex ?? event._sessionGroupIndex) === index)
+                    .map((event) => ({
+                        ...event,
+                        sessionLabel,
+                    }));
+                const attributionSentence = buildJourneySessionAttributionSentence(group);
+                const purchaseTs = group.purchaseAt ? new Date(group.purchaseAt).getTime() : NaN;
+                const mainSessionEvents = [];
+                const postPurchaseEvents = [];
+
+                sessionEvents.forEach((event) => {
+                    const eventTs = Number(event.rawTs || 0);
+                    if (Number.isFinite(purchaseTs) && purchaseTs > 0 && Number.isFinite(eventTs) && eventTs > purchaseTs && !isPurchaseJourneyEventName(event.rawEventName || '')) {
+                        postPurchaseEvents.push(event);
+                    } else {
+                        mainSessionEvents.push(event);
+                    }
+                });
+
+                const hasVisiblePurchase = [...mainSessionEvents, ...postPurchaseEvents].some((event) =>
+                    isPurchaseJourneyEventName(event.rawEventName || '')
+                );
+
+                if ((group.containsPurchase || group.isPurchaseAnchorSession) && !hasVisiblePurchase) {
+                    mainSessionEvents.push({
+                        type: 'synthetic_purchase',
+                        kindClass: 'synthetic-purchase',
+                        sessionLabel,
+                        icon: 'fa-solid fa-bag-shopping',
+                        title: 'Purchase',
+                        originalName: 'Purchase',
+                        time: formatDateTimeMx(group.purchaseAt || group.endedAt || group.startedAt || null),
+                        fullTime: formatDateTimeMx(group.purchaseAt || group.endedAt || group.startedAt || null),
+                        rawEventName: 'purchase',
+                        rawTs: Number.isFinite(purchaseTs) && purchaseTs > 0 ? purchaseTs : new Date(group.endedAt || group.startedAt || 0).getTime(),
+                        detailLines: ['Purchase anchor confirmed for this session, even if the raw browser event was condensed or not available in the visible timeline.'],
+                        tone: 'is-organic',
+                    });
+                }
+
+                timeline.push({
+                    type: 'session_marker',
+                    kindClass: 'session-marker',
+                    label: sessionLabel,
+                    title: sessionLabel,
+                    originalName: sessionLabel,
+                    time: group.timeLabel || '-',
+                    fullTime: group.timeLabel || '-',
+                    tone: group.tone || '',
+                    icon: group.icon || 'fa-solid fa-route',
+                    detailLines: [attributionSentence],
+                    copy: attributionSentence,
+                });
+                timeline.push(...mainSessionEvents);
+
+                if (postPurchaseEvents.length) {
+                    const firstPostPurchaseEvent = postPurchaseEvents[0] || {};
+                    timeline.push({
+                        type: 'post_purchase_marker',
+                        kindClass: 'session-gap post-purchase-marker',
+                        label: 'Post-purchase confirmation',
+                        title: 'Post-purchase confirmation',
+                        originalName: 'Post-purchase confirmation',
+                        time: firstPostPurchaseEvent.fullTime || firstPostPurchaseEvent.time || group.timeLabel || '-',
+                        fullTime: firstPostPurchaseEvent.fullTime || firstPostPurchaseEvent.time || group.timeLabel || '-',
+                        icon: 'fa-solid fa-receipt',
+                        detailLines: [
+                            `${postPurchaseEvents.length} confirmation event${postPurchaseEvents.length === 1 ? '' : 's'} captured after the purchase, usually thank-you page activity, order confirmation loads, or browser follow-up signals.`,
+                        ],
+                    });
+                    timeline.push(...postPurchaseEvents);
+                }
+
+                const nextGroup = groups[index + 1] || null;
+                if (nextGroup) {
+                    const gapSeconds = Math.max(0, (new Date(nextGroup.startedAt).getTime() - new Date(group.endedAt).getTime()) / 1000);
+                    timeline.push({
+                        type: 'session_gap',
+                        kindClass: 'session-gap',
+                        label: formatJourneySessionGapLabel(gapSeconds),
+                        title: formatJourneySessionGapLabel(gapSeconds),
+                        originalName: 'Session Gap',
+                        time: nextGroup.timeLabel || '-',
+                        fullTime: nextGroup.timeLabel || '-',
+                        icon: 'fa-solid fa-arrow-down',
+                        detailLines: [buildJourneyReturnConnectorSentence(nextGroup)],
+                    });
+                }
+            });
+
+            return timeline;
+        }
+
+        function renderJourneySessionStory(story = {}, purchase = {}) {
+            const groups = Array.isArray(story.groups) ? story.groups : [];
+            const orderLabel = purchase.orderNumber || purchase.orderId || purchase.checkoutToken || '-';
+            const purchaseTime = formatRecentPurchaseDate(purchase);
+            const revenue = formatCurrencyWithCode(Number(purchase.revenue || 0), purchase.currency || 'MXN');
+            const stitchedSummary = groups.length > 1
+                ? `Stitched backward from purchase #${orderLabel} across ${groups.length} sessions and ${Number(story.totalEvents || 0)} stitched events.`
+                : `Stitched backward from purchase #${orderLabel} using the strongest session and identity signals available.`;
+
+            if (!groups.length) {
+                return `
+                    <div class="journey-session-story">
+                        <div class="journey-session-summary">
+                            <p class="journey-session-summary-title">Conversion Story</p>
+                            <p class="journey-session-summary-copy">${escapeHtml(stitchedSummary)}</p>
+                            <div class="journey-meta-grid mt-3">
+                                <span class="journey-chip" data-tooltip="Revenue from the anchor purchase."><i class="fa-solid fa-sack-dollar"></i>${escapeHtml(revenue)}</span>
+                                <span class="journey-chip" data-tooltip="Time when the anchor purchase was recorded."><i class="fa-solid fa-clock"></i>${escapeHtml(purchaseTime)}</span>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }
+
+            return `
+                <div class="journey-session-story">
+                    <div class="journey-session-summary">
+                        <p class="journey-session-summary-title">Conversion Story</p>
+                        <p class="journey-session-summary-copy">${escapeHtml(stitchedSummary)}</p>
+                        <div class="journey-meta-grid mt-3">
+                            <span class="journey-chip" data-tooltip="How many stitched sessions were linked to this conversion."><i class="fa-solid fa-layer-group"></i>${Number(story.totalSessions || 0)} sessions</span>
+                            <span class="journey-chip" data-tooltip="How many stitched events support the journey reconstruction."><i class="fa-solid fa-bolt"></i>${Number(story.totalEvents || 0)} events</span>
+                            <span class="journey-chip" data-tooltip="Elapsed time from the first stitched session to the purchase anchor."><i class="fa-solid fa-clock-rotate-left"></i>${escapeHtml(story.totalSpanLabel || '<1m')}</span>
+                            <span class="journey-chip" data-tooltip="Revenue from the final purchase anchor."><i class="fa-solid fa-sack-dollar"></i>${escapeHtml(revenue)}</span>
+                        </div>
+                    </div>
+                    <div class="journey-session-stack">
+                        ${groups.map((group, index) => {
+                            const nextGroup = groups[index + 1] || null;
+                            const gapLabel = nextGroup
+                                ? `returns ${formatJourneySpan(Math.max(0, (new Date(nextGroup.startedAt).getTime() - new Date(group.endedAt).getTime()) / 1000))} later`
+                                : 'purchase anchor';
+                            return `
+                                <article class="journey-session-card ${group.tone || ''}">
+                                    <div class="journey-session-card-head">
+                                        <span class="journey-session-label">${escapeHtml(group.label)}</span>
+                                        <span class="journey-session-time">${escapeHtml(group.timeLabel || '-')}</span>
+                                    </div>
+                                    <div class="journey-session-touchpoint ${group.tone || ''}" title="${escapeHtmlAttr(group.touchpoint?.reason || 'No source metadata')}" data-tooltip="${escapeHtmlAttr(group.touchpoint?.reason || 'No source metadata')}">
+                                        <span class="journey-session-touchpoint-title"><i class="${group.icon || 'fa-solid fa-route'}"></i>${escapeHtml(group.touchpoint?.label || 'Session touchpoint')}</span>
+                                        <span class="journey-session-touchpoint-sub">${escapeHtml(group.touchpoint?.subLabel || group.touchpoint?.reason || 'No source metadata')}</span>
+                                    </div>
+                                    <div class="journey-session-kpis">
+                                        <span class="journey-chip" data-tooltip="How many events were stitched inside this session block."><i class="fa-solid fa-wave-square"></i>${Number(group.eventCount || 0)} events</span>
+                                        <span class="journey-chip" data-tooltip="First page captured for this stitched session."><i class="fa-solid fa-door-open"></i>${escapeHtml(group.entryPage || '-')}</span>
+                                        <span class="journey-chip" data-tooltip="Observed duration of this stitched session block."><i class="fa-solid fa-timer"></i>${escapeHtml(group.durationLabel || '<1m')}</span>
+                                        ${group.sessionIdShort ? `<span class="journey-chip" data-tooltip="Session identifier shortened for readability."><i class="fa-solid fa-fingerprint"></i>${escapeHtml(group.sessionIdShort)}</span>` : ''}
+                                    </div>
+                                    <p class="journey-session-copy">${escapeHtml(group.stitchedCopy || '')}</p>
+                                    ${group.eventNames.length ? `<div class="journey-session-kpis">${group.eventNames.map((name) => `<span class="journey-chip" data-tooltip="Detected event inside this session block."><i class="fa-solid fa-check"></i>${escapeHtml(name)}</span>`).join('')}</div>` : ''}
+                                </article>
+                                <div class="journey-session-arrow">
+                                    <i class="fa-solid fa-arrow-down"></i>
+                                    <span>${escapeHtml(gapLabel)}</span>
+                                </div>
+                            `;
+                        }).join('')}
+                        <article class="journey-session-card journey-session-anchor">
+                            <div class="journey-session-card-head">
+                                <span class="journey-session-label">Purchase Anchor</span>
+                                <span class="journey-session-time">${escapeHtml(purchaseTime)}</span>
+                            </div>
+                            <div class="journey-session-touchpoint is-organic" title="Final conversion event used to anchor attribution and stitch backward." data-tooltip="Final conversion event used to anchor attribution and stitch backward.">
+                                <span class="journey-session-touchpoint-title"><i class="fa-solid fa-bag-shopping"></i>Order #${escapeHtml(orderLabel)}</span>
+                                <span class="journey-session-touchpoint-sub">${escapeHtml(revenue)} · ${escapeHtml(humanReadableChannel(purchase.attributedChannel || 'unattributed', purchase.attributedPlatform || ''))}</span>
+                            </div>
+                            <div class="journey-session-kpis">
+                                <span class="journey-chip" data-tooltip="Campaign attributed to the final purchase."><i class="fa-solid fa-bullhorn"></i>${escapeHtml(resolveAttributedCampaignLabel(purchase))}</span>
+                                ${purchase.attributedClickId ? `<span class="journey-chip" data-tooltip="Click identifier linked to the final attributed touchpoint."><i class="fa-solid fa-link"></i>${escapeHtml(shortenJourneyIdentifier(purchase.attributedClickId))}</span>` : ''}
+                            </div>
+                            <p class="journey-session-copy">This is the final conversion event. Attribution is resolved here, then the stitch walks backward through the sessions above.</p>
+                        </article>
+                    </div>
+                </div>
+            `;
+        }
+
+        function countPurchaseJourneySessions(purchase = {}) {
+            const story = buildPurchaseSessionStory(purchase);
+            return Number(story.totalSessions || 0);
+        }
+
+        function buildPurchaseTrackedUtmHistory(purchase = {}) {
+            const events = Array.isArray(purchase.events) ? purchase.events : (Array.isArray(purchase.stitchedEvents) ? purchase.stitchedEvents : []);
+            const sessionMap = new Map();
+            const anchorSessionId = String(purchase.sessionId || '').trim();
+
+            const ensureSession = (sessionId, fallback = {}) => {
+                const safeSessionId = String(sessionId || '').trim();
+                if (!safeSessionId) return null;
+
+                if (!sessionMap.has(safeSessionId)) {
+                    sessionMap.set(safeSessionId, {
+                        sessionId: safeSessionId,
+                        startedAt: fallback.startedAt || null,
+                        lastEventAt: fallback.lastEventAt || null,
+                        isCurrentSession: anchorSessionId ? safeSessionId === anchorSessionId : false,
+                        urlsMap: new Map(),
+                    });
+                }
+
+                const current = sessionMap.get(safeSessionId);
+                if (fallback.startedAt && !current.startedAt) current.startedAt = fallback.startedAt;
+                if (fallback.lastEventAt) current.lastEventAt = fallback.lastEventAt;
+                return current;
+            };
+
+            const addEntry = (sessionId, entry, fallback = {}) => {
+                const group = ensureSession(sessionId || fallback.sessionId, fallback);
+                if (!group) return;
+
+                const normalized = normalizeTrackedHistoryEntry(entry, {
+                    sessionId: group.sessionId,
+                    capturedAt: fallback.capturedAt || null,
+                    url: fallback.url || null,
+                    utmSource: fallback.utmSource || null,
+                    utmMedium: fallback.utmMedium || null,
+                    utmCampaign: fallback.utmCampaign || null,
+                    utmContent: fallback.utmContent || null,
+                    utmTerm: fallback.utmTerm || null,
+                    ga4SessionSource: fallback.ga4SessionSource || null,
+                    fbclid: fallback.fbclid || null,
+                    gclid: fallback.gclid || null,
+                    ttclid: fallback.ttclid || null,
+                    clickId: fallback.clickId || null,
+                });
+                if (!normalized) return;
+
+                const key = normalized.url;
+                const previous = group.urlsMap.get(key);
+                if (!previous) {
+                    group.urlsMap.set(key, normalized);
+                    return;
+                }
+
+                const prevTs = new Date(previous.capturedAt || 0).getTime();
+                const nextTs = new Date(normalized.capturedAt || 0).getTime();
+                if (nextTs && (!prevTs || nextTs < prevTs)) {
+                    group.urlsMap.set(key, normalized);
+                }
+            };
+
+            events.forEach((event) => {
+                const sessionId = String(event.sessionId || '').trim();
+                const fallback = {
+                    sessionId,
+                    startedAt: event.createdAt || event.collectedAt || null,
+                    lastEventAt: event.createdAt || event.collectedAt || null,
+                    capturedAt: event.createdAt || event.collectedAt || null,
+                    url: event.pageUrl || null,
+                    utmSource: event.utmSource || null,
+                    utmMedium: event.utmMedium || null,
+                    utmCampaign: event.utmCampaign || null,
+                    utmContent: event.utmContent || null,
+                    utmTerm: event.utmTerm || null,
+                    ga4SessionSource: event.ga4SessionSource || null,
+                    fbclid: event.fbclid || null,
+                    gclid: event.gclid || null,
+                    ttclid: event.ttclid || null,
+                    clickId: event.clickId || null,
+                };
+
+                addEntry(sessionId, { url: event.utmEntryUrl || null }, fallback);
+                addEntry(sessionId, { url: event.pageUrl || null }, fallback);
+
+                parseTrackedHistoryArray(event.utmSessionHistory).forEach((entry) => addEntry(sessionId, entry, fallback));
+                parseTrackedHistoryArray(event.utmBrowserHistory).forEach((entry) => addEntry(sessionId, entry, fallback));
+            });
+
+            const sessions = Array.from(sessionMap.values())
+                .map((group) => {
+                    const urls = Array.from(group.urlsMap.values())
+                        .sort((a, b) => new Date(a.capturedAt || 0).getTime() - new Date(b.capturedAt || 0).getTime());
+
+                    return {
+                        sessionId: group.sessionId,
+                        startedAt: group.startedAt || null,
+                        lastEventAt: group.lastEventAt || null,
+                        isCurrentSession: group.isCurrentSession,
+                        touchCount: urls.length,
+                        urls,
+                    };
+                })
+                .filter((group) => group.touchCount > 0)
+                .sort((a, b) => {
+                    if (a.isCurrentSession !== b.isCurrentSession) return a.isCurrentSession ? -1 : 1;
+                    return new Date(b.startedAt || b.lastEventAt || 0).getTime() - new Date(a.startedAt || a.lastEventAt || 0).getTime();
+                });
+
+            return {
+                totalUrls: sessions.reduce((sum, session) => sum + Number(session.touchCount || 0), 0),
+                sessionCount: sessions.length,
+                sessions,
+            };
+        }
+
+        function renderFocusedPurchaseJourneyCard(purchase = {}, displayName = '') {
+            const journeyData = buildMinimalJourneyNodesFromPurchase(purchase, selectedJourneyTimelineMode);
+            const sessionCount = Number(journeyData.sessionStory?.totalSessions || countPurchaseJourneySessions(purchase) || 0);
+            const purchaseUtmHistory = buildPurchaseTrackedUtmHistory(purchase);
+            return `
+                <div class="journey-compact-card space-y-4">
+                    <div class="flex items-center justify-between gap-2 flex-wrap">
+                        <span class="text-xs text-gray-500">${formatRecentPurchaseDate(purchase)}</span>
+                        <span class="journey-chip" data-tooltip="Resolved user or customer label for this stitched purchase journey."><i class="fa-solid fa-user"></i>${escapeHtml(journeyData.summary?.userName || displayName || 'Customer')}</span>
+                    </div>
+                    <div class="journey-meta-grid">
+                        <span class="journey-chip" data-tooltip="Confidence level of the stitched attribution for this purchase."><i class="fa-solid fa-percent"></i>${Number(journeyData.summary?.confidence || 0)}%</span>
+                        <span class="journey-chip" data-tooltip="Attributed campaign or the best campaign label recovered so far."><i class="fa-solid fa-bullhorn"></i>${escapeHtml(journeyData.summary?.sourceAd || 'No campaign')}</span>
+                        <span class="journey-chip" data-tooltip="Initial landing page captured for this stitched journey."><i class="fa-solid fa-door-open"></i>${escapeHtml(journeyData.summary?.landing || 'No landing captured')}</span>
+                        <span class="journey-chip" data-tooltip="How many stitched sessions currently support this purchase path."><i class="fa-solid fa-layer-group"></i>${sessionCount} sessions</span>
+                    </div>
+                    <div>
+                        <p class="font-medium text-gray-900 mb-1">UTM URL history for this journey</p>
+                        ${renderTrackedUtmHistory(purchaseUtmHistory, { emptyMessage: 'No UTM URLs have been captured yet for this selected journey.' })}
+                    </div>
+                    ${renderTimelineModeToggle(selectedJourneyTimelineMode)}
+                    ${renderJourneyVerticalTimeline(journeyData.timelineEvents)}
+                </div>
+            `;
         }
 
         function renderJourneyVerticalTimeline(events = []) {
@@ -3453,16 +2351,23 @@
                 return '<p class="text-sm text-gray-500">Not enough journey events yet.</p>';
             }
 
+            const actualEventCount = events.filter((event) =>
+                event.type !== 'session_marker'
+                && event.type !== 'session_gap'
+                && event.type !== 'post_purchase_marker'
+            ).length;
+
             return `
                 <div class="journey-timeline">
-                    <div class="journey-timeline-sticky"><i class="fa-solid fa-arrows-up-down"></i>${events.length} events</div>
+                    <div class="journey-timeline-sticky"><i class="fa-solid fa-arrows-up-down"></i>${actualEventCount} events</div>
                     ${events.map((event) => `
-                        <article class="journey-event ${event.tone || ''}">
+                        <article class="journey-event ${event.kindClass || ''} ${event.tone || ''}">
                             <div class="journey-event-head">
-                                <span class="journey-event-title"><span class="journey-event-icon" data-tooltip="${escapeHtmlAttr(event.tooltip || event.originalName || event.title || 'Event')}"><i class="${event.icon || 'fa-solid fa-circle'}"></i></span>${event.title || 'Event'}</span>
+                                <span class="journey-event-title"><span class="journey-event-icon"><i class="${event.icon || 'fa-solid fa-circle'}"></i></span>${event.title || 'Event'}</span>
+                                ${event.sessionLabel ? `<span class="journey-event-session-chip"><i class="fa-solid fa-layer-group"></i>${escapeHtml(event.sessionLabel)}</span>` : ''}
                             </div>
                             <div class="journey-event-detail">
-                                ${event.originalName ? `<p class="font-semibold text-gray-700 mb-1">${escapeHtml(event.originalName)} · ${escapeHtml(event.fullTime || event.time)}</p>` : (event.time ? `<p class="font-semibold text-gray-700 mb-1">${escapeHtml(event.fullTime || event.time)}</p>` : '')}
+                                ${event.originalName ? `<p class="font-semibold text-gray-700 mb-1">${escapeHtml(event.originalName)} - ${escapeHtml(event.fullTime || event.time)}</p>` : (event.time ? `<p class="font-semibold text-gray-700 mb-1">${escapeHtml(event.fullTime || event.time)}</p>` : '')}
                                 ${(Array.isArray(event.detailLines) ? event.detailLines : []).slice(0, 3).map((line) => `<p>${escapeHtml(line)}</p>`).join('')}
                             </div>
                         </article>
@@ -3512,7 +2417,7 @@
                     leads,
                     confidence,
                     userName,
-                    source: humanReadableChannel(channel),
+                    source: humanReadableChannel(channel, platform),
                     sourceAd,
                     landing,
                 },
@@ -3523,17 +2428,20 @@
             };
         }
 
-        function buildMinimalJourneyNodesFromPurchase(purchase = {}) {
+        function buildMinimalJourneyNodesFromPurchase(purchase = {}, timelineMode = 'condensed') {
             const confidence = Math.round(Number(purchase.attributionConfidence || 0) * 100);
             const hasPurchase = Number(purchase.revenue || 0) > 0;
             const userName = humanReadablePersonName(resolvePurchaseCustomerName(purchase) || '', 'Customer');
-            const source = humanReadableChannel(purchase.attributedChannel);
-            const sourceAd = purchase.attributedCampaign || 'No campaign';
-            const landing = normalizeJourneyPath(purchase.landingPageUrl || purchase.attributionDebug?.payloadPageUrl || purchase.pageUrl || '');
+            const source = humanReadableChannel(purchase.attributedChannel, purchase.attributedPlatform || '');
+            const sourceAd = resolveAttributedCampaignLabel(purchase);
+            const availableEvents = Array.isArray(purchase.events) ? purchase.events : (Array.isArray(purchase.stitchedEvents) ? purchase.stitchedEvents : []);
+            const landingInfo = resolvePurchaseLandingInfo(purchase, availableEvents);
+            const landing = landingInfo.landingDisplay;
+            const sessionStory = buildPurchaseSessionStory(purchase);
             
             // If purchase includes real events, build timeline from those events
-            let timelineEvents = buildPurchaseTimelineEvents(purchase);
-            const availableEvents = purchase.events || purchase.stitchedEvents; if (Array.isArray(availableEvents) && availableEvents.length > 0) {
+            let timelineEvents = buildPurchaseTimelineEvents(purchase, { landingInfo, events: availableEvents });
+            if (Array.isArray(availableEvents) && availableEvents.length > 0) {
                 let realEvents = availableEvents
                     .map((event) => ({
                         ...event,
@@ -3545,8 +2453,39 @@
                 realEvents = dedupeAdjacentIdenticalEvents(realEvents);
 
                 if (realEvents.length > 0) {
-                    timelineEvents = realEvents.map((event, index) => {
-                        const next = realEvents[index + 1];
+                    let groupCursor = 0;
+                    (Array.isArray(sessionStory.groups) ? sessionStory.groups : []).forEach((group, groupIndex) => {
+                        const takeCount = Math.max(0, Number(group.eventCount || 0));
+                        for (let offset = 0; offset < takeCount; offset += 1) {
+                            if (realEvents[groupCursor + offset]) {
+                                realEvents[groupCursor + offset]._sessionGroupIndex = groupIndex;
+                            }
+                        }
+                        groupCursor += takeCount;
+                    });
+
+                    const sourceEvents = timelineMode === 'full'
+                        ? realEvents
+                        : condenseSessionEvents(realEvents).events;
+
+                    timelineEvents = sourceEvents.map((event, index) => {
+                        if (event.eventName === '__condensed__') {
+                            return {
+                                icon: 'fa-solid fa-filter',
+                                tooltip: 'Low-signal events were condensed in this view. Switch to Full to inspect everything.',
+                                title: 'Condensed events',
+                                time: '-',
+                                fullTime: '-',
+                                originalName: 'Condensed events',
+                                rawEventName: '__condensed__',
+                                rawTs: Number(event._ts || 0),
+                                detailLines: event._detailLines || [],
+                                tone: '',
+                                sessionGroupIndex: Number(event._sessionGroupIndex),
+                            };
+                        }
+
+                        const next = sourceEvents[index + 1];
                         const durSeconds = next ? Math.max(0, (next._ts - event._ts) / 1000) : 0;
                         const pagePath = normalizeJourneyPath(event.pageUrl || event.url || '');
                         const itemName = event.productName || event.productId || event.itemId || '';
@@ -3575,15 +2514,20 @@
 
                         return {
                             icon: resolveEventIcon(event.eventName || event.name),
-                            tooltip: originalEventName || baseTitle,
+                            tooltip: `${describeJourneyTone(resolveChannelTone(event.utmSource || purchase.attributedChannel || '', purchase.attributedPlatform || null))} ${originalEventName || baseTitle}${pagePath && pagePath !== '-' ? ` on ${pagePath}` : ''}`.trim(),
                             title: durSeconds > 0 ? `${baseTitle} <span class="text-gray-400 text-[0.8rem]" style="margin-left: 0.5rem; font-weight: 500;">${formatDurationCompact(durSeconds)}</span>` : baseTitle,
                             time: displayTime,
                             fullTime: timeStr,
                             originalName: originalEventName,
+                            rawEventName: rawName,
+                            rawTs: Number(event._ts || 0),
                             detailLines,
                             tone: resolveChannelTone(event.utmSource || purchase.attributedChannel || '', purchase.attributedPlatform || null),
+                            sessionGroupIndex: Number(event._sessionGroupIndex),
                         };
                     });
+
+                    timelineEvents = buildPurchaseSessionTimelineEvents(timelineEvents, sessionStory, { mode: timelineMode });
                 }
             }
             
@@ -3598,6 +2542,7 @@
                 },
                 steps: [],
                 timelineEvents,
+                sessionStory,
                 purchaseBubble: hasPurchase ? formatCurrencyWithCode(Number(purchase.revenue || 0), purchase.currency || 'MXN') : 'no revenue',
                 adTone: resolveChannelTone(purchase.attributedChannel, purchase.attributedPlatform),
             };
@@ -3655,6 +2600,23 @@
                 return String(parseInt(normalized, 10));
             }
             return normalized;
+        }
+
+        function getPurchaseSelectionKey(purchase = {}) {
+            const orderId = String(purchase.orderId || '').trim();
+            if (orderId) return `order:${orderId}`;
+
+            const orderNumber = String(purchase.orderNumber || '').trim();
+            if (orderNumber) return `order-number:${orderNumber}`;
+
+            const checkoutToken = String(purchase.checkoutToken || '').trim();
+            if (checkoutToken) return `checkout:${checkoutToken}`;
+
+            const createdAt = String(purchase.platformCreatedAt || purchase.createdAt || '').trim();
+            const userKey = String(purchase.userKey || '').trim();
+            const customerId = String(purchase.customerId || '').trim();
+            const revenue = String(Number(purchase.revenue || 0));
+            return `fallback:${createdAt}:${userKey}:${customerId}:${revenue}`;
         }
 
         function escapeInlineSingleQuotedJs(value) {
@@ -3787,6 +2749,7 @@
             }
 
             attributionJourneyState.profileKey = matched?.profileKey || 'all';
+            attributionJourneyState.selectedJourneyKey = '';
             if (matched?.customerDisplayName || safeFallbackName) {
                 attributionJourneyState.profileSearch = matched?.customerDisplayName || safeFallbackName;
             }
@@ -3829,7 +2792,7 @@
                         ${renderTimelineModeToggle(selectedJourneyTimelineMode)}
                         ${renderJourneyVerticalTimeline(journeyData.timelineEvents)}
                         <div class="flex items-center gap-2 flex-wrap">
-                            <span class="journey-chip ${resolveChannelTone(currentJourney.attribution?.channel, currentJourney.attribution?.platform)}" data-tooltip="Traffic source channel"><i class="fa-solid fa-bullseye"></i>${escapeHtml(currentJourney.attribution?.channel || 'unattributed')}</span>
+                            <span class="journey-chip ${resolveChannelTone(currentJourney.attribution?.channel, currentJourney.attribution?.platform)}" data-tooltip="Traffic source channel"><i class="fa-solid fa-bullseye"></i>${escapeHtml(humanReadableChannel(currentJourney.attribution?.channel || 'unattributed', currentJourney.attribution?.platform || ''))}</span>
                         </div>
                     </div>
                 `;
@@ -3856,7 +2819,8 @@
                 .map((p) => ({
                     purchase: p,
                     score: scoreJourneySignal(p),
-                    channelKey: normalizeAttributionChannel(p.attributedChannel || p.attributedPlatform || ''),
+                    channelKey: normalizeAttributionChannel(p.attributedChannel || '', p.attributedPlatform || ''),
+                    selectionKey: getPurchaseSelectionKey(p),
                 }))
                 .sort((a, b) => {
                     const tsA = new Date(a.purchase.platformCreatedAt || a.purchase.createdAt || 0).getTime();
@@ -3914,6 +2878,7 @@
                 : byChannel;
 
             if (!byChannel.length) {
+                attributionJourneyState.selectedJourneyKey = '';
                 focusEl.innerHTML = '<p class="text-sm text-gray-500">No conversion journeys found in this date range.</p>';
                 historyEl.innerHTML = '<p class="text-sm text-gray-500">No WooCommerce conversion profiles found yet.</p>';
                 return;
@@ -3921,6 +2886,7 @@
 
             if (!profileFilteredJourneys.length) {
                 if (selectedProfile) {
+                    attributionJourneyState.selectedJourneyKey = '';
                     focusEl.innerHTML = `
                         <div class="journey-compact-card space-y-3">
                             <div class="flex items-center justify-between gap-2 flex-wrap">
@@ -3936,31 +2902,24 @@
                         </div>
                     `;
                 } else {
+                    attributionJourneyState.selectedJourneyKey = '';
                     focusEl.innerHTML = '<p class="text-sm text-gray-500">No stitched journeys for this filter.</p>';
                 }
             } else {
-                const top = profileFilteredJourneys[0].purchase;
-                const topJourneyData = buildMinimalJourneyNodesFromPurchase(top);
-                focusEl.innerHTML = `
-                    <div class="journey-compact-card space-y-3">
-                        <div class="flex items-center justify-between gap-2 flex-wrap">
-                            <span class="text-xs text-gray-500">${formatRecentPurchaseDate(top)}</span>
-                            <span class="journey-chip"><i class="fa-solid fa-user"></i>${escapeHtml(topJourneyData.summary?.userName || (selectedProfile ? resolveProfileDisplayName(selectedProfile) : '') || 'Customer')}</span>
-                        </div>
-                        <div class="journey-meta-grid">
-                            <span class="journey-chip"><i class="fa-solid fa-percent"></i>${Number(topJourneyData.summary?.confidence || 0)}%</span>
-                            <span class="journey-chip"><i class="fa-solid fa-bullhorn"></i>${escapeHtml(topJourneyData.summary?.sourceAd || 'No campaign')}</span>
-                            <span class="journey-chip"><i class="fa-solid fa-door-open"></i>${escapeHtml(topJourneyData.summary?.landing || '-')}</span>
-                        </div>
-                        ${renderJourneyVerticalTimeline(topJourneyData.timelineEvents)}
-                    </div>
-                `;
+                const selectedRow = profileFilteredJourneys.find((row) => row.selectionKey === String(attributionJourneyState.selectedJourneyKey || ''))
+                    || profileFilteredJourneys[0];
+                attributionJourneyState.selectedJourneyKey = selectedRow?.selectionKey || '';
+                focusEl.innerHTML = renderFocusedPurchaseJourneyCard(
+                    selectedRow.purchase,
+                    selectedProfile ? resolveProfileDisplayName(selectedProfile) : ''
+                );
+                wireTimelineModeToggle(focusEl);
             }
 
             historyEl.innerHTML = `
                 <div class="space-y-3">
                     <div class="flex items-center gap-2 flex-wrap">
-                        <input id="journey-profile-search" type="text" class="text-xs border border-gray-300 rounded-md px-2 py-1 bg-white" placeholder="Buscar perfil Woo" value="${escapeHtmlAttr(attributionJourneyState.profileSearch || '')}">
+                        <input id="journey-profile-search" type="text" class="text-xs border border-gray-300 rounded-md px-2 py-1 bg-white" placeholder="Search Woo profile" value="${escapeHtmlAttr(attributionJourneyState.profileSearch || '')}">
                         <select id="journey-profile-sort" class="text-xs border border-gray-300 rounded-md px-2 py-1 bg-white">
                             <option value="orders" ${attributionJourneyState.profileSort === 'orders' ? 'selected' : ''}>Mas orders</option>
                             <option value="revenue" ${attributionJourneyState.profileSort === 'revenue' ? 'selected' : ''}>Mayor revenue</option>
@@ -3977,18 +2936,23 @@
                     </div>
                 </div>
                 <div class="space-y-3 mt-3">
-                    ${profileFilteredJourneys.slice(0, 40).map(({ purchase }, index) => {
-                        const person = humanReadablePersonName(resolvePurchaseCustomerName(purchase) || 'Customer');
-                        const channel = humanReadableChannel(purchase.attributedChannel);
+                    ${profileFilteredJourneys.slice(0, 20).map(({ purchase, selectionKey }) => {
+                        const identity = resolvePurchaseDisplayIdentity(purchase);
+                        const sessionCount = countPurchaseJourneySessions(purchase);
+                        const isActive = selectionKey === String(attributionJourneyState.selectedJourneyKey || '');
                         return `
-                        <button type="button" class="journey-compact-card w-full text-left hover:opacity-95" data-journey-order-id="${escapeHtmlAttr(purchase.orderId || '')}">
+                        <button type="button" class="journey-compact-card ${isActive ? 'is-active' : ''} w-full text-left hover:opacity-95" data-journey-key="${escapeHtmlAttr(selectionKey)}">
                             <div class="flex items-center justify-between gap-2 flex-wrap">
-                                <p class="text-sm font-semibold text-gray-900">${escapeHtml(`${channel} ${index + 1} for ${person}`)}</p>
+                                <div class="min-w-0">
+                                    <p class="text-sm font-semibold text-gray-900 truncate">${escapeHtml(identity.name)}</p>
+                                    ${identity.email ? `<p class="mt-1 text-xs text-gray-500 truncate">${escapeHtml(identity.email)}</p>` : ''}
+                                </div>
                                 <span class="text-xs text-gray-500">${formatRecentPurchaseDate(purchase)}</span>
                             </div>
                             <div class="mt-2 flex items-center gap-2 flex-wrap">
-                                <span class="journey-chip ${resolveChannelTone(purchase.attributedChannel, purchase.attributedPlatform)}"><i class="${resolveChannelIcon(purchase.attributedChannel, purchase.attributedPlatform)}"></i>${escapeHtml(purchase.attributedChannel || 'unattributed')}</span>
+                                <span class="journey-chip ${resolveChannelTone(purchase.attributedChannel, purchase.attributedPlatform)}"><i class="${resolveChannelIcon(purchase.attributedChannel, purchase.attributedPlatform)}"></i>${escapeHtml(humanReadableChannel(purchase.attributedChannel || 'unattributed', purchase.attributedPlatform || ''))}</span>
                                 <span class="journey-chip"><i class="fa-solid fa-sack-dollar"></i>${formatCurrencyWithCode(Number(purchase.revenue || 0), purchase.currency || 'MXN')}</span>
+                                <span class="journey-chip"><i class="fa-solid fa-layer-group"></i>${sessionCount} sessions</span>
                             </div>
                         </button>`;
                     }).join('') || '<p class="text-sm text-gray-500">No stitched purchases for this profile yet.</p>'}
@@ -4026,26 +2990,13 @@
                 });
             });
 
-            historyEl.querySelectorAll('[data-journey-order-id]').forEach((button) => {
+            historyEl.querySelectorAll('[data-journey-key]').forEach((button) => {
                 button.addEventListener('click', () => {
-                    const orderId = button.getAttribute('data-journey-order-id') || '';
-                    const row = profileFilteredJourneys.find((item) => String(item.purchase.orderId || '') === orderId);
+                    const selectionKey = button.getAttribute('data-journey-key') || '';
+                    const row = profileFilteredJourneys.find((item) => item.selectionKey === selectionKey);
                     if (!row) return;
-                    const focused = buildMinimalJourneyNodesFromPurchase(row.purchase);
-                    focusEl.innerHTML = `
-                        <div class="journey-compact-card space-y-3">
-                            <div class="flex items-center justify-between gap-2 flex-wrap">
-                                <span class="text-xs text-gray-500">${formatRecentPurchaseDate(row.purchase)}</span>
-                                <span class="journey-chip"><i class="fa-solid fa-user"></i>${escapeHtml(focused.summary?.userName || 'Customer')}</span>
-                            </div>
-                            <div class="journey-meta-grid">
-                                <span class="journey-chip"><i class="fa-solid fa-percent"></i>${Number(focused.summary?.confidence || 0)}%</span>
-                                <span class="journey-chip"><i class="fa-solid fa-bullhorn"></i>${escapeHtml(focused.summary?.sourceAd || 'No campaign')}</span>
-                                <span class="journey-chip"><i class="fa-solid fa-door-open"></i>${escapeHtml(focused.summary?.landing || '-')}</span>
-                            </div>
-                            ${renderJourneyVerticalTimeline(focused.timelineEvents)}
-                        </div>
-                    `;
+                    attributionJourneyState.selectedJourneyKey = row.selectionKey;
+                    renderAttributionJourneyPanel();
                 });
             });
         }
@@ -4193,7 +3144,7 @@
 
         async function fetchSessionExplorerOverviewData() {
             const res = await fetch(`/api/analytics/${currentShopId}/session-explorer?limit=12`);
-            if (!res.ok) throw new Error('No se pudo cargar el historial del explorador');
+            if (!res.ok) throw new Error('Could not load explorer history');
             const data = await res.json();
             console.info('[Session Explorer] overview payload', {
                 shopId: currentShopId,
@@ -4222,21 +3173,21 @@
             const topLandings = profiles.filter((item) => item.lastLandingPageUrl).slice(0, 4);
             const isWooStore = storePlatform === 'WOOCOMMERCE';
             const titleText = isWooStore
-                ? 'Perfiles WooCommerce detectados por orders y sesiones web ligadas'
-                : 'Perfiles históricos y sesiones web ligadas';
+                ? 'WooCommerce profiles detected through orders and linked web sessions'
+                : 'Historical profiles and linked web sessions';
             const viewDescription = isWooStore
-                ? 'estos chips representan perfiles WooCommerce enriquecidos con sesiones web cuando el pixel logra ligarlas.'
-                : 'estos chips representan perfiles históricos detectados desde sesiones web y signals de identidad.';
+                ? 'These chips represent WooCommerce profiles enriched with web sessions when the pixel successfully links them.'
+                : 'These chips represent historical profiles detected from web sessions and identity signals.';
             const orderDescription = isWooStore
-                ? 'en WooCommerce priorizamos perfiles con orders primero y luego la sesión web ligada más reciente.'
-                : 'el listado prioriza perfiles con sesión web reciente ligada y después el resto del historial.';
+                ? 'In WooCommerce we prioritize profiles with orders first and then the most recent linked web session.'
+                : 'This list prioritizes profiles with a recent linked web session and then the rest of the history.';
             const nameDescription = isWooStore
                 ? (resolvedCustomerNames > 0
-                    ? `${resolvedCustomerNames} perfiles Woo ya traen nombre legible guardado desde la synchronization de orders.`
-                    : 'todavía no entran nombres legibles desde Woo en este corte; las older orders may require resynchronization para reemplazar IDs technical.')
+                    ? `${resolvedCustomerNames} Woo profiles already include readable names saved from order synchronization.`
+                    : 'Readable Woo names are not available in this batch yet; older orders may require resynchronization to replace technical IDs.')
                 : (shopifyNameLookupActive
                     ? `Shopify name lookup active, ${resolvedCustomerNames} names resolved in this batch.`
-                    : 'no hay token Shopify utilizable para resolver displayName, por eso sólo se muestra el perfil technical.');
+                    : 'There is no usable Shopify token to resolve displayName, so only the technical profile is shown.');
 
             console.info('[Session Explorer] rendering overview', {
                 totalProfiles: profiles.length,
@@ -4279,10 +3230,10 @@
 
             document.getElementById('session-detail-title').textContent = titleText;
             document.getElementById('session-detail-metrics').innerHTML = [
-                { label: 'Perfiles', value: summary.totalProfiles || 0 },
-                { label: 'Sessions recientes', value: summary.totalSessions || 0 },
-                { label: 'Órdenes historical', value: summary.totalOrders || 0 },
-                { label: 'Revenue histórico', value: formatCurrency(summary.totalRevenue || 0) },
+                { label: 'Profiles', value: summary.totalProfiles || 0 },
+                { label: 'Recent sessions', value: summary.totalSessions || 0 },
+                { label: 'Historical orders', value: summary.totalOrders || 0 },
+                { label: 'Historical revenue', value: formatCurrency(summary.totalRevenue || 0) },
             ].map((item) => `
                 <div class="session-metric-card rounded-xl p-4">
                     <div class="text-xs uppercase tracking-wide text-gray-500">${item.label}</div>
@@ -4291,17 +3242,17 @@
             `).join('');
 
             document.getElementById('session-detail-summary').innerHTML = `
-                <p><strong>Status:</strong> Explorador persistente en modo histórico.</p>
-                <p><strong>Platform detectada:</strong> ${storePlatform}</p>
-                <p><strong>Qué estás viendo:</strong> ${viewDescription}</p>
-                <p><strong>Perfiles Woo:</strong> ${wooProfiles} de ${profiles.length || 0}</p>
-                <p><strong>Perfiles con compras:</strong> ${orderLedProfiles}</p>
-                <p><strong>Perfil más reciente:</strong> ${topProfile?.profileLabel || '-'}</p>
-                <p><strong>Last actividad:</strong> ${formatDateTimeMx(topProfile?.lastSeenAt)}</p>
-                <p><strong>Sesión recomendada:</strong> ${topProfile?.recentSessionId || '-'}</p>
-                <p><strong>Orden actual:</strong> ${orderDescription}</p>
-                <p><strong>Lectura:</strong> si ves "0 sesiones", la plataforma conoce ese cliente por orders, pero el pixel todavía no lo amarró a una sesión web capturada.</p>
-                <p><strong>Nombre del cliente:</strong> ${nameDescription}</p>
+                <p><strong>Status:</strong> Persistent explorer in historical mode.</p>
+                <p><strong>Detected platform:</strong> ${storePlatform}</p>
+                <p><strong>What you are seeing:</strong> ${viewDescription}</p>
+                <p><strong>Woo profiles:</strong> ${wooProfiles} of ${profiles.length || 0}</p>
+                <p><strong>Profiles with purchases:</strong> ${orderLedProfiles}</p>
+                <p><strong>Most recent profile:</strong> ${topProfile?.profileLabel || '-'}</p>
+                <p><strong>Last activity:</strong> ${formatDateTimeMx(topProfile?.lastSeenAt)}</p>
+                <p><strong>Suggested session:</strong> ${topProfile?.recentSessionId || '-'}</p>
+                <p><strong>Current order:</strong> ${orderDescription}</p>
+                <p><strong>Readout:</strong> if you see "0 sessions," the platform knows that customer through orders, but the pixel still has not linked them to a captured web session.</p>
+                <p><strong>Customer name:</strong> ${nameDescription}</p>
             `;
 
             document.getElementById('session-detail-orders').innerHTML = profiles.length
@@ -4309,65 +3260,65 @@
                     <div class="session-order-card rounded-lg p-3">
                         <div class="flex items-start justify-between gap-3">
                             <div>
-                                <p class="font-medium text-gray-900">${profile.profileLabel || 'Perfil histórico'}</p>
-                                <p class="text-sm text-gray-500">${profile.orderCount || 0} orders · ${profile.sessionCount || 0} sesiones${Number(profile.sessionCount || 0) === 0 ? ' · sin sesión web ligada' : ''}</p>
-                                <p class="text-xs text-gray-400">${profile.lastSeenAt ? formatDateTimeMx(profile.lastSeenAt) : 'Sin actividad reciente'}</p>
+                                <p class="font-medium text-gray-900">${profile.profileLabel || 'Historical profile'}</p>
+                                <p class="text-sm text-gray-500">${profile.orderCount || 0} orders · ${profile.sessionCount || 0} sessions${Number(profile.sessionCount || 0) === 0 ? ' · without a linked web session' : ''}</p>
+                                <p class="text-xs text-gray-400">${profile.lastSeenAt ? formatDateTimeMx(profile.lastSeenAt) : 'No recent activity'}</p>
                             </div>
                             <div class="text-right">
                                 <p class="text-sm font-semibold text-indigo-600">${formatCurrency(profile.totalRevenue || 0)}</p>
-                                ${profile.recentSessionId ? `<button type="button" class="session-compare-pill historical-profile-trigger inline-flex items-center px-2 py-1 mt-2 text-xs" data-session-id="${profile.recentSessionId}">Abrir sesión</button>` : ''}
+                                ${profile.recentSessionId ? `<button type="button" class="session-compare-pill historical-profile-trigger inline-flex items-center px-2 py-1 mt-2 text-xs" data-session-id="${profile.recentSessionId}">Open session</button>` : ''}
                             </div>
                         </div>
                     </div>
                 `).join('')
-                : '<p class="text-gray-500">Todavía no hay perfiles históricos suficientes.</p>';
+                : '<p class="text-gray-500">There are not enough historical profiles yet.</p>';
 
             document.getElementById('session-detail-attribution').innerHTML = `
                 <p><strong>Woo customers:</strong> ${wooProfiles}</p>
-                <p><strong>Perfiles por email/hash:</strong> ${profiles.filter((item) => item.profileType === 'email_hash').length}</p>
-                <p><strong>Perfiles por phone/hash:</strong> ${profiles.filter((item) => item.profileType === 'phone_hash').length}</p>
-                <p><strong>Solo browser key:</strong> ${profiles.filter((item) => item.profileType === 'user_key').length}</p>
-                <p><strong>Signal useful:</strong> el backend ya mezcla sesiones, orders e identidad guardada y adapta la lectura al tipo de tienda detectado.</p>
+                <p><strong>Profiles by email hash:</strong> ${profiles.filter((item) => item.profileType === 'email_hash').length}</p>
+                <p><strong>Profiles by phone hash:</strong> ${profiles.filter((item) => item.profileType === 'phone_hash').length}</p>
+                <p><strong>Browser key only:</strong> ${profiles.filter((item) => item.profileType === 'user_key').length}</p>
+                <p><strong>Signal useful:</strong> the backend already blends sessions, orders, and stored identity and adapts the readout to the detected store type.</p>
             `;
 
             document.getElementById('session-detail-journey').innerHTML = `
                 <div>
-                    <p class="font-medium text-gray-900 mb-1">Landings recientes</p>
+                    <p class="font-medium text-gray-900 mb-1">Recent landings</p>
                     ${topLandings.length
                         ? topLandings.map((item) => `<p class="text-xs text-gray-600 truncate">${item.lastLandingPageUrl} · ${item.profileLabel}</p>`).join('')
-                        : '<p class="text-xs text-gray-500">Sin landings destacadas.</p>'}
+                        : '<p class="text-xs text-gray-500">No highlighted landings.</p>'}
                 </div>
                 <div>
-                    <p class="font-medium text-gray-900 mb-1">Campaigns recientes</p>
+                    <p class="font-medium text-gray-900 mb-1">Recent campaigns</p>
                     ${topCampaigns.length
                         ? topCampaigns.map((item) => `<p class="text-xs text-gray-600">${item.lastCampaign} · ${item.profileLabel}</p>`).join('')
-                        : '<p class="text-xs text-gray-500">Sin campaigns recurrentes.</p>'}
+                        : '<p class="text-xs text-gray-500">No recurring campaigns.</p>'}
                 </div>
             `;
 
             document.getElementById('session-detail-visual').innerHTML = profiles.length
                 ? `<div class="grid grid-cols-1 sm:grid-cols-2 gap-4 w-full">${profiles.slice(0, 4).map((profile) => `
                     <div class="session-side-card rounded-xl p-4">
-                        <p class="text-sm font-semibold text-gray-900">${profile.profileLabel || 'Perfil'}</p>
+                        <p class="text-sm font-semibold text-gray-900">${profile.profileLabel || 'Profile'}</p>
                         <p class="text-xs text-gray-500 mt-1">${profile.profileType || 'user_key'}</p>
-                        <p class="mt-3 text-sm text-gray-600">${profile.sessionCount || 0} sesiones · ${profile.orderCount || 0} orders</p>
+                        <p class="mt-3 text-sm text-gray-600">${profile.sessionCount || 0} sessions · ${profile.orderCount || 0} orders</p>
                         <p class="text-sm text-indigo-600">${formatCurrency(profile.totalRevenue || 0)}</p>
                     </div>
                 `).join('')}</div>`
-                : '<p class="text-sm text-gray-500">Sin perfiles para visualizar todavía.</p>';
+                : '<p class="text-sm text-gray-500">No profiles to visualize yet.</p>';
 
             document.getElementById('session-detail-patterns').innerHTML = `
                 <div class="session-pattern-item rounded-xl p-4">
-                    <p class="text-sm font-semibold text-gray-900">El explorador ya no depende de una sola sesión</p>
-                    <p class="mt-1 text-sm text-gray-600">Empieza mostrando perfiles históricos y luego baja al detalle cuando eliges una sesión.</p>
+                    <p class="text-sm font-semibold text-gray-900">The explorer no longer depends on a single session</p>
+                    <p class="mt-1 text-sm text-gray-600">It starts by showing historical profiles and then drills into the details when you choose a session.</p>
                 </div>
                 <div class="session-pattern-item rounded-xl p-4">
-                    <p class="text-sm font-semibold text-gray-900">La identidad mezcla más signals</p>
-                    <p class="mt-1 text-sm text-gray-600">Woo customer, email hash, phone hash y userKey ahora alimentan el contexto histórico.</p>
+                    <p class="text-sm font-semibold text-gray-900">Identity now blends more signals</p>
+                    <p class="mt-1 text-sm text-gray-600">Woo customer, email hash, phone hash, and userKey now feed the historical context.</p>
                 </div>
                 <div class="session-pattern-item rounded-xl p-4">
-                    <p class="text-sm font-semibold text-gray-900">Uso recomendado</p>
-                    <p class="mt-1 text-sm text-gray-600">Abre primero un perfil con orders, luego compara sesiones relacionadas para detectar friction o intención real.</p>
+                    <p class="text-sm font-semibold text-gray-900">Recommended use</p>
+                    <p class="mt-1 text-sm text-gray-600">Open a profile with orders first, then compare related sessions to detect friction or real intent.</p>
                 </div>
             `;
 
@@ -4376,8 +3327,8 @@
                     <div class="session-timeline-item rounded-lg p-3">
                         <div class="flex items-center justify-between gap-4">
                             <div>
-                                <p class="font-medium text-gray-900">${profile.profileLabel || 'Perfil histórico'}</p>
-                                <p class="text-xs text-gray-500">${profile.sessionCount || 0} sesiones · ${profile.orderCount || 0} orders</p>
+                                <p class="font-medium text-gray-900">${profile.profileLabel || 'Historical profile'}</p>
+                                <p class="text-xs text-gray-500">${profile.sessionCount || 0} sessions · ${profile.orderCount || 0} orders</p>
                             </div>
                             <div class="text-right">
                                 <p class="text-sm text-gray-700">${formatDateTimeMx(profile.lastSeenAt)}</p>
@@ -4386,7 +3337,7 @@
                         </div>
                     </div>
                 `).join('')
-                : '<p class="text-gray-500">No hay actividad historical suficiente.</p>';
+                : '<p class="text-gray-500">There is not enough historical activity yet.</p>';
 
             renderPeerSessions(profiles, null, {});
             updatePeerNavigation([], null);
@@ -4417,8 +3368,8 @@
                 renderSessionExplorerOverview(data);
                 sessionOverviewLastLoadedAt = Date.now();
             } catch (error) {
-                document.getElementById('session-detail-title').textContent = 'Users históricos';
-                document.getElementById('session-detail-metrics').innerHTML = '<div class="text-sm text-gray-500">No se pudo cargar el overview histórico.</div>';
+                document.getElementById('session-detail-title').textContent = 'Historical users';
+                document.getElementById('session-detail-metrics').innerHTML = '<div class="text-sm text-gray-500">Could not load the historical overview.</div>';
                 document.getElementById('session-detail-summary').innerHTML = `<p class="text-red-600">${error.message}</p>`;
                 document.getElementById('session-detail-orders').innerHTML = '<p class="text-gray-500">-</p>';
                 document.getElementById('session-detail-attribution').innerHTML = '<p class="text-gray-500">-</p>';
@@ -4440,6 +3391,151 @@
             focusJourneyProfile({ sessionId });
         }
 
+        function describeTrackedUtmEntry(entry = {}) {
+            const sourceMedium = [entry.utmSource, entry.utmMedium].filter(Boolean).join(' / ');
+            const campaign = String(entry.utmCampaign || '').trim();
+            const clickId = String(entry.clickId || entry.fbclid || entry.gclid || entry.ttclid || '').trim();
+            const parts = [];
+
+            if (sourceMedium) parts.push(sourceMedium);
+            if (campaign) parts.push(campaign);
+            if (clickId) parts.push(`click ${shortenJourneyIdentifier(clickId)}`);
+
+            return parts.join(' · ') || 'Tracked UTM touch';
+        }
+
+        function normalizeTrackedHistoryUrl(value) {
+            const raw = String(value || '').trim();
+            if (!raw) return null;
+
+            try {
+                const parsed = new URL(raw, window.location.origin);
+                parsed.hash = '';
+                return parsed.toString();
+            } catch (_) {
+                return raw.split('#')[0] || null;
+            }
+        }
+
+        function trackedHistoryHasSignals(url) {
+            const normalized = normalizeTrackedHistoryUrl(url);
+            if (!normalized) return false;
+
+            try {
+                const parsed = new URL(normalized, window.location.origin);
+                const params = parsed.searchParams;
+                return [
+                    'utm_source',
+                    'utm_medium',
+                    'utm_campaign',
+                    'utm_content',
+                    'utm_term',
+                    'fbclid',
+                    'gclid',
+                    'ttclid',
+                    'ga4_session_source',
+                ].some((key) => params.has(key) && params.get(key));
+            } catch (_) {
+                return false;
+            }
+        }
+
+        function parseTrackedHistoryArray(value) {
+            if (Array.isArray(value)) return value;
+            if (typeof value !== 'string' || !value.trim()) return [];
+
+            try {
+                const parsed = JSON.parse(value);
+                return Array.isArray(parsed) ? parsed : [];
+            } catch (_) {
+                return [];
+            }
+        }
+
+        function normalizeTrackedHistoryEntry(entry = {}, fallback = {}) {
+            const url = normalizeTrackedHistoryUrl(
+                entry.url
+                || entry.page_url
+                || entry.pageUrl
+                || entry.u
+                || fallback.url
+                || ''
+            );
+
+            if (!url || !trackedHistoryHasSignals(url)) return null;
+
+            let parsed;
+            try {
+                parsed = new URL(url, window.location.origin);
+            } catch (_) {
+                parsed = null;
+            }
+
+            const params = parsed ? parsed.searchParams : new URLSearchParams();
+            const clickId = String(
+                entry.click_id
+                || entry.clickId
+                || entry.fbclid
+                || entry.gclid
+                || entry.ttclid
+                || params.get('fbclid')
+                || params.get('gclid')
+                || params.get('ttclid')
+                || fallback.clickId
+                || ''
+            ).trim();
+
+            return {
+                sessionId: String(entry.session_id || entry.sessionId || fallback.sessionId || '').trim() || null,
+                capturedAt: String(entry.captured_at || entry.capturedAt || entry.ts || fallback.capturedAt || '').trim() || null,
+                url,
+                utmSource: String(entry.utm_source || entry.utmSource || params.get('utm_source') || fallback.utmSource || '').trim() || null,
+                utmMedium: String(entry.utm_medium || entry.utmMedium || params.get('utm_medium') || fallback.utmMedium || '').trim() || null,
+                utmCampaign: String(entry.utm_campaign || entry.utmCampaign || params.get('utm_campaign') || fallback.utmCampaign || '').trim() || null,
+                utmContent: String(entry.utm_content || entry.utmContent || params.get('utm_content') || fallback.utmContent || '').trim() || null,
+                utmTerm: String(entry.utm_term || entry.utmTerm || params.get('utm_term') || fallback.utmTerm || '').trim() || null,
+                ga4SessionSource: String(entry.ga4_session_source || entry.ga4SessionSource || params.get('ga4_session_source') || fallback.ga4SessionSource || '').trim() || null,
+                fbclid: String(entry.fbclid || params.get('fbclid') || fallback.fbclid || '').trim() || null,
+                gclid: String(entry.gclid || params.get('gclid') || fallback.gclid || '').trim() || null,
+                ttclid: String(entry.ttclid || params.get('ttclid') || fallback.ttclid || '').trim() || null,
+                clickId: clickId || null,
+            };
+        }
+
+        function renderTrackedUtmHistory(history = {}, options = {}) {
+            const sessions = Array.isArray(history.sessions) ? history.sessions : [];
+            if (!sessions.length) {
+                return `<p class="text-xs text-gray-500">${escapeHtml(options.emptyMessage || 'No UTM URLs have been captured yet for this recognized user.')}</p>`;
+            }
+
+            return `
+                <div class="space-y-3 mt-3">
+                    <div class="flex items-center gap-2 flex-wrap">
+                        <span class="journey-chip"><i class="fa-solid fa-link"></i>${Number(history.totalUrls || 0)} UTM URLs</span>
+                        <span class="journey-chip"><i class="fa-solid fa-layer-group"></i>${Number(history.sessionCount || 0)} sessions</span>
+                    </div>
+                    ${sessions.slice(0, 6).map((session, index) => `
+                        <div class="session-side-card rounded-xl p-3">
+                            <div class="flex items-center justify-between gap-2 flex-wrap">
+                                <p class="text-xs font-semibold uppercase tracking-wide text-gray-500">${session.isCurrentSession ? 'Current session' : `Linked session ${index + 1}`}</p>
+                                <span class="text-[11px] text-gray-500">${formatDateTimeMx(session.startedAt || session.lastEventAt)}</span>
+                            </div>
+                            <div class="mt-2 space-y-2">
+                                ${Array.isArray(session.urls) ? session.urls.slice(0, 4).map((entry) => `
+                                    <div class="rounded-lg border border-white/10 bg-white/5 p-2">
+                                        <p class="text-[11px] text-gray-400">${escapeHtml(describeTrackedUtmEntry(entry))}</p>
+                                        <a href="${escapeHtmlAttr(entry.url || '#')}" target="_blank" rel="noopener noreferrer" class="block mt-1 text-xs break-all text-indigo-200 hover:underline">${escapeHtml(entry.url || '-')}</a>
+                                        <p class="text-[11px] text-gray-500 mt-1">${formatDateTimeMx(entry.capturedAt || session.startedAt || session.lastEventAt)}</p>
+                                    </div>
+                                `).join('') : ''}
+                                ${Number(session.touchCount || 0) > 4 ? `<p class="text-[11px] text-gray-500">+${Number(session.touchCount || 0) - 4} more tracked URLs in this session.</p>` : ''}
+                            </div>
+                        </div>
+                    `).join('')}
+                </div>
+            `;
+        }
+
         function renderSessionDetail(data) {
             const session = data.session || {};
             const metrics = data.metrics || {};
@@ -4451,6 +3547,7 @@
             const timeline = Array.isArray(data.timeline) ? data.timeline : [];
             const pages = Array.isArray(journey.pages) ? journey.pages : [];
             const products = Array.isArray(journey.products) ? journey.products : [];
+            const utmHistory = data.utmHistory || {};
 
             console.info('[Session Explorer] render session detail', {
                 sessionId: session.sessionId || null,
@@ -4485,7 +3582,7 @@
                 data.commerceProfile?.topPairings || []
             );
 
-            document.getElementById('session-detail-title').textContent = `${profile.profileLabel || 'Perfil histórico'} · Sesión de ${linkedUserName}`;
+            document.getElementById('session-detail-title').textContent = `${profile.profileLabel || 'Historical profile'} · Session for ${linkedUserName}`;
 
             document.getElementById('session-detail-metrics').innerHTML = [
                 { label: 'Eventos', value: metrics.totalEvents || 0 },
@@ -4495,7 +3592,7 @@
                 { label: 'Revenue', value: formatCurrency(metrics.revenue || 0) },
                 { label: 'Pages unique', value: metrics.uniquePages || 0 },
                 { label: 'Products unique', value: metrics.uniqueProducts || 0 },
-                { label: 'Órdenes', value: metrics.orderCount || 0 },
+                { label: 'Orders', value: metrics.orderCount || 0 },
             ].map((item) => `
                 <div class="session-metric-card rounded-xl p-4">
                     <div class="text-xs uppercase tracking-wide text-gray-500">${item.label}</div>
@@ -4504,16 +3601,16 @@
             `).join('');
 
             document.getElementById('session-detail-summary').innerHTML = `
-                <p><strong>Perfil:</strong> ${profile.profileLabel || '-'}</p>
-                <p><strong>Tipo:</strong> ${profile.profileType || '-'}</p>
-                <p><strong>User conectado:</strong> ${linkedUserLabel}</p>
+                <p><strong>Profile:</strong> ${profile.profileLabel || '-'}</p>
+                <p><strong>Type:</strong> ${profile.profileType || '-'}</p>
+                <p><strong>Connected user:</strong> ${linkedUserLabel}</p>
                 <p><strong>Woo Customer ID:</strong> ${identifiedUser.customerId || '-'}</p>
-                <p><strong>Email identificado:</strong> ${identifiedUser.emailPreview || '-'}</p>
+                <p><strong>Identified email:</strong> ${identifiedUser.emailPreview || '-'}</p>
                 <p><strong>User Key:</strong> ${session.userKey || '-'}</p>
-                <p><strong>Inicio:</strong> ${formatDateTimeMx(session.startedAt)}</p>
-                <p><strong>Último evento:</strong> ${formatDateTimeMx(session.lastEventAt)}</p>
+                <p><strong>Start:</strong> ${formatDateTimeMx(session.startedAt)}</p>
+                <p><strong>Latest event:</strong> ${formatDateTimeMx(session.lastEventAt)}</p>
                 <p><strong>Session End:</strong> ${formatDateTimeMx(session.sessionEndAt || session.lastEventAt)}</p>
-                <p><strong>Último login:</strong> ${identifiedUser.lastLoginAt ? formatDateTimeMx(identifiedUser.lastLoginAt) : '-'}</p>
+                <p><strong>Latest login:</strong> ${identifiedUser.lastLoginAt ? formatDateTimeMx(identifiedUser.lastLoginAt) : '-'}</p>
                 <p><strong>Duration:</strong> ${formatDuration(session.sessionDurationSeconds || 0)}</p>
                 <p><strong>Landing:</strong> ${session.landingPageUrl || '-'}</p>
                 <p><strong>UTM:</strong> ${(session.utmSource || '-') + ' / ' + (session.utmCampaign || '-')}</p>
@@ -4521,9 +3618,10 @@
                 <p><strong>Referrer:</strong> ${session.referrer || '-'}</p>
                 <p><strong>IP Hash:</strong> ${session.ipHash ? `${String(session.ipHash).slice(0, 10)}...` : '-'}</p>
                 <p><strong>Funnel:</strong> PV ${metrics.pageViews || 0} · VI ${metrics.viewItem || 0} · ATC ${metrics.addToCart || 0} · BC ${metrics.beginCheckout || 0} · P ${metrics.purchase || 0}</p>
-                <p><strong>Otras sesiones del mismo usuario:</strong> ${patterns.peerSessionCount || 0}</p>
-                <p><strong>Sessions trazadas totales:</strong> ${patterns.totalTrackedSessions || ((patterns.peerSessionCount || 0) + 1)}</p>
-                <p><strong>Órdenes historical del perfil:</strong> ${profile.historicalOrderCount || 0}</p>
+                <p><strong>Other sessions from the same user:</strong> ${patterns.peerSessionCount || 0}</p>
+                <p><strong>Total stitched sessions:</strong> ${patterns.totalTrackedSessions || ((patterns.peerSessionCount || 0) + 1)}</p>
+                <p><strong>Historical profile orders:</strong> ${profile.historicalOrderCount || 0}</p>
+                <p><strong>Tracked UTM URLs:</strong> ${Number(utmHistory.totalUrls || 0)} across ${Number(utmHistory.sessionCount || 0)} sessions</p>
             `;
 
             document.getElementById('session-detail-attribution').innerHTML = `
@@ -4531,27 +3629,31 @@
                 <p><strong>Platform:</strong> ${journey.attribution?.platform || '-'}</p>
                 <p><strong>Campaign:</strong> ${journey.attribution?.campaign || '-'}</p>
                 <p><strong>Click ID:</strong> ${journey.attribution?.clickId || '-'}</p>
-                <p><strong>Confianza:</strong> ${formatPercent(journey.attribution?.confidence || 0)}</p>
-                <p><strong>Fuente:</strong> ${journey.attribution?.source || 'none'}</p>
+                <p><strong>Confidence:</strong> ${formatPercent(journey.attribution?.confidence || 0)}</p>
+                <p><strong>Source:</strong> ${journey.attribution?.source || 'none'}</p>
                 <p><strong>Checkout Tokens:</strong> ${Array.isArray(journey.checkoutTokens) && journey.checkoutTokens.length ? journey.checkoutTokens.join(', ') : '-'}</p>
+                <div>
+                    <p class="font-medium text-gray-900 mb-1">Recognized UTM URL history</p>
+                    ${renderTrackedUtmHistory(utmHistory)}
+                </div>
             `;
 
             document.getElementById('session-detail-journey').innerHTML = `
                 <div>
-                    <p><strong>Entrada:</strong> ${journey.entryPage || '-'}</p>
-                    <p><strong>Salida:</strong> ${journey.exitPage || '-'}</p>
+                    <p><strong>Entry:</strong> ${journey.entryPage || '-'}</p>
+                    <p><strong>Exit:</strong> ${journey.exitPage || '-'}</p>
                 </div>
                 <div>
-                    <p class="font-medium text-gray-900 mb-1">Pages destacadas</p>
+                    <p class="font-medium text-gray-900 mb-1">Highlighted pages</p>
                     ${pages.length
                         ? pages.map((page) => `<p class="text-xs text-gray-600 truncate">${page.url} · ${page.hits} hits</p>`).join('')
-                        : '<p class="text-xs text-gray-500">Sin páginas registradas.</p>'}
+                        : '<p class="text-xs text-gray-500">No pages recorded.</p>'}
                 </div>
                 <div>
-                    <p class="font-medium text-gray-900 mb-1">Products tocados</p>
+                    <p class="font-medium text-gray-900 mb-1">Touched products</p>
                     ${products.length
-                        ? products.map((product) => `<p class="text-xs text-gray-600">${product.productId} · ${product.events} eventos</p>`).join('')
-                        : '<p class="text-xs text-gray-500">Sin productos registrados.</p>'}
+                        ? products.map((product) => `<p class="text-xs text-gray-600">${product.productId} · ${product.events} events</p>`).join('')
+                        : '<p class="text-xs text-gray-500">No products recorded.</p>'}
                 </div>
             `;
 
@@ -4562,8 +3664,13 @@
             updateRecommendedComparison(patterns);
             renderSessionComparison();
 
-            document.getElementById('session-detail-orders').innerHTML = orders.length
-                ? orders.map((order, index) => `
+            const displayOrders = orders.map((order) => ({
+                ...order,
+                attributedChannel: humanReadableChannel(order.attributedChannel || 'unattributed', order.attributedPlatform || ''),
+            }));
+
+            document.getElementById('session-detail-orders').innerHTML = displayOrders.length
+                ? displayOrders.map((order, index) => `
                     <div class="session-order-card rounded-lg p-3">
                         <div class="flex items-start justify-between gap-3">
                             <div>
@@ -4571,11 +3678,11 @@
                                 <p class="text-sm text-gray-500">${formatCurrencyWithCode(order.revenue || 0, order.currency || 'MXN')} · ${order.attributedChannel || 'unattributed'}</p>
                                 <p class="text-xs text-gray-400">${formatDateTimeMx(order.platformCreatedAt || order.createdAt)}</p>
                             </div>
-                            <span class="text-[11px] uppercase tracking-wide ${order.isCurrentSession ? 'session-positive-copy' : 'session-meta-copy'}">${order.isCurrentSession ? 'current session' : 'histórico'}</span>
+                            <span class="text-[11px] uppercase tracking-wide ${order.isCurrentSession ? 'session-positive-copy' : 'session-meta-copy'}">${order.isCurrentSession ? 'current session' : 'historical'}</span>
                         </div>
                     </div>
                 `).join('')
-                : '<p class="text-gray-500">Sin orders ligadas a este perfil.</p>';
+                : '<p class="text-gray-500">No orders linked to this profile.</p>';
 
             renderSessionTimelineFromState();
         }
@@ -4587,16 +3694,16 @@
 
             if (sessionExplorerState.mode === 'overview') {
                 if (!Array.isArray(peers) || peers.length === 0) {
-                    container.innerHTML = '<span class="text-sm text-gray-500">No hay perfiles históricos todavía.</span>';
+                    container.innerHTML = '<span class="text-sm text-gray-500">There are no historical profiles yet.</span>';
                     const note = document.getElementById('session-compare-recommended-note');
-                    if (note) note.textContent = 'Cuando aparezcan perfiles con actividad, podrás abrir su sesión más reciente desde aquí.';
+                    if (note) note.textContent = 'When profiles with activity appear, you will be able to open their most recent session from here.';
                     return;
                 }
 
                 container.innerHTML = peers.map((profile) => `
                     <button type="button" data-session-id="${profile.recentSessionId || ''}" class="session-peer-pill historical-profile-chip inline-flex items-center gap-2 px-3 py-2 rounded-full text-sm text-gray-700 ${profile.recentSessionId ? '' : 'opacity-60 cursor-not-allowed'}" ${profile.recentSessionId ? '' : 'disabled'}>
-                        <span class="font-semibold">${profile.profileLabel || 'Perfil histórico'}</span>
-                        <span class="text-xs text-gray-500">${profile.sessionCount || 0} sesiones</span>
+                        <span class="font-semibold">${profile.profileLabel || 'Historical profile'}</span>
+                        <span class="text-xs text-gray-500">${profile.sessionCount || 0} sessions</span>
                         <span class="text-xs text-gray-400">${profile.orderCount || 0} orders</span>
                     </button>
                 `).join('');
@@ -4609,7 +3716,7 @@
                 });
 
                 const note = document.getElementById('session-compare-recommended-note');
-                if (note) note.textContent = 'Estos chips son perfiles históricos. Si alguno muestra 0 sesiones, Woo lo identificó por orders pero el pixel aún no ligó navegación web a ese cliente.';
+                if (note) note.textContent = 'These chips are historical profiles. If one shows 0 sessions, Woo identified it through orders but the pixel has not linked web navigation to that customer yet.';
                 return;
             }
 
@@ -4621,7 +3728,7 @@
             ` : '';
 
             if (!Array.isArray(peers) || peers.length === 0) {
-                container.innerHTML = currentChip || '<span class="text-sm text-gray-500">No hay otras sesiones relacionadas todavía.</span>';
+                container.innerHTML = currentChip || '<span class="text-sm text-gray-500">There are no other related sessions yet.</span>';
                 return;
             }
 
@@ -4637,7 +3744,7 @@
                         <button type="button" data-session-id="${peer.sessionId}" class="session-peer-chip inline-flex items-center gap-2 hover:text-indigo-700">
                             <span class="font-semibold">${peer.sessionId}</span>
                             <span class="text-xs text-gray-500">${formatDateTimeMx(peer.startedAt)}</span>
-                            <span class="text-xs text-gray-400">${badges.join(' · ') || 'Navegación'}</span>
+                            <span class="text-xs text-gray-400">${badges.join(' · ') || 'Browsing'}</span>
                         </button>
                         <button type="button" data-compare-session-id="${peer.sessionId}" class="session-compare-pill session-compare-chip inline-flex items-center px-2 py-1 text-xs text-slate-700 hover:bg-slate-200">
                             Comparar
@@ -4672,14 +3779,14 @@
                 button.classList.add('hidden');
                 button.removeAttribute('data-session-id');
                 note.textContent = patterns?.peerSessionCount
-                    ? 'No hay una comparación recomendada clara todavía; usa las sesiones relacionadas para revisar manualmente.'
-                    : 'Todavía no hay sesiones relacionadas suficientes para recomendar una comparación.';
+                    ? 'There is no clear recommended comparison yet; use the related sessions to review manually.'
+                    : 'There are not enough related sessions yet to recommend a comparison.';
                 return;
             }
 
             button.classList.remove('hidden');
             button.setAttribute('data-session-id', recommendation.sessionId);
-            note.textContent = `${recommendation.headline || 'Comparación sugerida'}: ${recommendation.reason || 'Abrir una sesión relacionada con mejor valor analítico.'}`;
+            note.textContent = `${recommendation.headline || 'Suggested comparison'}: ${recommendation.reason || 'Open a related session with better analytical value.'}`;
         }
 
         function updatePeerNavigation(peers, currentSessionId) {
@@ -4715,18 +3822,18 @@
             if (!container) return;
 
             const formatSessionEventLabel = (event) => {
-                if (event.bucket === 'login') return 'Inicio de sesión';
+                if (event.bucket === 'login') return 'Login';
                 if (event.eventName === 'add_to_cart') return 'Added to cart';
-                if (event.eventName === 'begin_checkout') return 'Inició checkout';
+                if (event.eventName === 'begin_checkout') return 'Started checkout';
                 if (event.eventName === 'view_item') return 'View item';
                 if (event.eventName === 'page_view') return 'Page view';
-                if (event.eventName === 'purchase') return 'Compra';
+                if (event.eventName === 'purchase') return 'Purchase';
                 return event.eventName || '-';
             };
 
             const formatSessionEventDetail = (event) => {
                 if (event.bucket === 'login') {
-                    return event.customerName || event.customerEmail || event.customerId || 'User identificado';
+                    return event.customerName || event.customerEmail || event.customerId || 'Identified user';
                 }
                 return event.pageUrl || event.productId || event.orderId || '-';
             };
@@ -4765,12 +3872,12 @@
                         </div>
                     </div>
                 `).join('')
-                : '<p class="text-gray-500">No hay eventos para ese filtro.</p>';
+                : '<p class="text-gray-500">There are no events for that filter.</p>';
         }
 
         async function fetchSessionDetailData(sessionId) {
             const res = await fetch(`/api/analytics/${currentShopId}/sessions/${encodeURIComponent(sessionId)}`);
-            if (!res.ok) throw new Error('No se pudo cargar la sesión');
+            if (!res.ok) throw new Error('Could not load the session');
             const data = await res.json();
             console.debug('[Session Explorer] raw session detail payload', {
                 sessionId,
@@ -4791,7 +3898,7 @@
                 renderSessionComparison();
             } catch (_) {
                 sessionExplorerState.compareData = null;
-                renderSessionComparison('No se pudo cargar la sesión de comparación.');
+                renderSessionComparison('Could not load the comparison session.');
             } finally {
                 triggerButton?.removeAttribute('disabled');
             }
@@ -4814,24 +3921,24 @@
             if (errorMessage) {
                 panel.classList.remove('hidden');
                 title.textContent = errorMessage;
-                content.innerHTML = '<p class="text-sm text-red-600">No se pudo construir la comparación.</p>';
+                content.innerHTML = '<p class="text-sm text-red-600">Could not build the comparison.</p>';
                 return;
             }
 
             if (!currentData || !compareData) {
                 panel.classList.add('hidden');
-                title.textContent = 'Selecciona una sesión relacionada to compare.';
+                title.textContent = 'Select a related session to compare.';
                 content.innerHTML = '';
                 return;
             }
 
             panel.classList.remove('hidden');
-            title.textContent = `Actual ${currentData.session?.sessionId || '-'} vs ${compareData.session?.sessionId || '-'}`;
+                title.textContent = `Current ${currentData.session?.sessionId || '-'} vs ${compareData.session?.sessionId || '-'}`;
 
             const currentMetrics = currentData.metrics || {};
             const compareMetrics = compareData.metrics || {};
             const metricRows = [
-                { label: 'Eventos', current: Number(currentMetrics.totalEvents || 0), compare: Number(compareMetrics.totalEvents || 0) },
+                { label: 'Events', current: Number(currentMetrics.totalEvents || 0), compare: Number(compareMetrics.totalEvents || 0) },
                 { label: 'Duration', current: Number(currentData.session?.sessionDurationSeconds || 0), compare: Number(compareData.session?.sessionDurationSeconds || 0), formatter: formatDuration },
                 { label: 'View Item', current: Number(currentMetrics.viewItem || 0), compare: Number(compareMetrics.viewItem || 0) },
                 { label: 'Add To Cart', current: Number(currentMetrics.addToCart || 0), compare: Number(compareMetrics.addToCart || 0) },
@@ -4852,11 +3959,11 @@
                                 <div class="mt-2 flex items-end justify-between gap-4">
                                     <div>
                                         <p class="text-lg font-semibold text-gray-900">${currentValue}</p>
-                                        <p class="text-xs text-gray-500">Actual</p>
+                                        <p class="text-xs text-gray-500">Current</p>
                                     </div>
                                     <div class="text-right">
                                         <p class="text-lg font-semibold text-slate-600">${compareValue}</p>
-                                        <p class="text-xs text-gray-500">Comparada</p>
+                                        <p class="text-xs text-gray-500">Compared</p>
                                     </div>
                                 </div>
                                 <p class="mt-2 text-xs ${delta > 0 ? 'session-positive-copy' : delta < 0 ? 'session-warning-copy' : 'session-meta-copy'}">Delta: ${deltaText}</p>
@@ -4885,7 +3992,7 @@
 
             return `
                 <div class="session-summary-card rounded-xl p-4">
-                    <p class="text-sm font-semibold text-gray-900 mb-3">Funnel comparado</p>
+                    <p class="text-sm font-semibold text-gray-900 mb-3">Compared funnel</p>
                     <div class="space-y-3">
                         ${steps.map((step) => {
                             const maxValue = Math.max(step.current, step.compare, 1);
@@ -4893,7 +4000,7 @@
                                 <div>
                                     <div class="flex items-center justify-between text-xs text-gray-600 mb-1">
                                         <span>${step.label}</span>
-                                        <span>Actual ${step.current} / Comparada ${step.compare}</span>
+                                        <span>Current ${step.current} / Compared ${step.compare}</span>
                                     </div>
                                     <div class="space-y-1">
                                         <div class="pattern-rate-bar h-2 rounded-full overflow-hidden"><span class="session-compare-current-bar block h-full" style="width:${Math.round((step.current / maxValue) * 100)}%"></span></div>
@@ -4913,24 +4020,24 @@
             const insights = [];
 
             if (Number(currentMetrics.beginCheckout || 0) > Number(compareMetrics.beginCheckout || 0)) {
-                insights.push('La current session empuja más al checkout que la comparada.');
+                insights.push('The current session pushes toward checkout more than the compared one.');
             }
             if (Number(currentMetrics.purchase || 0) < Number(compareMetrics.purchase || 0)) {
-                insights.push('La sesión comparada convierte mejor al final del funnel.');
+                insights.push('The compared session converts better at the end of the funnel.');
             }
             if (Number(currentMetrics.viewItem || 0) > Number(compareMetrics.viewItem || 0) && Number(currentMetrics.addToCart || 0) === 0) {
-                insights.push('La actual explora más productos, pero no transforma esa exploration en intención.');
+                insights.push('The current session explores more products, but does not turn that exploration into intent.');
             }
             if (Number(currentData.session?.sessionDurationSeconds || 0) > Number(compareData.session?.sessionDurationSeconds || 0)) {
-                insights.push('La actual dura más; vale revisar si eso significa más interés o más friction.');
+                insights.push('The current session lasts longer; it is worth checking whether that means more interest or more friction.');
             }
             if (!insights.length) {
-                insights.push('Ambas sesiones se comportan de forma parecida; no hay una desviación fuerte en el recorrido.');
+                insights.push('Both sessions behave similarly; there is no strong deviation in the journey.');
             }
 
             return `
                 <div class="session-summary-card rounded-xl p-4">
-                    <p class="text-sm font-semibold text-gray-900 mb-3">Lectura rápida</p>
+                    <p class="text-sm font-semibold text-gray-900 mb-3">Quick read</p>
                     <div class="space-y-2 text-sm text-gray-700">
                         ${insights.map((item) => `<p>${item}</p>`).join('')}
                     </div>
@@ -4951,14 +4058,14 @@
                         <p class="mt-2 text-sm font-semibold text-gray-900">${step.label}</p>
                     </div>
                 `).join('')}</div>`
-                : '<p class="text-sm text-gray-500">Sin pasos suficientes para dibujar el recorrido.</p>';
+                : '<p class="text-sm text-gray-500">There are not enough steps to draw the journey.</p>';
 
             const barsHtml = comparison.length
                 ? `<div class="space-y-3 mt-5">${comparison.map((item) => `
                     <div>
                         <div class="flex items-center justify-between text-xs text-gray-600 mb-1">
                             <span>${item.label}</span>
-                            <span>${Math.round(Number(item.peerRate || 0) * 100)}% en otras sesiones</span>
+                            <span>${Math.round(Number(item.peerRate || 0) * 100)}% in other sessions</span>
                         </div>
                         <div class="pattern-rate-bar h-2 rounded-full bg-gray-200 overflow-hidden">
                             <span class="block h-full ${item.current ? 'bg-emerald-500' : 'bg-amber-400'}" style="width:${Math.max(4, Math.round(Number(item.peerRate || 0) * 100))}%"></span>
@@ -4981,22 +4088,22 @@
                     <div class="session-pattern-item rounded-xl p-4">
                         <p class="text-sm font-semibold text-gray-900">${card.title || '-'}</p>
                         <p class="mt-1 text-sm text-gray-600">${card.detail || '-'}</p>
-                        <p class="session-positive-copy mt-2 text-xs font-medium uppercase tracking-wide">Application sugerida</p>
+                        <p class="session-positive-copy mt-2 text-xs font-medium uppercase tracking-wide">Suggested application</p>
                         <p class="session-positive-copy text-sm">${card.action || '-'}</p>
                     </div>
                 `).join('')
-                : '<p class="text-sm text-gray-500">Sin patrones suficientes todavía.</p>';
+                : '<p class="text-sm text-gray-500">There are not enough patterns yet.</p>';
 
             const longitudinalHtml = longitudinalCards.length
                 ? `
                     <div>
-                        <p class="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-2">Lectura longitudinal</p>
+                        <p class="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-2">Longitudinal read</p>
                         <div class="space-y-3">
                             ${longitudinalCards.map((card) => `
                                 <div class="session-side-card rounded-xl p-4">
                                     <p class="text-sm font-semibold text-gray-900">${card.title || '-'}</p>
                                     <p class="mt-1 text-sm text-gray-600">${card.detail || '-'}</p>
-                                    <p class="session-accent-copy mt-2 text-xs font-medium uppercase tracking-wide">Cómo usarlo</p>
+                                    <p class="session-accent-copy mt-2 text-xs font-medium uppercase tracking-wide">How to use it</p>
                                     <p class="session-accent-copy text-sm">${card.action || '-'}</p>
                                 </div>
                             `).join('')}
@@ -5008,24 +4115,24 @@
             const sideNotes = `
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div class="session-side-card rounded-xl p-4">
-                        <p class="text-xs font-semibold uppercase tracking-wide text-gray-500">Landings recurrentes</p>
+                        <p class="text-xs font-semibold uppercase tracking-wide text-gray-500">Recurring landings</p>
                         <div class="mt-2 space-y-1 text-sm text-gray-600">
                             ${topLandingPages.length
-                                ? topLandingPages.map((item) => `<p class="truncate">${item.url} · ${item.sessions} sesiones</p>`).join('')
-                                : '<p>Sin suficiente historial.</p>'}
+                                ? topLandingPages.map((item) => `<p class="truncate">${item.url} · ${item.sessions} sessions</p>`).join('')
+                                : '<p>Not enough history yet.</p>'}
                         </div>
                     </div>
                     <div class="session-side-card rounded-xl p-4">
-                        <p class="text-xs font-semibold uppercase tracking-wide text-gray-500">Campaigns frecuentes</p>
+                        <p class="text-xs font-semibold uppercase tracking-wide text-gray-500">Frequent campaigns</p>
                         <div class="mt-2 space-y-1 text-sm text-gray-600">
                             ${topCampaigns.length
-                                ? topCampaigns.map((item) => `<p>${item.campaign} · ${item.sessions} sesiones</p>`).join('')
-                                : '<p>Sin campaña dominante.</p>'}
+                                ? topCampaigns.map((item) => `<p>${item.campaign} · ${item.sessions} sessions</p>`).join('')
+                                : '<p>No dominant campaign.</p>'}
                         </div>
                     </div>
                 </div>
                 <div class="text-xs text-gray-500">
-                    Promedio en otras sesiones: ${patterns.avgEvents || 0} eventos · ${formatDuration(patterns.avgDurationSeconds || 0)}${patterns.averageGapHours ? ` · separación media ${patterns.averageGapHours}h` : ''}
+                    Average across other sessions: ${patterns.avgEvents || 0} events · ${formatDuration(patterns.avgDurationSeconds || 0)}${patterns.averageGapHours ? ` · average gap ${patterns.averageGapHours}h` : ''}
                 </div>
             `;
 
@@ -5045,8 +4152,17 @@
             }
             if (analyticsFetchInFlight) return;
             analyticsFetchInFlight = true;
+            const initialLoad = !hasRenderedInitialAnalytics;
 
             try {
+                setAnalyticsLoadingState(true, {
+                    mode: initialLoad ? 'boot' : 'refresh',
+                    title: initialLoad ? 'Loading attribution data' : 'Refreshing analytics',
+                    copy: initialLoad
+                        ? `Fetching metrics, journeys, and live signals for ${currentShopId}.`
+                        : `Updating the latest analytics for ${currentShopId}.`,
+                });
+
                 const modelSelect = document.getElementById('attribution-model');
                 if (modelSelect) {
                     currentAttributionModel = modelSelect.value || 'last_touch';
@@ -5082,12 +4198,19 @@
                 
                 const data = await res.json();
                 renderDashboard(data);
-                await fetchJourneyWooProfiles();
-                renderAttributionJourneyPanel();
+                markAnalyticsReady();
+                fetchJourneyWooProfiles()
+                    .then(() => {
+                        renderAttributionJourneyPanel();
+                    })
+                    .catch((error) => {
+                        console.warn('[Journey] Background profile refresh failed', error);
+                    });
 
             } catch (error) {
                 console.error('Analytics error:', error);
-                alert('Error cargando datos de analítica');
+                setAnalyticsLoadingState(false);
+                alert('Error loading analytics data');
             } finally {
                 analyticsFetchInFlight = false;
             }
@@ -5158,14 +4281,6 @@
             // Channel Metrics (Fix: API returns object, map to array)
             const channels = data.channels || {};
 
-            // Combine unattributed into other
-            if (channels.unattributed) {
-                if (!channels.other) channels.other = { revenue: 0, orders: 0 };
-                channels.other.revenue += channels.unattributed.revenue || 0;
-                channels.other.orders += channels.unattributed.orders || 0;
-                delete channels.unattributed;
-            }
-
             // Transform for chart
             const attributionData = Object.entries(channels).map(([key, val]) => ({
                 channel: key,
@@ -5187,7 +4302,7 @@
             if (!container) return;
 
             if (!Array.isArray(products) || products.length === 0) {
-                container.innerHTML = '<p class="text-sm text-gray-400">Sin datos de productos todavía.</p>';
+                container.innerHTML = '<p class="text-sm text-gray-400">No product data yet.</p>';
                 return;
             }
 
@@ -5225,7 +4340,7 @@
                 }
 
                 statusEl.textContent = status === 'ACTIVE' ? 'ACTIVE' : status;
-                updatedEl.textContent = state.updatedAt ? `Updated: ${formatDateTimeMx(state.updatedAt)}` : 'Sin conexión registrada';
+                updatedEl.textContent = state.updatedAt ? `Updated: ${formatDateTimeMx(state.updatedAt)}` : 'No connection recorded';
             });
 
             // Update Data Enrichment Trigger Badge
@@ -5269,7 +4384,117 @@
             if (campaignName && campaignId) return `${campaignName} (${campaignId})`;
             if (campaignName) return campaignName;
             if (campaignId) return campaignId;
-            return 'Sin campaña dominante';
+            return 'No dominant campaign';
+        }
+
+        function normalizePaidMediaCampaignLookupValue(value = '') {
+            return String(value || '')
+                .trim()
+                .toLowerCase()
+                .replace(/^act_/, '')
+                .replace(/[^\w.-]+/g, '');
+        }
+
+        function isOpaqueAttributionIdentifier(value = '') {
+            const raw = String(value || '').trim();
+            if (!raw) return false;
+            const compact = raw.replace(/[^\da-z]/gi, '');
+            if (/^\d{8,}$/.test(raw)) return true;
+            if (/^[a-f0-9]{16,}$/i.test(compact)) return true;
+            return false;
+        }
+
+        function sanitizeAttributionLabel(value = '') {
+            const raw = String(value || '').trim();
+            if (!raw) return '';
+            if (['-', 'n/a', 'na', 'none', 'null', 'undefined', 'unknown', 'not set'].includes(raw.toLowerCase())) {
+                return '';
+            }
+            return raw;
+        }
+
+        function findPaidMediaCampaignMatch({ channel = '', platform = '', campaign = '', adset = '', ad = '' } = {}) {
+            const platformKey = normalizeAttributionChannel(channel || platform || '', platform || channel || '');
+            if (platformKey !== 'meta' && platformKey !== 'google' && platformKey !== 'tiktok') return null;
+
+            const rows = Array.isArray(globalPaidMediaCampaigns)
+                ? globalPaidMediaCampaigns.filter((row) => String(row?._platform || '').trim().toLowerCase() === platformKey)
+                : [];
+            if (!rows.length) return null;
+
+            const candidates = [campaign, adset, ad]
+                .map((value) => String(value || '').trim())
+                .filter(Boolean);
+            if (!candidates.length) return null;
+
+            const normalizedCandidates = new Set(candidates.map((value) => normalizePaidMediaCampaignLookupValue(value)).filter(Boolean));
+            if (!normalizedCandidates.size) return null;
+
+            return rows.find((row) => {
+                const rowId = normalizePaidMediaCampaignLookupValue(row?.id || row?.campaign_id || '');
+                const rowName = normalizePaidMediaCampaignLookupValue(row?.name || row?.campaign_name || '');
+                return (rowId && normalizedCandidates.has(rowId)) || (rowName && normalizedCandidates.has(rowName));
+            }) || null;
+        }
+
+        function resolveAttributedSourceDescriptor(purchase = {}) {
+            const channel = purchase?.attributedChannel || '';
+            const platform = purchase?.attributedPlatform || '';
+            const rawCampaign = String(purchase?.attributedCampaign || purchase?.attributionDebug?.payloadUtmCampaign || '').trim();
+            const rawAdset = String(purchase?.attributedAdset || '').trim();
+            const rawAd = String(purchase?.attributedAd || '').trim();
+            const rawCampaignLabel = sanitizeAttributionLabel(purchase?.attributedCampaignLabel || '');
+            const rawAdsetLabel = sanitizeAttributionLabel(purchase?.attributedAdsetLabel || '');
+            const rawAdLabel = sanitizeAttributionLabel(purchase?.attributedAdLabel || '');
+
+            const typedCandidates = [
+                { type: 'ad', label: rawAdLabel || (!isOpaqueAttributionIdentifier(rawAd) ? sanitizeAttributionLabel(rawAd) : '') },
+                { type: 'adset', label: rawAdsetLabel || (!isOpaqueAttributionIdentifier(rawAdset) ? sanitizeAttributionLabel(rawAdset) : '') },
+                { type: 'campaign', label: rawCampaignLabel || (!isOpaqueAttributionIdentifier(rawCampaign) ? sanitizeAttributionLabel(rawCampaign) : '') },
+            ].filter((entry) => entry.label);
+
+            const matchedCampaign = findPaidMediaCampaignMatch({
+                channel,
+                platform,
+                campaign: rawCampaignLabel || rawCampaign,
+                adset: rawAdsetLabel || rawAdset,
+                ad: rawAdLabel || rawAd,
+            });
+
+            if (typedCandidates[0]) {
+                const readableDirect = typedCandidates[0];
+                if (matchedCampaign?.name) {
+                    const directNormalized = normalizePaidMediaCampaignLookupValue(readableDirect.label);
+                    const matchedNormalized = normalizePaidMediaCampaignLookupValue(matchedCampaign.name || '');
+                    if (matchedNormalized && directNormalized !== matchedNormalized) {
+                        return {
+                            type: readableDirect.type,
+                            label: `${readableDirect.label} · ${matchedCampaign.name}`,
+                        };
+                    }
+                }
+                return readableDirect;
+            }
+
+            if (matchedCampaign?.name) return { type: 'campaign', label: String(matchedCampaign.name).trim() };
+            if (rawCampaignLabel) return { type: 'campaign', label: rawCampaignLabel };
+            if (rawAdsetLabel) return { type: 'adset', label: rawAdsetLabel };
+            if (rawAdLabel) return { type: 'ad', label: rawAdLabel };
+            if (rawCampaign) return { type: 'campaign', label: rawCampaign };
+            if (rawAdset) return { type: 'adset', label: rawAdset };
+            if (rawAd) return { type: 'ad', label: rawAd };
+            return { type: 'campaign', label: 'No campaign' };
+        }
+
+        function resolveAttributedCampaignLabel(purchase = {}) {
+            return resolveAttributedSourceDescriptor(purchase).label || 'No campaign';
+        }
+
+        function humanReadableAttributionLabelType(type = '') {
+            const normalized = String(type || '').trim().toLowerCase();
+            if (normalized === 'ad') return 'ad';
+            if (normalized === 'adset') return 'ad set';
+            return 'campaign';
         }
 
         async function ensurePaidMediaSelector(platform, sourceState) {
@@ -5309,7 +4534,7 @@
 
             const optionsHtml = state.accounts.length
                 ? state.accounts.map((acc) => `<option value="${acc.id}">${acc.name || acc.id}</option>`).join('')
-                : '<option value="">Sin cuentas disponibles</option>';
+                : '<option value="">No accounts available</option>';
 
             selectEl.innerHTML = optionsHtml;
             selectEl.disabled = state.accounts.length === 0;
@@ -5317,7 +4542,7 @@
             if (feedbackEl) {
                 feedbackEl.textContent = state.accounts.length
                     ? ''
-                    : 'No hay cuentas disponibles para seleccionar.';
+                    : 'No accounts available to select.';
             }
         }
 
@@ -5329,7 +4554,7 @@
 
             try {
                 if (applyBtn) applyBtn.disabled = true;
-                if (feedbackEl) feedbackEl.textContent = 'Aplicando selección...';
+                if (feedbackEl) feedbackEl.textContent = 'Applying selection...';
 
                 const selectedId = normalizePaidMediaAccountId(platform, selectEl.value);
                 const res = await fetch(getPaidMediaSelectionEndpoint(platform), {
@@ -5340,14 +4565,14 @@
 
                 const body = await res.json().catch(() => ({}));
                 if (!res.ok || body?.ok === false) {
-                    throw new Error(body?.error || `No se pudo actualizar ${platform}`);
+                    throw new Error(body?.error || `Could not update ${platform}`);
                 }
 
-                if (feedbackEl) feedbackEl.textContent = 'Selección aplicada. Refrescando métricas...';
+                if (feedbackEl) feedbackEl.textContent = 'Selection applied. Refreshing metrics...';
                 await fetchAnalytics();
             } catch (err) {
                 console.error(`[PaidMedia UI] Selection update failed for ${platform}`, err);
-                if (feedbackEl) feedbackEl.textContent = `Error al actualizar: ${err?.message || err}`;
+                if (feedbackEl) feedbackEl.textContent = `Update error: ${err?.message || err}`;
             } finally {
                 if (applyBtn) applyBtn.disabled = false;
             }
@@ -5357,9 +4582,9 @@
             const linkStatus = document.getElementById('pm-link-status');
 
             if (linkStatus) {
-                if (paidMedia?.available) linkStatus.textContent = 'API activa';
-                else if (paidMedia?.linked) linkStatus.textContent = 'Conectado sin datos';
-                else linkStatus.textContent = 'No conectado';
+                if (paidMedia?.available) linkStatus.textContent = 'API active';
+                else if (paidMedia?.linked) linkStatus.textContent = 'Connected without data';
+                else linkStatus.textContent = 'Not connected';
             }
 
             renderPaidMediaSource('meta', paidMedia?.meta || {});
@@ -5410,9 +4635,9 @@
             if (!statusEl || !spendEl || !revenueEl || !roasEl || !syncEl) return;
 
             const currency = sourceState?.currency || 'MXN';
-            let statusLabel = 'Desconectado';
-            if (sourceState?.connected && sourceState?.ready) statusLabel = 'API activa';
-            else if (sourceState?.connected) statusLabel = 'Conectado';
+            let statusLabel = 'Disconnected';
+            if (sourceState?.connected && sourceState?.ready) statusLabel = 'API active';
+            else if (sourceState?.connected) statusLabel = 'Connected';
 
             statusEl.textContent = statusLabel;
             spendEl.textContent = formatCurrencyWithCode(sourceState?.spend || 0, currency);
@@ -5423,14 +4648,14 @@
 
             if (sourceState?.connected && sourceState?.ready) {
                 if (sourceState?.rangeUsed?.fallbackUsed) {
-                    syncEl.textContent = `Fallback ${sourceState?.rangeUsed?.since || ''} a ${sourceState?.rangeUsed?.until || ''}`;
+                    syncEl.textContent = `Fallback ${sourceState?.rangeUsed?.since || ''} to ${sourceState?.rangeUsed?.until || ''}`;
                 } else {
                     syncEl.textContent = '';
                 }
             } else if (sourceState?.connected) {
-                syncEl.textContent = 'Conectado, esperando respuesta de API';
+                syncEl.textContent = 'Connected, waiting for API response';
             } else {
-                syncEl.textContent = 'No conectado';
+                syncEl.textContent = 'Not connected';
             }
         }
 
@@ -5507,7 +4732,7 @@
             container.classList.remove('hidden');
         }
 
-        function toggleDataEnrichment(el) {
+function toggleDataEnrichment(el) {
     const text = document.getElementById('de-toggle-text');
     if(el.checked) {
         text.textContent = 'Active';
@@ -5519,6 +4744,282 @@
     }
 }
 
+function describeEnrichmentSignal(label = '', value = '') {
+    const key = String(label || '').trim().toLowerCase();
+    const safeValue = String(value || '').trim();
+
+    if (key.includes('fbp')) {
+        return `Meta browser identifier captured for matching this shopper to Meta conversions.${safeValue ? ` Value: ${safeValue}` : ''}`;
+    }
+    if (key.includes('fbc') || key.includes('fbclid') || key.includes('click id')) {
+        return `Meta click identifier linked to the ad interaction that may have started this journey.${safeValue ? ` Value: ${safeValue}` : ''}`;
+    }
+    if (key.includes('gclid')) {
+        return `Google Ads click identifier used to connect this conversion back to Google traffic.${safeValue ? ` Value: ${safeValue}` : ''}`;
+    }
+    if (key.includes('ttclid')) {
+        return `TikTok click identifier used to connect this conversion back to TikTok traffic.${safeValue ? ` Value: ${safeValue}` : ''}`;
+    }
+    if (key.includes('email')) {
+        return `Email signal available for deterministic matching and post-purchase enrichment.${safeValue ? ` Value: ${safeValue}` : ''}`;
+    }
+    if (key.includes('phone')) {
+        return `Phone signal available for deterministic matching and customer stitching.${safeValue ? ` Value: ${safeValue}` : ''}`;
+    }
+    if (key.includes('ip')) {
+        return `Client IP captured from the purchase or event payload to improve server-side matching.${safeValue ? ` Value: ${safeValue}` : ''}`;
+    }
+    if (key.includes('user agent')) {
+        return `Browser and device signature captured with the event payload for server-side matching.${safeValue ? ` Value: ${safeValue}` : ''}`;
+    }
+
+    return `Captured enrichment signal used to improve matching quality for this order.${safeValue ? ` Value: ${safeValue}` : ''}`;
+}
+
+function describeEnrichmentPlatform(platform = '') {
+    const label = String(platform || '').trim() || 'the destination platform';
+    return `This enriched payload was prepared for ${label}.`;
+}
+
+function normalizeEnrichmentObject(value) {
+    return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+}
+
+function getEnrichmentPlatformLabel(platform = '') {
+    const key = String(platform || '').trim().toLowerCase();
+    if (key === 'meta') return 'Meta';
+    if (key === 'google') return 'Google';
+    if (key === 'tiktok') return 'TikTok';
+    return 'Platform';
+}
+
+function getEnrichmentStatusLabel(status = '') {
+    const key = String(status || '').trim().toLowerCase();
+    if (key === 'accepted') return 'Accepted';
+    if (key === 'sending') return 'Sending';
+    if (key === 'queued') return 'Queued';
+    if (key === 'failed') return 'Failed';
+    if (key === 'skipped') return 'Skipped';
+    return 'Not recorded';
+}
+
+function getEnrichmentStatusTone(status = '') {
+    const key = String(status || '').trim().toLowerCase();
+    if (key === 'accepted') {
+        return {
+            icon: 'fa-solid fa-check',
+            color: '#7ef0c8',
+            border: 'rgba(126, 240, 200, 0.32)',
+            bg: 'rgba(126, 240, 200, 0.14)',
+        };
+    }
+    if (key === 'sending') {
+        return {
+            icon: 'fa-solid fa-arrows-rotate',
+            color: '#f3c77a',
+            border: 'rgba(243, 199, 122, 0.32)',
+            bg: 'rgba(243, 199, 122, 0.14)',
+        };
+    }
+    if (key === 'queued') {
+        return {
+            icon: 'fa-solid fa-hourglass-half',
+            color: '#c7b1ff',
+            border: 'rgba(199, 177, 255, 0.28)',
+            bg: 'rgba(199, 177, 255, 0.14)',
+        };
+    }
+    if (key === 'failed') {
+        return {
+            icon: 'fa-solid fa-triangle-exclamation',
+            color: '#ff8d8d',
+            border: 'rgba(255, 141, 141, 0.34)',
+            bg: 'rgba(255, 141, 141, 0.12)',
+        };
+    }
+    if (key === 'skipped') {
+        return {
+            icon: 'fa-solid fa-ban',
+            color: '#b7abc9',
+            border: 'rgba(183, 171, 201, 0.28)',
+            bg: 'rgba(183, 171, 201, 0.12)',
+        };
+    }
+    return {
+        icon: 'fa-regular fa-circle-question',
+        color: '#d8d0ec',
+        border: 'rgba(216, 208, 236, 0.2)',
+        bg: 'rgba(216, 208, 236, 0.08)',
+    };
+}
+
+function normalizeDeliveryStatusInfo(platform = '', rawInfo = {}, purchase = {}) {
+    const info = normalizeEnrichmentObject(rawInfo);
+    const platformKey = String(platform || info.platform || '').trim().toLowerCase();
+    const status = String(info.status || '').trim().toLowerCase() || 'unknown';
+    const isEventOnly = String(purchase?.source || '').toLowerCase() === 'events';
+
+    return {
+        platform: platformKey,
+        platformLabel: getEnrichmentPlatformLabel(platformKey),
+        status,
+        statusLabel: getEnrichmentStatusLabel(status),
+        configured: typeof info.configured === 'boolean' ? info.configured : null,
+        sent: Boolean(info.sent || status === 'accepted'),
+        reason: String(info.reason || '').trim(),
+        destinationId: info.destinationId || null,
+        configSource: info.configSource || null,
+        attempts: Number(info.attempts || 0) || null,
+        updatedAt: info.updatedAt || null,
+        queuedAt: info.queuedAt || null,
+        sendingAt: info.sendingAt || null,
+        acceptedAt: info.acceptedAt || null,
+        sentAt: info.sentAt || null,
+        failedAt: info.failedAt || null,
+        skippedAt: info.skippedAt || null,
+        responseSummary: normalizeEnrichmentObject(info.responseSummary),
+        verifiedBy: info.verifiedBy || null,
+        verificationHint: info.verificationHint || null,
+        testEventCode: info.testEventCode || null,
+        isEventOnly,
+    };
+}
+
+function purchaseHasPlatformSignals(purchase = {}, platform = '') {
+    const platformKey = String(platform || '').trim().toLowerCase();
+    const attributedText = `${purchase?.attributedPlatform || ''} ${purchase?.attributedChannel || ''}`.toLowerCase();
+    const events = Array.isArray(purchase?.events)
+        ? purchase.events
+        : (Array.isArray(purchase?.stitchedEvents) ? purchase.stitchedEvents : []);
+    const eventHas = (predicate) => events.some((entry) => {
+        const item = entry && typeof entry === 'object' ? entry : {};
+        return predicate(item);
+    });
+
+    if (platformKey === 'meta') {
+        return (
+            /(meta|facebook|instagram)/.test(attributedText) ||
+            eventHas((item) => Boolean(item.fbp || item.fbc)) ||
+            String(purchase?.attributedClickId || '').toLowerCase().startsWith('fb')
+        );
+    }
+
+    if (platformKey === 'google') {
+        return (
+            /google/.test(attributedText) ||
+            eventHas((item) => Boolean(item.gclid)) ||
+            Boolean(purchase?.gclid)
+        );
+    }
+
+    if (platformKey === 'tiktok') {
+        return (
+            /tiktok/.test(attributedText) ||
+            eventHas((item) => Boolean(item.ttclid)) ||
+            Boolean(purchase?.ttclid)
+        );
+    }
+
+    return false;
+}
+
+function buildEnrichmentPlatformStatuses(purchase = {}) {
+    const deliveryStatus = normalizeEnrichmentObject(purchase?.deliveryStatus);
+    const candidates = ['meta', 'google', 'tiktok'];
+    const platforms = candidates.filter((platform) => {
+        const rawInfo = normalizeEnrichmentObject(deliveryStatus[platform]);
+        return Object.keys(rawInfo).length > 0 || purchaseHasPlatformSignals(purchase, platform);
+    });
+
+    return platforms.map((platform) => {
+        const rawInfo = normalizeEnrichmentObject(deliveryStatus[platform]);
+        if (Object.keys(rawInfo).length) {
+            return normalizeDeliveryStatusInfo(platform, rawInfo, purchase);
+        }
+
+        if (String(purchase?.source || '').toLowerCase() === 'events') {
+            return normalizeDeliveryStatusInfo(platform, {
+                status: 'skipped',
+                reason: 'This purchase was reconstructed from browser events only, so there is no order-level server delivery receipt.',
+                verifiedBy: 'event_only_purchase',
+            }, purchase);
+        }
+
+        return normalizeDeliveryStatusInfo(platform, {
+            status: 'unknown',
+            reason: 'No platform delivery receipt has been recorded for this order yet. This usually means the order predates receipt tracking or the sync has not written back a receipt yet.',
+            verifiedBy: 'not_recorded',
+        }, purchase);
+    });
+}
+
+function summarizeEnrichmentStatuses(statuses = []) {
+    const labels = statuses
+        .filter((entry) => entry && entry.platformLabel)
+        .map((entry) => `${entry.platformLabel} ${entry.statusLabel.toLowerCase()}`);
+    return labels.join(' - ');
+}
+
+function resolveOverallEnrichmentStatus(statuses = []) {
+    const normalized = Array.isArray(statuses) ? statuses : [];
+    if (normalized.some((entry) => entry?.status === 'failed')) return 'failed';
+    if (normalized.some((entry) => entry?.status === 'sending')) return 'sending';
+    if (normalized.some((entry) => entry?.status === 'queued')) return 'queued';
+    if (normalized.some((entry) => entry?.status === 'accepted')) return 'accepted';
+    if (normalized.length && normalized.every((entry) => entry?.status === 'skipped')) return 'skipped';
+    return 'unknown';
+}
+
+function describeEnrichmentDelivery(statusInfo = {}, orderRef = '') {
+    const info = normalizeDeliveryStatusInfo(statusInfo.platform || '', statusInfo);
+    const summary = normalizeEnrichmentObject(info.responseSummary);
+    const timestamp =
+        info.acceptedAt ||
+        info.sentAt ||
+        info.failedAt ||
+        info.skippedAt ||
+        info.sendingAt ||
+        info.queuedAt ||
+        info.updatedAt ||
+        null;
+
+    const parts = [
+        `${info.platformLabel}: ${info.statusLabel}.`,
+    ];
+
+    if (orderRef) parts.push(`Order ${String(orderRef).trim()}.`);
+    if (info.reason) parts.push(info.reason.endsWith('.') ? info.reason : `${info.reason}.`);
+    if (timestamp) parts.push(`Updated ${formatDateTimeMx(timestamp)}.`);
+    if (info.destinationId) parts.push(`Destination: ${info.destinationId}.`);
+    if (info.configSource) parts.push(`Config source: ${String(info.configSource).replace(/_/g, ' ')}.`);
+    if (info.attempts) parts.push(`Attempts: ${info.attempts}.`);
+    if (summary.eventsReceived != null) parts.push(`Meta accepted ${summary.eventsReceived} event(s).`);
+    if (summary.fbtraceId) parts.push(`fbtrace_id: ${summary.fbtraceId}.`);
+    if (summary.resultsCount != null) parts.push(`Google uploaded ${summary.resultsCount} conversion(s).`);
+    if (summary.requestId) parts.push(`Request id: ${summary.requestId}.`);
+    if (summary.jobId) parts.push(`Job id: ${summary.jobId}.`);
+    if (summary.partialFailureMessage) parts.push(`Partial failure: ${summary.partialFailureMessage}.`);
+    if (info.testEventCode) parts.push(`Meta test_event_code: ${info.testEventCode}.`);
+    if (info.verifiedBy) parts.push(`Verified by ${String(info.verifiedBy).replace(/_/g, ' ')}.`);
+    if (info.verificationHint) parts.push(info.verificationHint.endsWith('.') ? info.verificationHint : `${info.verificationHint}.`);
+
+    return parts.join(' ');
+}
+
+function renderEnrichmentDeliveryBadges(statuses = [], orderRef = '') {
+    return (Array.isArray(statuses) ? statuses : []).map((entry) => {
+        const tone = getEnrichmentStatusTone(entry?.status);
+        const tooltip = escapeHtmlAttr(describeEnrichmentDelivery(entry, orderRef));
+        return `
+            <span data-tooltip="${tooltip}" class="inline-flex items-center gap-1 py-0.5 px-2 rounded-full text-[10px] sm:text-xs font-semibold mr-1.5 mb-1.5 cursor-help" style="background:${tone.bg}; color:${tone.color}; border:1px solid ${tone.border};">
+                <i class="${tone.icon} text-[10px]"></i>
+                ${escapeHtml(entry?.platformLabel || 'Platform')}
+                <span style="opacity:0.9;">${escapeHtml(entry?.statusLabel || 'Not recorded')}</span>
+            </span>
+        `;
+    }).join('');
+}
+
 function renderDataEnrichment(purchases) {
     console.log('[Data Enrichment] Initializing render. Source purchases:', purchases);
     const list = document.getElementById('de-payload-list');
@@ -5526,7 +5027,7 @@ function renderDataEnrichment(purchases) {
     const toggle = document.getElementById('de-toggle');
     if (toggle && !toggle.checked) return;
     if (!Array.isArray(purchases) || purchases.length === 0) {
-        list.innerHTML = '<p class="text-sm text-gray-400">Sin eventos de enriquecimiento recientes.</p>';
+        list.innerHTML = '<p class="text-sm text-gray-400">No recent enrichment events.</p>';
         return;
     }
     const validPurchases = purchases.filter(p => p.orderNumber || p.orderId || p.checkoutToken || p._id || p.id);
@@ -5535,6 +5036,10 @@ function renderDataEnrichment(purchases) {
         let orderId = p.orderNumber || p.orderId || p.checkoutToken || '?';
         let platformText = String(p.attributedPlatform || 'Meta').toLowerCase();
         let displayPlatform = p.attributedPlatform || (p.attributedChannel === 'organic' ? 'CAPI Platform' : 'Meta Ads / CAPI');
+        const deliveryStatuses = buildEnrichmentPlatformStatuses(p);
+        const overallStatus = resolveOverallEnrichmentStatus(deliveryStatuses);
+        const overallTone = getEnrichmentStatusTone(overallStatus);
+        const overallSummary = summarizeEnrichmentStatuses(deliveryStatuses) || 'No delivery receipt recorded yet';
         
         let exactData = new Map();
         
@@ -5589,23 +5094,27 @@ function renderDataEnrichment(purchases) {
         }
 
         let tagsHtml = Array.from(exactData.entries()).map(([k, v]) => {
-            const safeVal = String(v).replace(/"/g, '&quot;');
-            return `<span title="${safeVal}" class="inline-flex items-center py-0.5 px-1.5 rounded text-[10px] sm:text-xs font-medium bg-indigo-500 bg-opacity-20 text-indigo-200 border border-indigo-500 border-opacity-30 mr-1.5 mb-1.5 shadow-sm cursor-help transition-all hover:bg-opacity-40">${k}</span>`;
+            const safeVal = String(v || '');
+            const tooltip = escapeHtmlAttr(describeEnrichmentSignal(k, safeVal));
+            return `<span data-tooltip="${tooltip}" class="inline-flex items-center py-0.5 px-1.5 rounded text-[10px] sm:text-xs font-medium bg-indigo-500 bg-opacity-20 text-indigo-200 border border-indigo-500 border-opacity-30 mr-1.5 mb-1.5 shadow-sm cursor-help transition-all hover:bg-opacity-40">${escapeHtml(k)}</span>`;
         }).join('');
+        const deliveryBadgesHtml = renderEnrichmentDeliveryBadges(deliveryStatuses, orderId);
 
         return '<div class="p-4 rounded-lg flex flex-col sm:flex-row sm:items-center justify-between mb-3 shadow-sm hover:shadow transition-shadow" style="background-color: rgba(43, 31, 68, 0.6); border: 1px solid rgba(202, 138, 229, 0.15);">' +
             '<div class="flex flex-col w-full sm:pr-4">' +
                 '<div class="flex items-center gap-2 mb-2">' +
-                    '<span class="text-sm font-bold" style="color: #f8fafc !important;">Orden #' + orderId + '</span>' +
-                    '<span class="text-[10px] uppercase tracking-wide px-2 py-0.5 rounded-full" style="background-color: rgba(255,255,255,0.05); color: #CA8AE5;">Sync: ' + displayPlatform + '</span>' +
+                    '<span class="text-sm font-bold cursor-help" data-tooltip="' + escapeHtmlAttr(`Enriched order payload for order ${orderId}.`) + '" style="color: #f8fafc !important;">Order #' + escapeHtml(orderId) + '</span>' +
+                    '<span class="text-[10px] uppercase tracking-wide px-2 py-0.5 rounded-full cursor-help" data-tooltip="' + escapeHtmlAttr(describeEnrichmentPlatform(displayPlatform)) + '" style="background-color: rgba(255,255,255,0.05); color: #CA8AE5;">Sync: ' + escapeHtml(displayPlatform) + '</span>' +
                 '</div>' +
+                '<div class="flex flex-wrap items-center mt-0.5 mb-1">' + deliveryBadgesHtml + '</div>' +
                 '<div class="flex flex-wrap items-center mt-1">' + tagsHtml + '</div>' +
             '</div>' +
             '<div class="flex-shrink-0 text-center sm:text-right mt-3 sm:mt-0 flex flex-row sm:flex-col items-center sm:items-end justify-between">' +
-                '<div class="w-8 h-8 rounded-full flex items-center justify-center mb-1" style="background-color: rgba(34, 197, 94, 0.1);">' +
-                    '<i class="fa-solid fa-check text-xs" style="color: #4ade80;"></i>' +
+                '<div class="w-8 h-8 rounded-full flex items-center justify-center mb-1" style="background-color: ' + overallTone.bg + '; border: 1px solid ' + overallTone.border + ';">' +
+                    '<i class="' + overallTone.icon + ' text-xs" style="color: ' + overallTone.color + ';"></i>' +
                 '</div>' +
-                '<span class="text-[10px] font-semibold uppercase tracking-wider ml-2 sm:ml-0" style="color: #4ade80;">Enviado</span>' +
+                '<span class="text-[10px] font-semibold uppercase tracking-wider ml-2 sm:ml-0 cursor-help" data-tooltip="' + escapeHtmlAttr(overallSummary) + '" style="color: ' + overallTone.color + ';">' + escapeHtml(getEnrichmentStatusLabel(overallStatus)) + '</span>' +
+                '<span class="hidden sm:block text-[10px] mt-1 max-w-[180px] leading-tight" style="color: rgba(225, 216, 243, 0.68);">' + escapeHtml(overallSummary) + '</span>' +
             '</div>' +
         '</div>';
     });
@@ -5636,7 +5145,7 @@ function renderRecentPurchases(purchases) {
             });
 
             if (!Array.isArray(filtered) || filtered.length === 0) {
-                container.innerHTML = '<tr><td colspan="8" class="py-6 text-center text-gray-400">Sin compras todavía.</td></tr>';
+                container.innerHTML = '<tr><td colspan="8" class="py-6 text-center text-gray-400">No purchases yet.</td></tr>';
                 return;
             }
 
@@ -5650,8 +5159,8 @@ function renderRecentPurchases(purchases) {
                 const items = Array.isArray(p.items) ? p.items : [];
                 const itemsText = items.length
                     ? items.slice(0, 2).map((i) => `${i.name || 'Product'} x${Number(i.quantity || 1)}`).join(' · ')
-                    : 'Sin items';
-                const extraCount = items.length > 2 ? ` +${items.length - 2} más` : '';
+                    : 'No items';
+                const extraCount = items.length > 2 ? ` +${items.length - 2} more` : '';
                 const sourceLabel = p.source === 'orders' ? 'Woo Orders Sync' : 'Pixel Events';
                 const attrChannel = p.attributedChannel || 'unattributed';
                 const attrPlatform = p.attributedPlatform || '-';
@@ -5669,14 +5178,26 @@ function renderRecentPurchases(purchases) {
                 if (p.attributionSource === 'orders_sync' && p.attributedPlatform) {
                     attrText = p.attributedPlatform;
                 }
-                if (p.attributedCampaign) {
-                    attrText += ` · ${p.attributedCampaign}`;
+                const resolvedCampaignLabel = resolveAttributedCampaignLabel(p);
+                if (resolvedCampaignLabel && resolvedCampaignLabel !== 'No campaign') {
+                    attrText += ` · ${resolvedCampaignLabel}`;
+                }
+                const attrLabel = humanReadableChannel(attrChannel, attrPlatform);
+                if (Array.isArray(p.attributionSplits) && p.attributionSplits.length > 1) {
+                    attrText = p.attributionSplits
+                        .map((s) => `${humanReadableChannel(s.channel || 'unattributed', s.platform || '')}:${Math.round(Number(s.weight || 0) * 100)}%`)
+                        .join(' / ');
+                } else {
+                    attrText = `${attrLabel} · ${(attrConfidence * 100).toFixed(0)}%`;
+                    if (resolvedCampaignLabel && resolvedCampaignLabel !== 'No campaign') {
+                        attrText += ` · ${resolvedCampaignLabel}`;
+                    }
                 }
                 const debugBits = [];
                 if (p.attributionDebug?.wooSourceLabel) debugBits.push(`woo=${p.attributionDebug.wooSourceLabel}`);
                 if (p.attributionDebug?.payloadUtmSource) debugBits.push(`utm=${p.attributionDebug.payloadUtmSource}`);
                 if (p.attributionDebug?.payloadReferrer) debugBits.push(`ref=${p.attributionDebug.payloadReferrer}`);
-                if (p.attributedCampaign) debugBits.push(`campaign=${p.attributedCampaign}`);
+                if (p.attributedCampaignLabel || p.attributedCampaign) debugBits.push(`campaign=${p.attributedCampaignLabel || p.attributedCampaign}`);
                 if (p.attributedClickId) debugBits.push(`click=${p.attributedClickId}`);
                 const debugTitle = debugBits.length ? ` title="${debugBits.join(' | ')}"` : '';
                 const debugText = debugBits.length ? debugBits.join(' | ') : '-';
@@ -5734,7 +5255,7 @@ function renderRecentPurchases(purchases) {
               });
               console.log('=== END CHART DEBUG ===');
 
-              // Fallback en caso de que no haya datos aún
+              // Fallback in case there is no data yet
               if (labels.length === 0) {
                   labels.push('Meta', 'Google');
                   adnovaRoasData.push(0, 0);
@@ -5817,6 +5338,8 @@ function renderRecentPurchases(purchases) {
                 'klaviyo': 'fa-solid fa-envelope',
                 'organic': 'fa-solid fa-globe',
                 'direct': 'fa-solid fa-globe',
+                'referral': 'fa-solid fa-share-nodes',
+                'email': 'fa-solid fa-envelope',
                 'unattributed': 'fa-solid fa-question'
             };
             const colorsMap = {
@@ -5826,6 +5349,8 @@ function renderRecentPurchases(purchases) {
                 'klaviyo': 'rgba(123, 222, 187, 0.8)',
                 'organic': 'rgba(134, 239, 172, 0.8)',
                 'direct': 'rgba(134, 239, 172, 0.8)',
+                'referral': 'rgba(96, 165, 250, 0.82)',
+                'email': 'rgba(123, 222, 187, 0.82)',
                 'organic/direct': 'rgba(134, 239, 172, 0.8)',
                 'unattributed': 'rgba(156, 163, 175, 0.4)'
             };
@@ -5841,12 +5366,14 @@ function renderRecentPurchases(purchases) {
                 let cKey = channelRaw;
                 if (channelRaw.includes('organic') || channelRaw.includes('direct')) cKey = 'organic';
                 if (channelRaw.includes('facebook') || channelRaw.includes('meta') || channelRaw.includes('ig')) cKey = 'meta';
+                if (channelRaw.includes('referral')) cKey = 'referral';
+                if (channelRaw.includes('email')) cKey = 'email';
 
                 if (cKey === 'unattributed' && (stats.orders || 0) === 0) continue;
                 if ((stats.orders || 0) === 0 && (stats.revenue || 0) === 0) continue;
 
-                let displayName = channelRaw.toUpperCase();
-                if (cKey === 'organic') displayName = 'ORGANIC';
+                let displayName = humanReadableChannel(channelRaw).toUpperCase();
+                if (cKey === 'organic' && channelRaw === 'organic') displayName = 'ORGANIC';
 
                 labels.push(displayName);
                 values.push(stats.orders || 0);
@@ -5864,7 +5391,7 @@ function renderRecentPurchases(purchases) {
                             <i class="${icon} text-xs" style="color: ${hexColor.replace('0.8', '1')}"></i>
                         </div>
                         <div class="flex-1 min-w-0">
-                            <p class="text-sm font-medium truncate text-gray-200">${displayName}</p>
+                            <p class="text-[0.8rem] font-medium truncate text-gray-200">${displayName}</p>
                             <p class="text-xs text-indigo-300">${formattedOrders} ${stats.orders === 1 ? 'order' : 'orders'}</p>
                         </div>
                     </div>
@@ -5987,7 +5514,7 @@ function renderRecentPurchases(purchases) {
             }
 
             if (hasFbclid || source.includes('facebook') || source.includes('instagram') || source.includes('meta')) {
-                let badgeTxt = (medium.includes('organic') && !hasFbclid) ? 'Meta Orgánico' : 'Meta Ads';
+                let badgeTxt = (medium.includes('organic') && !hasFbclid) ? 'Meta Organic' : 'Meta Ads';
                 let icon = (medium.includes('organic') && !hasFbclid) ? 'fa-solid fa-globe' : 'fa-brands fa-meta';
                 return { text: badgeTxt, icon: icon, color: '!text-purple-700', bg: 'bg-blue-100' };
             }
@@ -5996,21 +5523,24 @@ function renderRecentPurchases(purchases) {
             }
             if (hasGclid || medium.includes('cpc') || source.includes('google') || source.includes('ads')) {
                 if (medium.includes('organic') || (!hasGclid && !medium.includes('cpc') && !medium.includes('paid'))) {
-                    return { text: 'Google Orgánico', icon: 'fa-solid fa-globe', color: '!text-purple-700', bg: 'bg-emerald-100' };
+                    return { text: 'Google Organic', icon: 'fa-solid fa-globe', color: '!text-purple-700', bg: 'bg-emerald-100' };
                 }
                 return { text: 'Google Ads', icon: 'fa-brands fa-google', color: '!text-purple-700', bg: 'bg-orange-100' };
             }
             if (ref.includes('google')) return { text: 'Organic Search', icon: 'fa-solid fa-globe', color: '!text-purple-700', bg: 'bg-emerald-100' };
-            if (ref.includes('facebook') || ref.includes('instagram')) return { text: 'Meta Orgánico', icon: 'fa-solid fa-globe', color: '!text-purple-700', bg: 'bg-emerald-100' };
-            if (ref.includes('tiktok')) return { text: 'TikTok Orgánico', icon: 'fa-solid fa-globe', color: '!text-purple-700', bg: 'bg-emerald-100' };
+            if (ref.includes('facebook') || ref.includes('instagram')) return { text: 'Meta Organic', icon: 'fa-solid fa-globe', color: '!text-purple-700', bg: 'bg-emerald-100' };
+            if (ref.includes('tiktok')) return { text: 'TikTok Organic', icon: 'fa-solid fa-globe', color: '!text-purple-700', bg: 'bg-emerald-100' };
             
             if (source && source !== 'null' && source !== 'undefined') return { text: source.charAt(0).toUpperCase() + source.slice(1), icon: 'fa-solid fa-link', color: '!text-purple-700', bg: 'bg-indigo-100' };
-            if (ref && !ref.includes(location.hostname)) return { text: 'Referido', icon: 'fa-solid fa-link', color: '!text-purple-700', bg: 'bg-indigo-100' };
+            if (ref && !ref.includes(location.hostname)) return { text: 'Referral', icon: 'fa-solid fa-link', color: '!text-purple-700', bg: 'bg-indigo-100' };
 
-            return { text: 'Directo', icon: 'fa-solid fa-bolt', color: '!text-purple-700', bg: 'bg-gray-200' };
+            return { text: 'Direct', icon: 'fa-solid fa-bolt', color: '!text-purple-700', bg: 'bg-gray-200' };
         }
 
         let activeLiveFeedFilterSessionId = null;
+        let liveFeedScrollbarRaf = null;
+        let liveFeedScrollbarResizeObserver = null;
+        let liveFeedScrollbarMutationObserver = null;
         function updateLiveFeedFilterVisuals() {
             const container = document.getElementById('feed-container');
             if (!container) return;
@@ -6029,16 +5559,212 @@ function renderRecentPurchases(purchases) {
                     }
                 }
             });
+            scheduleLiveFeedScrollbarSync();
+        }
+
+        function getLiveFeedScrollbarElements() {
+            const wrap = document.getElementById('live-feed-scroll-wrap');
+            const container = document.getElementById('feed-container');
+            const rail = document.getElementById('live-feed-scrollbar');
+            const thumb = document.getElementById('live-feed-scroll-thumb');
+            return { wrap, container, rail, thumb };
+        }
+
+        function syncLiveFeedScrollbar() {
+            liveFeedScrollbarRaf = null;
+            const { wrap, container, rail, thumb } = getLiveFeedScrollbarElements();
+            if (!wrap || !container || !rail || !thumb) return;
+
+            const maxScroll = Math.max(0, wrap.scrollHeight - wrap.clientHeight);
+            if (maxScroll <= 1) {
+                rail.classList.add('is-hidden');
+                thumb.style.height = '0px';
+                thumb.style.transform = 'translateY(0px)';
+                return;
+            }
+
+            rail.classList.remove('is-hidden');
+
+            const railHeight = rail.clientHeight || Math.max(1, wrap.clientHeight - 32);
+            const thumbHeight = Math.max(42, Math.round((wrap.clientHeight / wrap.scrollHeight) * railHeight));
+            const maxThumbY = Math.max(0, railHeight - thumbHeight);
+            const progress = maxScroll > 0 ? (wrap.scrollTop / maxScroll) : 0;
+            const thumbY = Math.round(maxThumbY * progress);
+
+            thumb.style.height = `${thumbHeight}px`;
+            thumb.style.transform = `translateY(${thumbY}px)`;
+        }
+
+        function scheduleLiveFeedScrollbarSync() {
+            if (liveFeedScrollbarRaf) cancelAnimationFrame(liveFeedScrollbarRaf);
+            liveFeedScrollbarRaf = requestAnimationFrame(syncLiveFeedScrollbar);
+        }
+
+        function initializeLiveFeedScrollbar() {
+            const { wrap, container, rail, thumb } = getLiveFeedScrollbarElements();
+            if (!wrap || !container || !rail || !thumb) return;
+            if (wrap.dataset.scrollbarReady === '1') {
+                scheduleLiveFeedScrollbarSync();
+                return;
+            }
+
+            wrap.dataset.scrollbarReady = '1';
+            wrap.addEventListener('scroll', scheduleLiveFeedScrollbarSync, { passive: true });
+            window.addEventListener('resize', scheduleLiveFeedScrollbarSync);
+
+            const proxyWheelToWrap = (event) => {
+                event.preventDefault();
+                wrap.scrollTop += event.deltaY;
+                scheduleLiveFeedScrollbarSync();
+            };
+
+            rail.addEventListener('wheel', proxyWheelToWrap, { passive: false });
+            thumb.addEventListener('wheel', proxyWheelToWrap, { passive: false });
+
+            if ('ResizeObserver' in window) {
+                liveFeedScrollbarResizeObserver = new ResizeObserver(() => {
+                    scheduleLiveFeedScrollbarSync();
+                });
+                liveFeedScrollbarResizeObserver.observe(wrap);
+                liveFeedScrollbarResizeObserver.observe(container);
+            }
+
+            if ('MutationObserver' in window) {
+                liveFeedScrollbarMutationObserver = new MutationObserver(() => {
+                    scheduleLiveFeedScrollbarSync();
+                });
+                liveFeedScrollbarMutationObserver.observe(container, {
+                    childList: true,
+                    subtree: true,
+                    attributes: true,
+                });
+            }
+
+            let dragState = null;
+
+            const stopDrag = () => {
+                dragState = null;
+                thumb.classList.remove('is-dragging');
+            };
+
+            thumb.addEventListener('pointerdown', (event) => {
+                event.preventDefault();
+                const railRect = rail.getBoundingClientRect();
+                const thumbRect = thumb.getBoundingClientRect();
+                dragState = {
+                    pointerId: event.pointerId,
+                    startY: event.clientY,
+                    startThumbY: thumbRect.top - railRect.top,
+                };
+                thumb.classList.add('is-dragging');
+                if (thumb.setPointerCapture) thumb.setPointerCapture(event.pointerId);
+            });
+
+            thumb.addEventListener('pointermove', (event) => {
+                if (!dragState || event.pointerId !== dragState.pointerId) return;
+                event.preventDefault();
+                const railHeight = rail.clientHeight || 1;
+                const thumbHeight = thumb.offsetHeight || 0;
+                const maxThumbY = Math.max(0, railHeight - thumbHeight);
+                const nextThumbY = Math.min(
+                    maxThumbY,
+                    Math.max(0, dragState.startThumbY + (event.clientY - dragState.startY))
+                );
+                const maxScroll = Math.max(0, wrap.scrollHeight - wrap.clientHeight);
+                wrap.scrollTop = maxThumbY > 0 ? (nextThumbY / maxThumbY) * maxScroll : 0;
+                scheduleLiveFeedScrollbarSync();
+            });
+
+            thumb.addEventListener('pointerup', stopDrag);
+            thumb.addEventListener('pointercancel', stopDrag);
+            thumb.addEventListener('lostpointercapture', stopDrag);
+
+            rail.addEventListener('pointerdown', (event) => {
+                if (event.target === thumb) return;
+                const railRect = rail.getBoundingClientRect();
+                const thumbHeight = thumb.offsetHeight || 0;
+                const maxThumbY = Math.max(0, railRect.height - thumbHeight);
+                const clickY = event.clientY - railRect.top - (thumbHeight / 2);
+                const targetThumbY = Math.min(maxThumbY, Math.max(0, clickY));
+                const maxScroll = Math.max(0, wrap.scrollHeight - wrap.clientHeight);
+                wrap.scrollTo({
+                    top: maxThumbY > 0 ? (targetThumbY / maxThumbY) * maxScroll : 0,
+                    behavior: 'smooth',
+                });
+            });
+
+            scheduleLiveFeedScrollbarSync();
+        }
+
+        function preserveLiveFeedPositionAfterPrepend(wrap, previousScrollTop, previousScrollHeight, stickToTop) {
+            if (!wrap) return;
+
+            requestAnimationFrame(() => {
+                const nextScrollHeight = Math.max(0, wrap.scrollHeight || 0);
+                const growth = Math.max(0, nextScrollHeight - previousScrollHeight);
+
+                if (stickToTop) {
+                    wrap.scrollTop = 0;
+                } else if (growth > 0) {
+                    wrap.scrollTop = previousScrollTop + growth;
+                } else {
+                    wrap.scrollTop = previousScrollTop;
+                }
+
+                scheduleLiveFeedScrollbarSync();
+            });
+        }
+
+        function resolveLiveFeedProductLabel(payload = {}) {
+            const itemCandidate = Array.isArray(payload.items) ? (payload.items[0] || {}) : {};
+            const label = [
+                payload.product_name,
+                payload.productName,
+                payload.item_name,
+                payload.itemName,
+                payload.name,
+                payload.title,
+                itemCandidate.product_name,
+                itemCandidate.productName,
+                itemCandidate.item_name,
+                itemCandidate.itemName,
+                itemCandidate.name,
+                itemCandidate.title,
+            ]
+                .map((value) => String(value || '').trim())
+                .find(Boolean);
+
+            if (label) return label;
+
+            const pageUrl = String(payload.pageUrl || payload.page_url || payload.url || '').trim();
+            if (pageUrl) {
+                try {
+                    const pathname = new URL(pageUrl, window.location.origin).pathname || '';
+                    const segments = pathname.split('/').filter(Boolean);
+                    const last = segments[segments.length - 1] || '';
+                    const humanized = last
+                        .replace(/[-_]+/g, ' ')
+                        .replace(/\b\w/g, (m) => m.toUpperCase())
+                        .trim();
+                    if (humanized && !/^\d+$/.test(humanized)) return humanized;
+                } catch (_) {}
+            }
+
+            return '';
         }
 
         function connectLiveFeed() {
             if (!currentShopId) return;
 
             const evtSource = new EventSource(`/api/feed/${currentShopId}`);
+            const wrap = document.getElementById('live-feed-scroll-wrap');
             const container = document.getElementById('feed-container');
             const placeholder = document.getElementById('feed-placeholder');
             const liveFeedStatus = document.getElementById('live-feed-status');
               const recentOrders = new Set();
+
+            initializeLiveFeedScrollbar();
+            scheduleLiveFeedScrollbarSync();
 
             evtSource.onopen = function() {
                 if (liveFeedStatus) liveFeedStatus.textContent = 'Live Feed Active';
@@ -6046,6 +5772,10 @@ function renderRecentPurchases(purchases) {
 
             evtSource.onmessage = function(event) {
                 if (placeholder) placeholder.style.display = 'none';
+
+                const previousScrollTop = Number(wrap?.scrollTop || 0);
+                const previousScrollHeight = Number(wrap?.scrollHeight || 0);
+                const isBrowsingOlderEvents = previousScrollTop > 24;
 
                 const data = JSON.parse(event.data);
 
@@ -6073,6 +5803,7 @@ function renderRecentPurchases(purchases) {
                 const resolvedUserKey = resolvedIdentity.userKey || '';
                 const resolvedSessionId = resolvedIdentity.sessionId || String(sessionId || '');
                 const readableSession = humanReadableSessionLabel({ linkedUserLabel, sessionId: resolvedSessionId });
+                const productLabel = resolveLiveFeedProductLabel(data.payload || {});
 
                 let isPurchaseEvent = false;
                 let isCartEvent = false;
@@ -6093,6 +5824,7 @@ function renderRecentPurchases(purchases) {
                         icon = 'fa-cart-plus';
                         color = '!text-gray-900';
                         isCartEvent = true;
+                        detail = productLabel || detail;
                     }
                 } else if (data.type === 'WEBHOOK') {
                     icon = 'fa-server';
@@ -6125,13 +5857,17 @@ function renderRecentPurchases(purchases) {
                     el.classList.add('bg-blue-50', 'border-blue-400');      
                 }
 
-                const titleColor = (isPurchaseEvent || isCartEvent) ? '!text-gray-900 font-bold' : 'text-gray-200 font-medium';
-                const detailColor = (isPurchaseEvent || isCartEvent) ? '!text-gray-800' : 'text-gray-400';
+                if (isPurchaseEvent || isCartEvent) {
+                    el.classList.add('is-commerce-highlight');
+                }
+
+                const titleColor = (isPurchaseEvent || isCartEvent) ? 'live-feed-event-title font-bold' : 'live-feed-event-title text-gray-200 font-medium';
+                const detailColor = (isPurchaseEvent || isCartEvent) ? 'live-feed-detail !text-purple-200' : 'text-gray-400';
 
                 el.innerHTML = `
                     <div class="flex items-start">
                         <div class="flex-shrink-0 pt-0.5">
-                            <i class="fas ${icon} ${color}"></i>
+                            <i class="fas ${icon} ${color} live-feed-event-icon"></i>
                         </div>
                         <div class="ml-3 w-0 flex-1">
                             <div class="flex justify-between items-start">
@@ -6140,7 +5876,7 @@ function renderRecentPurchases(purchases) {
                                     <i class="${attrInfo.icon} text-[9px]"></i> ${attrInfo.text}
                                 </span>
                             </div>
-                            ${linkedUserLabel ? `<p class="text-xs font-semibold !text-indigo-700 truncate cursor-pointer live-feed-always-visible-user mt-0.5" title="Click para filtrar eventos de este usuario">${linkedUserLabel}</p>` : `<p class="text-xs ${(isPurchaseEvent||isCartEvent)?'!text-gray-600':'text-gray-400'} italic mt-0.5">Anónimo</p>`}
+                            ${linkedUserLabel ? `<p class="text-xs font-semibold !text-indigo-700 truncate cursor-pointer live-feed-always-visible-user mt-0.5" title="Click to filter this user's events">${linkedUserLabel}</p>` : `<p class="text-xs ${(isPurchaseEvent||isCartEvent)?'!text-gray-600':'text-gray-400'} italic mt-0.5">Anonymous</p>`}
                             <p class="text-xs ${detailColor} truncate mt-0.5">${detail || '-'}</p>
                             <div class="feed-extra mt-1">
                                 <p class="text-[11px] !text-indigo-500">${buildSignalTextSimple(data.payload || {})}</p>
@@ -6197,12 +5933,21 @@ function renderRecentPurchases(purchases) {
                 if (container.children.length > 50) {
                     container.lastElementChild.remove();
                 }
+
+                preserveLiveFeedPositionAfterPrepend(
+                    wrap,
+                    previousScrollTop,
+                    previousScrollHeight,
+                    !isBrowsingOlderEvents
+                );
             };
 
             evtSource.onerror = function(err) {
                 console.error("EventSource failed:", err);
                 if (liveFeedStatus) liveFeedStatus.textContent = 'Live Feed reconnecting...';
             };
+
+            wrap?.addEventListener('mouseenter', scheduleLiveFeedScrollbarSync, { passive: true });
         }
 
         // --- UTILS ---
@@ -6213,7 +5958,7 @@ function renderRecentPurchases(purchases) {
             const d = value instanceof Date ? value : new Date(value);
             if (Number.isNaN(d.getTime())) return '-';
 
-            const parts = new Intl.DateTimeFormat('es-MX', {
+            const parts = new Intl.DateTimeFormat('en-US', {
                 timeZone: DASHBOARD_TIMEZONE,
                 day: 'numeric',
                 month: 'short',
@@ -6221,7 +5966,7 @@ function renderRecentPurchases(purchases) {
             }).formatToParts(d);
 
             const day = parts.find((p) => p.type === 'day')?.value || '';
-            const month = (parts.find((p) => p.type === 'month')?.value || '').replace('.', '').toLowerCase();
+            const month = (parts.find((p) => p.type === 'month')?.value || '').replace('.', '');
             const year = parts.find((p) => p.type === 'year')?.value || '';
             if (!day || !month || !year) return '-';
             return `${day} ${month} ${year}`;
@@ -6231,7 +5976,7 @@ function renderRecentPurchases(purchases) {
             if (!value) return '-';
             const d = value instanceof Date ? value : new Date(value);
             if (Number.isNaN(d.getTime())) return '-';
-            return new Intl.DateTimeFormat('es-MX', {
+            return new Intl.DateTimeFormat('en-US', {
                 timeZone: DASHBOARD_TIMEZONE,
                 hour: '2-digit',
                 minute: '2-digit',
@@ -6254,15 +5999,15 @@ function renderRecentPurchases(purchases) {
         }
 
         function formatCurrency(value) {
-            return new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(value);
+            return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'MXN' }).format(value);
         }
 
         function formatCurrencyWithCode(value, currencyCode) {
             const code = currencyCode || 'MXN';
             try {
-                return new Intl.NumberFormat('es-MX', { style: 'currency', currency: code }).format(value || 0);
+                return new Intl.NumberFormat('en-US', { style: 'currency', currency: code }).format(value || 0);
             } catch (_) {
-                return new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(value || 0);
+                return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'MXN' }).format(value || 0);
             }
         }
 
@@ -6342,8 +6087,8 @@ function renderUserExplorer(data) {
         .sort((a, b) => Number(b[1]?.revenue || 0) - Number(a[1]?.revenue || 0))
         .slice(0, 4)
         .map(([channel, stats]) => {
-            const rev = new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(Number(stats?.revenue || 0));
-            return '<p><strong>' + channel.toUpperCase() + ':</strong> ' + Number(stats?.orders || 0) + ' compras · ' + rev + '</p>';
+            const rev = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'MXN' }).format(Number(stats?.revenue || 0));
+            return '<p><strong>' + channel.toUpperCase() + ':</strong> ' + Number(stats?.orders || 0) + ' purchases · ' + rev + '</p>';
         })
         .join('');
 
@@ -6353,8 +6098,8 @@ function renderUserExplorer(data) {
             '<div class="bg-white border border-gray-200 rounded-lg p-3"><p class="text-[11px] uppercase tracking-wide text-gray-500">Purchases</p><p class="text-sm font-semibold text-gray-900">' + Number(summary.totalOrders || 0) + '</p></div>' +
             '<div class="bg-white border border-gray-200 rounded-lg p-3"><p class="text-[11px] uppercase tracking-wide text-gray-500">Sessions</p><p class="text-sm font-semibold text-gray-900">' + Number(summary.totalSessions || 0) + '</p></div>' +
             '<div class="bg-white border border-gray-200 rounded-lg p-3"><p class="text-[11px] uppercase tracking-wide text-gray-500">Carts</p><p class="text-sm font-semibold text-gray-900">' + Number(summary.totalAddToCart || 0) + '</p></div>' +
-            '<div class="bg-white border border-gray-200 rounded-lg p-3 col-span-2"><p class="text-[11px] uppercase tracking-wide text-gray-500">Attribution stitchada</p>' +
-                (attributionRows || '<p class="text-sm text-gray-500">Sin attribution consolidada todavía.</p>') +
+            '<div class="bg-white border border-gray-200 rounded-lg p-3 col-span-2"><p class="text-[11px] uppercase tracking-wide text-gray-500">Stitched attribution</p>' +
+                (attributionRows || '<p class="text-sm text-gray-500">No consolidated attribution yet.</p>') +
             '</div>' +
         '</div>';
 
@@ -6395,13 +6140,13 @@ function renderUserExplorer(data) {
             '</div>';
         } else if (item.type === 'order') {
             const o = item.data;
-            const revStr = new Intl.NumberFormat('es-MX', { style: 'currency', currency: o.currency || 'MXN' }).format(Number(o.revenue || 0));
+            const revStr = new Intl.NumberFormat('en-US', { style: 'currency', currency: o.currency || 'MXN' }).format(Number(o.revenue || 0));
             html += '<div class="relative pl-6">' +
                 '<div class="absolute -left-2 top-1.5 p-1.5 rounded-full bg-emerald-500 border-4 border-gray-900 shadow-sm ring-1 ring-emerald-500/30"></div>' +
                 '<p class="text-xs text-emerald-600 font-bold uppercase tracking-wider mb-1">' + timeStr + ' - Purchase (' + revStr + ')</p>' +
                 '<div class="bg-gray-50 rounded-lg p-3 text-sm text-gray-800 border border-gray-200">' +
                     '<p><strong>Order:</strong> #' + (o.orderNumber || o.orderId) + '</p>' +
-                    '<p><strong>Atribuci\u00f3n (\u00daltimo Clic):</strong> ' + (o.attributedChannel || 'unattributed') + '</p>' +
+                    '<p><strong>Atribuci\u00f3n (\u00daltimo Clic):</strong> ' + humanReadableChannel(o.attributedChannel || 'unattributed', o.attributedPlatform || '') + '</p>' +
                 '</div>' +
             '</div>';
         } else if (item.type === 'event') {
@@ -6424,34 +6169,4 @@ function renderUserExplorer(data) {
     document.getElementById('ue-content').innerHTML = html;
 }
 
-    </script>
-    <!-- User Explorer Panel -->
-    <div id="user-explorer-backdrop" class="fixed inset-0 bg-gray-900 bg-opacity-50 transition-opacity hidden z-40 backdrop-blur-sm" onclick="closeUserExplorer()"></div>
-    <div id="user-explorer-panel" class="fixed inset-y-0 right-0 max-w-md w-full h-screen max-h-screen shadow-2xl transform translate-x-full transition-transform duration-300 ease-in-out z-50 flex flex-col pointer-events-auto">
-        <div class="ue-header px-6 py-4 flex justify-between items-center z-10">
-            <div>
-                <p class="panel-kicker">Customer Journey</p>
-                <h2 class="panel-title text-xl leading-6 font-medium text-gray-900" id="ue-name">Cargando...</h2>
-                <p class="text-xs text-gray-500 mt-1 font-mono" id="ue-email">...</p>
-            </div>
-            <button onclick="closeUserExplorer()" class="text-gray-400 hover:text-gray-500 bg-gray-50 hover:bg-gray-100 border border-gray-200 p-2 rounded-md focus:outline-none transition-colors">
-                <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
-                </svg>
-            </button>
-        </div>
-        <div class="flex-1 p-6 bg-gray-50" id="ue-content">
-            <div class="flex justify-center items-center h-full">
-                <svg class="animate-spin h-8 w-8 text-indigo-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
-            </div>
-        </div>
-    </div>
-</body>
-</html>
-
-
-
-
-
-
-
+    
