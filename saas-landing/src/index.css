@@ -1,0 +1,327 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ======= FONTS ======= */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@300;400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter+Tight:wght@600;700;800&display=swap');
+
+/* ✅ UlmGrotesk (solo para el logo “Adray”) */
+@font-face {
+  font-family: "UlmGrotesk";
+  src: url("/fonts/UlmGrotesk-Bold.otf") format("opentype");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* =========================================================================
+   THEME TOKENS
+   ========================================================================= */
+@layer base {
+  :root {
+    /* Deep dark theme */
+    --background: 280 15% 4%;
+    --foreground: 280 10% 98%;
+
+    --card: 280 20% 6%;
+    --card-foreground: 280 10% 98%;
+
+    --popover: 280 20% 6%;
+    --popover-foreground: 280 10% 98%;
+
+    /* Brand */
+    --primary: 280 70% 60%;
+    --primary-foreground: 280 15% 6%;
+    --primary-glow: 280 80% 70%;
+
+    --secondary: 270 85% 75%;
+    --secondary-foreground: 280 15% 6%;
+    --secondary-glow: 270 85% 85%;
+
+    /* Accents & neutrals */
+    --accent-purple: 285 60% 55%;
+    --accent-purple-foreground: 280 10% 98%;
+    --muted: 280 15% 12%;
+    --muted-foreground: 280 8% 65%;
+    --accent: 280 15% 12%;
+    --accent-foreground: 280 10% 98%;
+
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 280 10% 98%;
+
+    --border: 280 15% 15%;
+    --input: 280 15% 12%;
+    --ring: 280 70% 45%;
+
+    /* Gradients */
+    --gradient-hero: linear-gradient(135deg, hsl(var(--primary)) 0%, hsl(var(--secondary)) 50%, hsl(285 80% 60%) 100%);
+    --gradient-card: linear-gradient(145deg, hsl(var(--card)) 0%, hsl(280 20% 8%) 50%, hsl(var(--card)) 100%);
+    --gradient-border: linear-gradient(90deg, hsl(var(--primary) / 0.5) 0%, hsl(var(--secondary) / 0.3) 50%, hsl(var(--primary) / 0.5) 100%);
+
+    /* Glow & shadow */
+    --glow-primary: 0 0 50px hsl(var(--primary-glow) / 0.4), 0 0 100px hsl(var(--primary-glow) / 0.2);
+    --glow-secondary: 0 0 50px hsl(var(--secondary-glow) / 0.4), 0 0 100px hsl(var(--secondary-glow) / 0.2);
+    --shadow-elevated: 0 25px 50px -12px hsl(280 30% 2% / 0.9), 0 10px 25px -5px hsl(var(--primary) / 0.1);
+
+    /* Motion */
+    --transition-smooth: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    --transition-bounce: all 0.4s cubic-bezier(0.68, -0.55, 0.265, 1.55);
+
+    --radius: 0.75rem;
+
+    /* Sidebar */
+    --sidebar-background: 280 20% 8%;
+    --sidebar-foreground: 280 10% 95%;
+    --sidebar-primary: 280 70% 45%;
+    --sidebar-primary-foreground: 280 15% 6%;
+    --sidebar-accent: 280 15% 15%;
+    --sidebar-accent-foreground: 280 10% 95%;
+    --sidebar-border: 280 15% 15%;
+    --sidebar-ring: 280 70% 45%;
+
+    /* ===== HERO scale (clear hierarchy) ===== */
+    --hero-h1: clamp(2.6rem, 1.2rem + 4.2vw, 4.8rem);
+    --hero-h2: clamp(1.125rem, 0.8rem + 1vw, 1.5rem);
+    --hero-lede: clamp(1rem, 0.85rem + 0.4vw, 1.125rem);
+
+    --section-title: clamp(2rem, 1.1rem + 2.5vw, 3rem);
+
+    /* Fonts */
+    --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI",
+      Roboto, "Helvetica Neue", Arial, "Noto Sans", "Apple Color Emoji",
+      "Segoe UI Emoji", "Segoe UI Symbol";
+    --font-display: "Space Grotesk", "Inter", ui-sans-serif, system-ui;
+    --font-headline: "Inter Tight", "Inter", ui-sans-serif, system-ui;
+
+    /* ✅ NUEVO: solo para el logo */
+    --font-brand: "UlmGrotesk", "Space Grotesk", "Inter", ui-sans-serif, system-ui;
+  }
+}
+
+@layer base {
+  * { @apply border-border; }
+
+  html, body {
+    font-family: var(--font-sans);
+    font-feature-settings: "kern" 1, "liga" 1, "calt" 1;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+  }
+
+  body { @apply bg-background text-foreground; }
+
+  /* Headings families */
+  h1, h2, h3, .font-display { font-family: var(--font-display); letter-spacing: -0.01em; }
+  .font-body { font-family: var(--font-sans); }
+
+  /* ✅ SOLO el logo “Adray” */
+  .font-brand {
+    font-family: var(--font-brand);
+    font-weight: 700;
+    letter-spacing: -0.02em;
+  }
+
+  /* Clean minimal headline (Inter Tight) */
+  .font-headline {
+    font-family: var(--font-headline);
+    font-weight: 700;
+    letter-spacing: -0.015em;
+    line-height: 1.05;
+    font-variation-settings: "wdth" 95;
+  }
+
+  /* ---------- Global heading polish ---------- */
+  h1 {
+    font-size: var(--hero-h1);
+    line-height: 1.08;
+    text-wrap: balance;
+    margin-bottom: 0.65rem;
+    font-weight: 800;
+  }
+  h2 {
+    font-size: var(--section-title);
+    line-height: 1.15;
+    letter-spacing: -0.005em;
+    text-wrap: balance;
+    font-weight: 800;
+  }
+
+  /* ---------- HERO ---------- */
+  .hero-subtitle {
+    font-size: var(--hero-h2);
+    line-height: 1.3;
+    text-wrap: balance;
+    color: hsl(var(--foreground) / 0.85);
+    font-weight: 600;
+    margin-top: .25rem;
+    margin-bottom: .35rem;
+  }
+  .hero-lede {
+    font-size: var(--hero-lede);
+    line-height: 1.65;
+    max-width: 70ch;
+    margin-inline: auto;
+    color: hsl(var(--muted-foreground));
+    text-wrap: pretty;
+  }
+}
+
+/* =========================================================================
+   COMPONENTS & HELPERS
+   ========================================================================= */
+@layer components {
+  /* Gradient texts */
+  .gradient-text {
+    @apply bg-gradient-to-r from-primary via-secondary to-primary-glow bg-clip-text text-transparent;
+    background-size: 200% 200%;
+    animation: gradient-shift 4s ease infinite;
+  }
+  .gradient-text-white {
+    background: linear-gradient(135deg,
+      hsl(var(--foreground)) 0%,
+      hsl(280 60% 85%) 30%,
+      hsl(var(--foreground)) 60%,
+      hsl(270 70% 88%) 100%);
+    background-size: 200% 200%;
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+    animation: gradient-shift 4s ease infinite;
+  }
+
+  .glow-primary   { box-shadow: var(--glow-primary); }
+  .glow-secondary { box-shadow: var(--glow-secondary); }
+
+  .gradient-card {
+    background: var(--gradient-card);
+    @apply border border-border/50 relative overflow-hidden rounded-2xl;
+  }
+  .gradient-card::before {
+    content: ''; position: absolute; inset: 0 0 auto 0; height: 1px;
+    background: var(--gradient-border); opacity: .6;
+  }
+
+  .hero-gradient { background: var(--gradient-hero); background-size: 200% 200%; }
+
+  .transition-smooth { transition: var(--transition-smooth); }
+  .transition-bounce { transition: var(--transition-bounce); }
+
+  .animate-float { animation: float 4s ease-in-out infinite; }
+  .animate-glow-pulse { animation: glow-pulse 3s ease-in-out infinite alternate; }
+  .animate-slide-up { animation: slide-up .8s cubic-bezier(0.4, 0, 0.2, 1) forwards; }
+
+  .hover-lift { @apply transition-smooth; filter: brightness(1); }
+  .hover-lift:hover {
+    filter: brightness(1.1);
+    box-shadow: var(--shadow-elevated);
+    transform: translateY(-12px);
+  }
+  .hover-glow { @apply transition-smooth; }
+  .hover-glow:hover { box-shadow: var(--glow-primary); transform: scale(1.02); }
+
+  .btn-premium {
+    @apply relative overflow-hidden;
+    background: linear-gradient(135deg, hsl(var(--primary)) 0%, hsl(var(--primary-glow)) 100%);
+  }
+  .btn-premium::before {
+    content: '';
+    position: absolute; inset: 0; left: -100%;
+    background: linear-gradient(90deg, transparent, rgba(255,255,255,0.22), transparent);
+    transition: left .55s;
+  }
+  .btn-premium:hover::before { left: 100%; }
+
+  /* Badge numérica */
+  .accent-purple {
+    background:
+      radial-gradient(60% 60% at 50% 40%, hsl(var(--primary)/.25) 0%, transparent 70%),
+      hsl(var(--accent-purple));
+    color: hsl(var(--accent-purple-foreground));
+    box-shadow:
+      0 0 0 6px hsl(var(--accent-purple) / .15),
+      0 10px 25px hsl(var(--accent-purple) / .25),
+      inset 0 0 12px hsl(0 0% 100% / .1);
+    outline: 2px solid hsl(var(--primary) / .25);
+  }
+
+  /* ---- How it works → uniform cards ---- */
+  .steps-grid { grid-auto-rows: 1fr; }
+  #features .gradient-card {
+    min-height: 280px;
+    display: flex; flex-direction: column; justify-content: flex-start;
+  }
+  @media (min-width: 1024px) {
+    #features .gradient-card { min-height: 300px; }
+  }
+  #features .w-16.h-16 { width: 4rem; height: 4rem; }
+  #features p { text-wrap: balance; }
+
+  /* ---- Pricing ---- */
+  #pricing h2 { font-size: var(--section-title); line-height: 1.15; text-wrap: balance; }
+  #pricing .gradient-card ul li { line-height: 1.5; }
+
+  /* ---- FAQ ---- */
+  .faq-title {
+    font-family: var(--font-display);
+    font-weight: 700;
+    font-size: clamp(2rem, 1.1rem + 2.6vw, 2.75rem);
+    text-wrap: balance;
+  }
+  .faq-trigger {
+    font-weight: 600;
+    font-size: clamp(1.05rem, .95rem + .4vw, 1.25rem);
+    line-height: 1.35;
+    text-wrap: balance;
+  }
+  .faq-content {
+    color: hsl(var(--muted-foreground));
+    font-size: clamp(.98rem, .92rem + .3vw, 1.05rem);
+    line-height: 1.75;
+  }
+}
+
+/* =========================================================================
+   UTILITIES & KEYFRAMES
+   ========================================================================= */
+@layer utilities {
+  @keyframes float {
+    0%, 100% { transform: translateY(0) rotate(0deg); filter: brightness(1); }
+    50%      { transform: translateY(-15px) rotate(0.5deg); filter: brightness(1.05); }
+  }
+  @keyframes scroll { 0% { transform: translateX(0);} 100% { transform: translateX(-100%);} }
+  @keyframes glow-pulse { 0% { box-shadow: var(--glow-primary); opacity: .85;} 100% { box-shadow: var(--glow-secondary); opacity: 1;} }
+  @keyframes slide-up { 0% { opacity: 0; transform: translateY(40px) scale(.95);} 100% { opacity: 1; transform: translateY(0) scale(1);} }
+  @keyframes gradient-shift {
+    0%,100% { background-position: 0% 50%; }
+    25%     { background-position: 100% 50%; }
+    50%     { background-position: 100% 100%; }
+    75%     { background-position: 0% 100%; }
+  }
+
+  .animate-gradient { background-size: 300% 300%; animation: gradient-shift 6s ease infinite; }
+
+  @keyframes shimmer { 0% { transform: translateX(-100%);} 100% { transform: translateX(100%);} }
+  .shimmer::after {
+    content: ''; position: absolute; inset: 0;
+    background: linear-gradient(90deg, transparent, rgba(255,255,255,0.1), transparent);
+    animation: shimmer 2s infinite;
+  }
+
+  /* ---------- Section polish ---------- */
+
+  /* HERO */
+  section:first-of-type h1 { font-size: var(--hero-h1); line-height: 1.08; }
+  section:first-of-type p.text-xl,
+  section:first-of-type p.text-2xl { font-size: var(--hero-h2); }
+  section:first-of-type .max-w-3xl,
+  section:first-of-type .max-w-5xl .hero-lede { font-size: var(--hero-lede); line-height: 1.65; }
+
+  /* Por qué elegir — evita cortes en h2 */
+  section.py-20 h2 { text-wrap: balance; }
+
+  /* ES: textos más largos → ajuste fino */
+  html:lang(es) h1 { letter-spacing: -0.012em; }
+  html:lang(es) #features .gradient-card { min-height: 310px; }
+}
