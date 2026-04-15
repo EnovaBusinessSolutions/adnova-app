@@ -1,7 +1,9 @@
 import { type FormEvent, useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import {
   AlertCircle,
   ArrowRight,
+  BarChart3,
   CheckCircle2,
   Download,
   ExternalLink,
@@ -115,24 +117,35 @@ function titleCaseStoreType(type: StoreType) {
   return STORE_TYPE_OPTIONS.find((option) => option.value === type)?.label || "Custom";
 }
 
+const SHOP_STORAGE_KEY = "adray_analytics_shop";
+
+function persistShop(shop: string) {
+  try { window.localStorage.setItem(SHOP_STORAGE_KEY, shop); } catch { /* noop */ }
+}
+
 function resetWizardState() {
   return {
     step: "domain" as WizardStep,
     domainInput: "",
     isDetecting: false,
+    isConfirming: false,
     error: "",
     detection: null as StoreDetectionResult | null,
     selectedType: "woocommerce" as StoreType,
+    confirmedShop: "",
   };
 }
 
 export function PixelSetupWizard({ open, onOpenChange }: PixelSetupWizardProps) {
+  const navigate = useNavigate();
   const [step, setStep] = useState<WizardStep>("domain");
   const [domainInput, setDomainInput] = useState("");
   const [isDetecting, setIsDetecting] = useState(false);
+  const [isConfirming, setIsConfirming] = useState(false);
   const [error, setError] = useState("");
   const [detection, setDetection] = useState<StoreDetectionResult | null>(null);
   const [selectedType, setSelectedType] = useState<StoreType>("woocommerce");
+  const [confirmedShop, setConfirmedShop] = useState("");
 
   useEffect(() => {
     if (!open) {
@@ -140,9 +153,11 @@ export function PixelSetupWizard({ open, onOpenChange }: PixelSetupWizardProps) 
       setStep(next.step);
       setDomainInput(next.domainInput);
       setIsDetecting(next.isDetecting);
+      setIsConfirming(next.isConfirming);
       setError(next.error);
       setDetection(next.detection);
       setSelectedType(next.selectedType);
+      setConfirmedShop(next.confirmedShop);
     }
   }, [open]);
 
@@ -187,6 +202,30 @@ export function PixelSetupWizard({ open, onOpenChange }: PixelSetupWizardProps) 
       setError(detectError?.message || "We could not detect the store type right now.");
     } finally {
       setIsDetecting(false);
+    }
+  }
+
+  async function handleConfirmShop() {
+    if (!detection) return;
+
+    setIsConfirming(true);
+    setError("");
+
+    try {
+      const result = await postJson<{ ok: boolean; shop?: string }>(
+        "/api/pixel-setup/confirm-shop",
+        { hostname: detection.hostname, normalizedUrl: detection.normalizedUrl, storeType: selectedType }
+      );
+
+      if (result.ok && result.shop) {
+        persistShop(result.shop);
+        setConfirmedShop(result.shop);
+      }
+    } catch {
+      // Non-blocking — proceed to instructions even if this fails
+    } finally {
+      setIsConfirming(false);
+      setStep("instructions");
     }
   }
 
@@ -417,11 +456,21 @@ export function PixelSetupWizard({ open, onOpenChange }: PixelSetupWizardProps) 
 
                   <Button
                     type="button"
+                    disabled={isConfirming}
                     className="h-11 rounded-2xl bg-[#B55CFF] px-5 text-white shadow-[0_0_24px_rgba(181,92,255,0.18)] hover:bg-[#A864FF]"
-                    onClick={() => setStep("instructions")}
+                    onClick={handleConfirmShop}
                   >
-                    Continue
-                    <ArrowRight className="h-4 w-4" />
+                    {isConfirming ? (
+                      <>
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        Connecting store
+                      </>
+                    ) : (
+                      <>
+                        Continue
+                        <ArrowRight className="h-4 w-4" />
+                      </>
+                    )}
                   </Button>
                 </div>
               </div>
@@ -429,6 +478,14 @@ export function PixelSetupWizard({ open, onOpenChange }: PixelSetupWizardProps) 
 
             {step === "instructions" && detection ? (
               <div className="space-y-6">
+                {confirmedShop ? (
+                  <div className="flex items-center gap-3 rounded-2xl border border-[#4FE3C1]/20 bg-[#4FE3C1]/10 px-4 py-3 text-sm text-[#E8FFF8]">
+                    <CheckCircle2 className="h-4 w-4 shrink-0 text-[#4FE3C1]" />
+                    <span>
+                      <span className="font-semibold">{confirmedShop}</span> conectado. El Attribution Dashboard ya está listo para mostrar tus datos.
+                    </span>
+                  </div>
+                ) : null}
                 {selectedType === "woocommerce" ? (
                   <>
                     <div className="rounded-[26px] border border-white/[0.08] bg-white/[0.02] p-5">
@@ -562,13 +619,26 @@ export function PixelSetupWizard({ open, onOpenChange }: PixelSetupWizardProps) 
                     Back
                   </Button>
 
-                  <Button
-                    type="button"
-                    className="h-11 rounded-2xl bg-[#B55CFF] px-5 text-white shadow-[0_0_24px_rgba(181,92,255,0.18)] hover:bg-[#A864FF]"
-                    onClick={() => onOpenChange(false)}
-                  >
-                    Done
-                  </Button>
+                  <div className="flex flex-col gap-2 sm:flex-row">
+                    {confirmedShop ? (
+                      <Button
+                        type="button"
+                        className="h-11 rounded-2xl bg-[#B55CFF] px-5 text-white shadow-[0_0_24px_rgba(181,92,255,0.18)] hover:bg-[#A864FF]"
+                        onClick={() => { onOpenChange(false); navigate("/attribution"); }}
+                      >
+                        <BarChart3 className="h-4 w-4" />
+                        Ver Attribution Dashboard
+                      </Button>
+                    ) : (
+                      <Button
+                        type="button"
+                        className="h-11 rounded-2xl bg-[#B55CFF] px-5 text-white shadow-[0_0_24px_rgba(181,92,255,0.18)] hover:bg-[#A864FF]"
+                        onClick={() => onOpenChange(false)}
+                      >
+                        Done
+                      </Button>
+                    )}
+                  </div>
                 </div>
               </div>
             ) : null}

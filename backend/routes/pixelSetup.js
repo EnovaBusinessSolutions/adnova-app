@@ -2,6 +2,24 @@ const express = require("express");
 
 const router = express.Router();
 
+let prisma = null;
+let User = null;
+let ShopConnections = null;
+
+try { prisma = require('../utils/prismaClient'); } catch (_) {}
+try { User = require('../models/User'); } catch (_) {}
+try { ShopConnections = require('../models/ShopConnections'); } catch (_) {}
+
+function normalizeHostname(value) {
+  const raw = String(value || '').trim().toLowerCase();
+  if (!raw) return null;
+  try {
+    return new URL(raw.includes('://') ? raw : `https://${raw}`).hostname.replace(/^www\./, '');
+  } catch (_) {
+    return raw.replace(/^https?:\/\//, '').replace(/^www\./, '').split('/')[0] || null;
+  }
+}
+
 const FETCH_TIMEOUT_MS = 8000;
 const MAX_HTML_LENGTH = 500000;
 
@@ -227,6 +245,59 @@ router.post("/detect-store", async (req, res) => {
       ok: false,
       error: error?.message || "We could not detect this store type right now.",
     });
+  }
+});
+
+const PLATFORM_MAP = {
+  woocommerce: 'WOOCOMMERCE',
+  shopify: 'SHOPIFY',
+  magento: 'MAGENTO',
+  custom: 'WOOCOMMERCE',
+};
+
+router.post('/confirm-shop', async (req, res) => {
+  try {
+    const { hostname, normalizedUrl, storeType } = req.body || {};
+    const domain = normalizeHostname(hostname || normalizedUrl);
+    if (!domain) {
+      return res.status(400).json({ ok: false, error: 'hostname is required' });
+    }
+
+    const userId = req.user?._id;
+    if (!userId) {
+      return res.status(401).json({ ok: false, error: 'Unauthorized' });
+    }
+
+    const platform = PLATFORM_MAP[String(storeType || '').toLowerCase()] || 'WOOCOMMERCE';
+
+    // 1. Ensure Account row exists in Prisma so analytics queries work immediately
+    if (prisma) {
+      await prisma.account.upsert({
+        where: { accountId: domain },
+        create: { accountId: domain, domain, platform },
+        update: { domain, platform },
+      }).catch((err) => console.warn('[pixelSetup] account upsert failed:', err?.message));
+    }
+
+    // 2. Upsert ShopConnections in MongoDB so the user can see this shop's data
+    if (ShopConnections) {
+      await ShopConnections.findOneAndUpdate(
+        { shop: domain },
+        { shop: domain, accessToken: 'pixel-setup', matchedToUserId: userId, installedAt: new Date() },
+        { upsert: true, new: true }
+      ).catch((err) => console.warn('[pixelSetup] shopconn upsert failed:', err?.message));
+    }
+
+    // 3. Update user.shop so session-based shop resolution works immediately
+    if (User) {
+      await User.findByIdAndUpdate(userId, { shop: domain })
+        .catch((err) => console.warn('[pixelSetup] user.shop update failed:', err?.message));
+    }
+
+    return res.json({ ok: true, shop: domain });
+  } catch (error) {
+    console.error('[pixelSetup] confirm-shop error:', error?.message || error);
+    return res.status(500).json({ ok: false, error: 'Internal server error' });
   }
 });
 
