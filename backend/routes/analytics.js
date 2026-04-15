@@ -3940,24 +3940,25 @@ const getAnalyticsDashboardHandler = async (req, res) => {
       };
     }));
 
-    // Enrich recentPurchases with Clarity session recording URLs.
+    // Enrich recentPurchases with Clarity + rrweb recording data.
     // Wrapped in try/catch: columns may not exist yet if DB migration is pending.
     try {
       const purchaseSessionIds = recentPurchases.map((p) => p.sessionId).filter(Boolean);
       if (purchaseSessionIds.length) {
-        const claritySessions = await prisma.session.findMany({
+        const sessions = await prisma.session.findMany({
           where: { accountId: account_id, sessionId: { in: purchaseSessionIds } },
-          select: { sessionId: true, claritySessionId: true, clarityPlaybackUrl: true },
+          select: { sessionId: true, claritySessionId: true, clarityPlaybackUrl: true, rrwebRecordingId: true },
         });
-        const clarityMap = new Map(claritySessions.map((s) => [s.sessionId, s]));
+        const sessionMap = new Map(sessions.map((s) => [s.sessionId, s]));
         for (const p of recentPurchases) {
-          const c = p.sessionId ? clarityMap.get(p.sessionId) : null;
-          p.claritySessionId = c?.claritySessionId || null;
-          p.clarityPlaybackUrl = c?.clarityPlaybackUrl || null;
+          const s = p.sessionId ? sessionMap.get(p.sessionId) : null;
+          p.claritySessionId = s?.claritySessionId || null;
+          p.clarityPlaybackUrl = s?.clarityPlaybackUrl || null;
+          p.rrwebRecordingId = s?.rrwebRecordingId || null;
         }
       }
-    } catch (_clarityEnrichErr) {
-      // Columns not yet migrated — dashboard continues working without clarity URLs.
+    } catch (_enrichErr) {
+      // Columns not yet migrated — dashboard continues working without recording URLs.
     }
 
     // Recompute channel stats by selected attribution model over resolved conversions.

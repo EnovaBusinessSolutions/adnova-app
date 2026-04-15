@@ -5743,7 +5743,15 @@
                         ${renderTrackedUtmHistory(purchaseUtmHistory, { emptyMessage: 'No UTM URLs have been captured yet for this selected journey.' })}
                     </div>
                     <div class="flex items-center justify-end gap-2 flex-wrap">
-                        ${purchase.clarityPlaybackUrl ? `
+                        ${purchase.rrwebRecordingId ? `
+                        <button type="button" class="journey-export-btn"
+                           style="background:#7c3aed;color:#fff;display:inline-flex;align-items:center;gap:6px;"
+                           onclick="adrayOpenPlayer('${escapeInlineSingleQuotedJs(purchase.rrwebRecordingId)}','${escapeInlineSingleQuotedJs(purchase.sessionId || '')}')">
+                            <i class="fa-solid fa-circle-play"></i>
+                            Ver grabación
+                        </button>
+                        <div id="adray-player-${escapeHtml(purchase.sessionId || purchase.rrwebRecordingId)}" style="display:none;width:100%;margin-top:8px;"></div>` :
+                        purchase.clarityPlaybackUrl ? `
                         <a href="${escapeHtml(purchase.clarityPlaybackUrl)}" target="_blank" rel="noopener noreferrer"
                            class="journey-export-btn"
                            style="background:#5c2d91;color:#fff;text-decoration:none;display:inline-flex;align-items:center;gap:6px;">
@@ -6361,6 +6369,86 @@
                 alert('Could not download this journey.');
             }
         }
+
+        // ─── rrweb Inline Player ──────────────────────────────────────────────────
+        var _adrayPlayerLibLoaded = false;
+
+        async function adrayOpenPlayer(recordingId, sessionId) {
+            const containerId = 'adray-player-' + (sessionId || recordingId);
+            const container = document.getElementById(containerId);
+            if (!container) return;
+
+            // Toggle: if already open, close it
+            if (container.style.display !== 'none' && container.children.length) {
+                container.style.display = 'none';
+                return;
+            }
+
+            container.style.display = 'block';
+            container.innerHTML = '<p style="font-size:12px;color:#888;padding:8px;">Cargando grabación…</p>';
+
+            try {
+                // 1. Fetch presigned URL from backend
+                const resp = await fetch(`/api/recording/${encodeURIComponent(currentShopId)}/${encodeURIComponent(recordingId)}`);
+                const data = await resp.json();
+                if (!data.ok || !data.presignedUrl) {
+                    container.innerHTML = '<p style="font-size:12px;color:#f87171;padding:8px;">Grabación no disponible aún (procesando…)</p>';
+                    return;
+                }
+
+                // 2. Lazy-load rrweb-player from CDN
+                if (!_adrayPlayerLibLoaded) {
+                    await new Promise((resolve, reject) => {
+                        const s = document.createElement('script');
+                        s.src = 'https://cdn.jsdelivr.net/npm/rrweb-player@2/dist/index.js';
+                        s.onload = resolve;
+                        s.onerror = reject;
+                        document.head.appendChild(s);
+                        const css = document.createElement('link');
+                        css.rel = 'stylesheet';
+                        css.href = 'https://cdn.jsdelivr.net/npm/rrweb-player@2/dist/style.css';
+                        document.head.appendChild(css);
+                    });
+                    _adrayPlayerLibLoaded = true;
+                }
+
+                // 3. Fetch recording events from presigned R2 URL
+                const eventsResp = await fetch(data.presignedUrl);
+                const events = await eventsResp.json();
+
+                if (!Array.isArray(events) || events.length === 0) {
+                    container.innerHTML = '<p style="font-size:12px;color:#f87171;padding:8px;">Sin eventos de grabación.</p>';
+                    return;
+                }
+
+                // 4. Render rrweb player
+                container.innerHTML = '';
+                container.style.height = '420px';
+                container.style.background = '#111';
+                container.style.borderRadius = '8px';
+                container.style.overflow = 'hidden';
+                new window.rrwebPlayer({
+                    target: container,
+                    props: { events, width: container.clientWidth || 640, height: 420, autoPlay: false }
+                });
+
+                // Show behavioral signals if available
+                if (data.recording?.behavioralSignals) {
+                    const sig = data.recording.behavioralSignals;
+                    const signalDiv = document.createElement('div');
+                    signalDiv.style.cssText = 'margin-top:8px;padding:10px;background:#1e1b4b;border-radius:6px;font-size:12px;color:#c4b5fd;';
+                    const archetype = sig.archetype ? `<strong>${sig.archetype.replace(/_/g,' ')}</strong> · ` : '';
+                    const score = sig.riskScore != null ? `Riesgo: ${sig.riskScore}/100 · ` : '';
+                    const narrative = sig.narrative ? `<br><span style="color:#e2e8f0;font-style:italic;">${sig.narrative}</span>` : '';
+                    signalDiv.innerHTML = `<i class="fa-solid fa-brain"></i> ${archetype}${score}${sig.abandonmentPattern || ''}${narrative}`;
+                    container.after(signalDiv);
+                }
+            } catch (err) {
+                console.error('[adrayOpenPlayer] Error:', err);
+                container.innerHTML = '<p style="font-size:12px;color:#f87171;padding:8px;">Error cargando grabación.</p>';
+            }
+        }
+        // ─── End rrweb Inline Player ──────────────────────────────────────────────
 
         function rebuildJourneyProfileLookup(profiles = []) {
             const byCustomerId = new Map();

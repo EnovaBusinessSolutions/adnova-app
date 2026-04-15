@@ -185,6 +185,8 @@ const adrayPlatformRoutes = require('./routes/adrayPlatforms');
 const wooOrdersRoutes = require('./routes/wooOrders');
 const wordpressPluginRoutes = require('./routes/wordpressPlugin');
 const rateLimitCollect = require('./middleware/rateLimitCollect');
+const rateLimitRecording = require('./middleware/rateLimitRecording');
+const recordingRoutes = require('./routes/recording');
 
 // Meta
 const metaInsightsRoutes = require("./routes/metaInsights");
@@ -298,6 +300,15 @@ app.use(
   express.urlencoded({ extended: true }),
   rateLimitCollect,
   collectRoutes
+);
+
+// BRI: rrweb recording ingest (pixel-facing, no auth, high rate limit)
+app.use(
+  "/recording",
+  cookieParser(),
+  express.json({ limit: "2mb" }),
+  rateLimitRecording,
+  recordingRoutes
 );
 
 app.get("/adray-pixel.js", (req, res) => {
@@ -740,6 +751,8 @@ app.get("/api/auth/verify-email", async (req, res) => {
 // sessionGuard removed for dashboard demo/access
 app.use("/api/analytics", require("./routes/analytics"));
 app.use("/api/feed", require("./routes/feed"));
+// BRI: authenticated recording API (presigned URLs, metadata)
+app.use("/api/recording", recordingRoutes);
 app.use('/api', wooOrdersRoutes);
 app.use('/api/platform-connections', require('./routes/platformConnections'));
 app.use('/wp-plugin', wordpressPluginRoutes);
@@ -1834,5 +1847,17 @@ app.use((err, _req, res, _next) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`â Servidor corriendo en http://localhost:${PORT}`);
+  console.log(`✓ Servidor corriendo en http://localhost:${PORT}`);
 });
+
+// ── Inline Recording Worker ────────────────────────────────────────
+// Runs the recording worker in the same process as the web server.
+// Set RECORDING_WORKER_INLINE=false to disable (e.g. when running a dedicated worker service).
+if (process.env.RECORDING_WORKER_INLINE !== 'false') {
+  try {
+    require('./workers/recordingWorker');
+    console.log('[recording-worker] Started inline');
+  } catch (err) {
+    console.error('[recording-worker] Failed to start inline:', err.message);
+  }
+}

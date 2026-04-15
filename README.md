@@ -17,13 +17,16 @@ This is the only documentation file that should be treated as the source of trut
 
 ## Product Goal
 
-Build and run a platform-agnostic attribution pipeline for Shopify, WooCommerce, and custom sites that:
+Build and run a platform-agnostic **Behavioral Revenue Intelligence (BRI)** platform for Shopify, WooCommerce, and custom ecommerce sites that:
 
-- captures browser events,
-- stitches attribution,
+- captures browser events and **rrweb session recordings from AddToCart onwards**,
+- stitches attribution (UTM, click IDs, multi-touch models),
 - processes purchases server-side,
 - syncs revenue truth from ecommerce platforms,
-- exposes reliable dashboard metrics,
+- extracts behavioral signals (rage clicks, exit intent, shipping shock, hesitation),
+- classifies abandonment archetypes with LLM (Gemma via OpenRouter),
+- enriches Meta CAPI with behavioral signals (behavioral_archetype, intent_score),
+- exposes reliable dashboard metrics with inline session replay,
 - and prepares clean data for Meta and Google integrations.
 
 ---
@@ -42,26 +45,32 @@ Build and run a platform-agnostic attribution pipeline for Shopify, WooCommerce,
 
 ### Render deploy config (`render.yaml`)
 
-Two services:
+Three services:
 
 | Service | Type | Branch | Auto-deploy |
 |---------|------|--------|-------------|
 | `adnova-ai` | web | `german/dev` | yes |
 | `adnova-ai-mcp-worker` | worker | `german/dev` | yes |
+| `adnova-ai-recording-worker` | worker | `german/dev` | yes |
 
 Web build command:
 ```
-git submodule update --init --recursive && npm ci && npm run build:landing && npm run build:dashboard && npx prisma generate --schema=backend/prisma/schema.prisma
+npm ci && npm run build:landing && npm run build:dashboard && npx prisma generate --schema=backend/prisma/schema.prisma
 ```
 
 Web start command:
 ```
-npm run prisma:push && npm run db:backfill:layer45 && node backend/index.js
+node backend/scripts/migrate-clarity-columns.js && node backend/scripts/migrate-recordings-schema.js && npm run prisma:push && node backend/scripts/backfill-clarity-urls.js && npm run db:backfill:layer45 && node backend/index.js
 ```
 
-Worker start command:
+MCP worker start command:
 ```
 npm run worker:mcp
+```
+
+Recording worker start command:
+```
+node backend/workers/recordingWorker.js
 ```
 
 ### Staging vs Production
@@ -73,6 +82,74 @@ Checklist operativa y variables por entorno: [docs/STAGING_PRODUCTION.md](docs/S
 - `APP_URL` is the key variable that controls OAuth callbacks. Define it explicitly per Render service.
 - `NODE_ENV=production` must be set in all Render services (enables secure cookies).
 - Cloudflare Turnstile was removed from the repo — `TURNSTILE_*` vars can be deleted from Render.
+
+---
+
+## BRI Environment Variables
+
+Required for recording, LLM narratives, and secure PII hashing. Add to Render dashboard under each service.
+
+### Opción A: AWS S3 (recomendado si ya tienes cuenta AWS)
+
+| Variable | Default | Dónde encontrarlo |
+|---|---|---|
+| `S3_ACCESS_KEY_ID` | — | AWS Console → IAM → Users → Create user → Access keys |
+| `S3_SECRET_ACCESS_KEY` | — | Mismo paso, se muestra solo una vez |
+| `S3_REGION` | `us-east-1` | Región donde creaste el bucket |
+| `S3_BUCKET` | `adray-recordings` | S3 → Create bucket → nombre `adray-recordings` |
+
+IAM policy mínima necesaria para el user:
+```json
+{
+  "Effect": "Allow",
+  "Action": ["s3:PutObject", "s3:GetObject", "s3:DeleteObject", "s3:ListBucket"],
+  "Resource": ["arn:aws:s3:::adray-recordings", "arn:aws:s3:::adray-recordings/*"]
+}
+```
+
+### Opción B: Cloudflare R2 (10GB gratis, egress $0)
+
+| Variable | Default | Dónde encontrarlo |
+|---|---|---|
+| `R2_ENDPOINT` | — | `https://<CLOUDFLARE_ACCOUNT_ID>.r2.cloudflarestorage.com` |
+| `R2_ACCESS_KEY_ID` | — | Cloudflare → R2 → Manage R2 API tokens → Create token |
+| `R2_SECRET_ACCESS_KEY` | — | Mismo paso, solo se muestra una vez |
+| `R2_BUCKET` | `adray-recordings` | Crear bucket en Cloudflare R2 |
+
+### Otras variables BRI
+
+| Variable | Default | Descripción |
+|---|---|---|
+| `OPENROUTER_API_KEY` | — | https://openrouter.ai/keys → Create key |
+| `OPENROUTER_MODEL` | `google/gemma-3-27b-it` | Modelo LLM para narrativas de abandono |
+| `HMAC_EMAIL_KEY` | — | `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"` |
+| `HMAC_PHONE_KEY` | — | Igual, genera un key distinto |
+| `RECORDING_QUEUE_NAME` | `recording-process` | Opcional |
+| `RECORDING_RETENTION_HOURS` | `24` | Horas antes de borrar raw recording de R2/S3 |
+
+> **Después de configurar `HMAC_EMAIL_KEY` y `HMAC_PHONE_KEY`**, ejecutar en staging:
+> ```bash
+> node backend/scripts/migrate-hmac-hashes.js
+> ```
+> Esto re-hashea los `email_hash` y `phone_hash` existentes en `identity_graph` de SHA-256 sin sal a HMAC-SHA-256.
+
+### S3 / R2 CORS Configuration
+
+El player inline del dashboard descarga grabaciones directamente desde S3/R2. Necesita CORS habilitado.
+
+**AWS S3:** S3 → bucket `adray-recordings` → Permissions → Cross-origin resource sharing (CORS):
+```json
+[
+  {
+    "AllowedOrigins": ["https://adray.ai", "https://adray-app-staging-german.onrender.com"],
+    "AllowedMethods": ["GET"],
+    "AllowedHeaders": ["*"],
+    "MaxAgeSeconds": 3600
+  }
+]
+```
+
+**Cloudflare R2:** R2 → `adray-recordings` → Settings → CORS policy → mismo JSON de arriba.
 
 ---
 
@@ -251,12 +328,17 @@ Prisma schema at `backend/prisma/schema.prisma`. All models use `account_id`-cen
 | `EventDedup` | `event_dedup` | Browser + server event dedup tracking |
 | `MerchantSnapshot` | `merchant_snapshots` | Aggregated revenue/channel/funnel summary |
 | `FailedJob` | `failed_jobs` | Async job failures with retry state |
+| `SessionRecording` | `session_recordings` | **BRI** — rrweb recording triggered from AddToCart, R2 keys, behavioral signals, LLM archetype |
+| `AbandonmentRiskScore` | `abandonment_risk_scores` | **BRI** — Real-time risk score (0-100) per active checkout session |
+| `AbandonmentCohort` | `abandonment_cohorts` | **BRI** — Daily-computed abandonment cohorts by friction pattern |
 
 Key enums:
 - `Platform`: `META`, `GOOGLE`, `TIKTOK`
 - `ConnectionStatus`: `ACTIVE`, `DISCONNECTED`, `ERROR`
 - `DedupStatus`: `SINGLE`, `BROWSER_ONLY`, `SERVER_ONLY`, `DEDUPLICATED`
 - `AccountPlatform`: `SHOPIFY`, `WOOCOMMERCE`, `MAGENTO`, `CUSTOM`, `OTHER`
+- `RecordingStatus`: `RECORDING`, `FINALIZING`, `READY`, `ERROR` *(BRI)*
+- `RecordingOutcome`: `PURCHASED`, `ABANDONED`, `STILL_BROWSING` *(BRI)*
 
 MongoDB models (legacy/operational, in `backend/models/`):
 - `User`, `ShopConnections`, `McpData`, `MetaAccount`, `GoogleAccount`, `PixelSelection`, `AnalyticsEvent`, `Audit`, `TaxProfile`, `DailySignalDeliveryRun`
@@ -297,6 +379,21 @@ MongoDB models (legacy/operational, in `backend/models/`):
 | `GET` | `/api/mcpdata/meta/status` | Meta pull status |
 | `GET` | `/api/mcpdata/google-ads/status` | Google Ads pull status |
 | `GET` | `/api/mcpdata/ga4/status` | GA4 pull status |
+
+### BRI: Session recording ingest (pixel-facing, no auth)
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| `POST` | `/recording/start` | Create `SessionRecording` row when AddToCart fires |
+| `POST` | `/recording/chunk` | Receive rrweb event batch → write to R2 chunk + Redis index |
+| `POST` | `/recording/end` | Finalize recording → enqueue BullMQ `recording:finalize` job |
+
+### BRI: Recording API (dashboard, no auth required same as analytics)
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| `GET` | `/api/recording/:account_id/:recording_id` | Metadata + presigned R2 URL for inline player (TTL 15min) |
+| `GET` | `/api/recording/:account_id/session/:session_id` | Recording linked to a specific session |
 
 ### WordPress plugin distribution
 
@@ -922,6 +1019,245 @@ The system is considered production-ready when all are true:
 - Meta CAPI and Google conversions endpoints are real and not placeholders.
 - Dashboard reflects revenue and channel metrics without relying on fragile fallbacks.
 - Shopify pixel validated end-to-end (same evidence bar as WooCommerce).
+
+---
+
+---
+
+## BRI Testing Guide (updated 2026-04-14)
+
+Checklist completa para verificar que la infraestructura de grabación funciona end-to-end después de deploy.
+
+### Pre-requisitos antes de testear
+
+1. Las variables de entorno BRI deben estar configuradas en Render (`R2_*`, `OPENROUTER_API_KEY`, `HMAC_*`).
+2. El bucket `adray-recordings` debe existir en Cloudflare R2 con CORS habilitado para el dominio del dashboard.
+3. Los tres servicios de Render deben estar corriendo: `adnova-ai`, `adnova-ai-mcp-worker`, `adnova-ai-recording-worker`.
+4. El pixel debe estar cargando en la tienda de prueba (`data-account-id` configurado).
+
+---
+
+### Test 1 — Pixel dispara recording al hacer AddToCart
+
+**Qué verificar:** el pixel lazy-carga rrweb y envía los chunks al backend.
+
+1. Abre DevTools → Network en la tienda de prueba.
+2. Agrega cualquier producto al carrito.
+3. En Network, filtra por `/recording`:
+   - Debes ver `POST /recording/start` → respuesta `{ "ok": true, "recording_id": "rec_..." }`
+   - A los ~4 segundos debes ver `POST /recording/chunk` → `{ "ok": true }`
+   - Los chunks deben seguir llegando cada 4s mientras navegas por el checkout.
+4. En Network, filtra por `rrweb` — debes ver que `rrweb.min.js` se cargó desde `cdn.jsdelivr.net`.
+
+**Si falla:** Revisar que `ADRAY_ENDPOINT` en el pixel apunta al servidor correcto. Verificar CORS en `/recording/*`.
+
+---
+
+### Test 2 — Schema migrado correctamente (tablas BRI en PostgreSQL)
+
+**Qué verificar:** las nuevas tablas existen en la base de datos.
+
+Conecta a la DB (Neon dashboard o psql) y ejecuta:
+
+```sql
+SELECT table_name FROM information_schema.tables
+WHERE table_name IN ('session_recordings', 'abandonment_risk_scores', 'abandonment_cohorts');
+-- Deben aparecer las 3 tablas
+
+SELECT column_name FROM information_schema.columns
+WHERE table_name = 'sessions' AND column_name = 'rrweb_recording_id';
+-- Debe aparecer 1 fila
+```
+
+**Si falla:** revisar los logs de Render para el inicio del servicio web — `migrate-recordings-schema.js` debe haber corrido sin error.
+
+---
+
+### Test 3 — Recording guardado en PostgreSQL
+
+**Qué verificar:** la fila `session_recordings` se crea con status correcto.
+
+Después de Test 1, ejecuta:
+
+```sql
+SELECT recording_id, session_id, status, chunk_count, outcome
+FROM session_recordings
+ORDER BY created_at DESC
+LIMIT 5;
+```
+
+Esperado:
+- `status = 'RECORDING'` mientras el usuario sigue navegando
+- `status = 'FINALIZING'` justo después de `POST /recording/end`
+- `status = 'READY'` después de que el worker procesa el job (puede tomar 10-60s)
+
+---
+
+### Test 4 — Chunks almacenados en Cloudflare R2
+
+**Qué verificar:** los archivos de chunk y el objeto final existen en R2.
+
+1. Cloudflare dashboard → R2 → `adray-recordings` → Browse.
+2. Navega a `recordings/<account_id>/<recording_id>/chunks/` — deben existir archivos `000000.json.gz`, `000001.json.gz`, etc.
+3. Después de que el worker finaliza: navega a `recordings/<account_id>/<YYYY-MM>/` — debe existir `<recording_id>.rrweb.gz`.
+
+**Si los chunks no aparecen:** verificar que `R2_ENDPOINT`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` son correctos. Revisar logs del web service.
+
+**Si el objeto final no aparece:** revisar logs del `adnova-ai-recording-worker` en Render.
+
+---
+
+### Test 5 — Player inline en el Selected Journey panel
+
+**Qué verificar:** el botón "Ver grabación" aparece y reproduce el video inline.
+
+1. Abre el attribution dashboard (`/adray-analytics.html?shopId=<account_id>`).
+2. En la sección "Historical Conversion Journeys" o "Recent Purchases", haz click en un order que tenga una grabación (`rrwebRecordingId` no nulo).
+3. Debe aparecer el botón **"Ver grabación"** en morado al lado de "Download CSV".
+4. Click en el botón:
+   - Se carga el spinner "Cargando grabación…"
+   - Se lazy-carga `rrweb-player` desde CDN
+   - El player aparece inline con controles de reproducción (play, timeline, velocidad)
+5. Verifica que el video muestra el DOM de la tienda desde el momento del AddToCart.
+
+**Fallback Clarity:** si la sesión tiene `clarityPlaybackUrl` pero no `rrwebRecordingId`, debe aparecer el link "Ver grabación" morado oscuro que abre Clarity en tab nueva.
+
+**Si el player no carga:** revisar que el bucket R2 tiene CORS habilitado para el origen del dashboard. El error más común es `Access-Control-Allow-Origin` faltante.
+
+---
+
+### Test 6 — Señales conductuales extraídas (behavioral signals)
+
+**Qué verificar:** el worker extrae señales y las guarda en `behavioral_signals`.
+
+1. Haz una sesión de prueba: agrega al carrito → llega al checkout → **simula abandono** (cierra el tab o navega a otra página).
+2. Espera ~2-3 minutos (worker procesa `finalize` + `extract-signals`).
+3. Consulta:
+
+```sql
+SELECT recording_id, outcome, behavioral_signals->>'riskScore' AS risk,
+       behavioral_signals->>'abandonmentPattern' AS pattern,
+       behavioral_signals->>'archetype' AS archetype
+FROM session_recordings
+WHERE outcome = 'ABANDONED'
+ORDER BY created_at DESC LIMIT 5;
+```
+
+Esperado: `outcome = 'ABANDONED'`, `riskScore` entre 0-100, `pattern` = uno de los 5 patrones, y si `riskScore >= 60` debes ver `archetype` con el valor del LLM.
+
+---
+
+### Test 7 — Narrativa LLM generada (riskScore >= 60)
+
+**Qué verificar:** el LLM genera un archetype + narrative en español.
+
+1. Asegúrate de que `OPENROUTER_API_KEY` está configurado.
+2. En la sesión de prueba del Test 6, navega hasta la sección de shipping/total y quédate ~10-15 segundos sin mover el mouse, luego cierra el tab.
+3. Consulta:
+
+```sql
+SELECT behavioral_signals->>'archetype' AS archetype,
+       behavioral_signals->>'confidence_score' AS confidence,
+       behavioral_signals->>'narrative' AS narrative,
+       behavioral_signals->>'recommended_action' AS action
+FROM session_recordings
+WHERE behavioral_signals->>'riskScore' IS NOT NULL
+ORDER BY created_at DESC LIMIT 3;
+```
+
+Esperado: `archetype` = uno de los 9 valores válidos, `narrative` en español, `recommended_action` con recomendación específica.
+
+**Si no genera narrative:** revisar logs del recording worker. Si dice `OPENROUTER_API_KEY not set`, el env var no llegó al worker service.
+
+---
+
+### Test 8 — Borrado automático del raw recording (24h)
+
+**Qué verificar:** después de 24h, el raw `.rrweb.gz` en R2 se borra pero `behavioral_signals` persiste.
+
+Este test es de larga duración. Para verificarlo manualmente antes de esperar 24h, puedes reducir `RECORDING_RETENTION_HOURS=0.1` temporalmente (6 minutos) en el Render env del worker, desplegar, esperar, y luego verificar:
+
+```sql
+SELECT recording_id, raw_erased_at, r2_key,
+       (behavioral_signals IS NOT NULL) AS signals_intact
+FROM session_recordings
+WHERE raw_erased_at IS NOT NULL
+LIMIT 5;
+```
+
+Esperado: `raw_erased_at` tiene timestamp, `r2_key = null`, `signals_intact = true`.
+
+En R2, confirma que el archivo `recordings/<account_id>/<YYYY-MM>/<recording_id>.rrweb.gz` ya no existe.
+
+---
+
+### Test 9 — Fallback si R2 no está configurado
+
+**Qué verificar:** si las vars de R2 no están, el sistema no crashea — solo no guarda grabaciones.
+
+1. En staging, comenta temporalmente `R2_ENDPOINT` en Render.
+2. Haz un AddToCart en la tienda de prueba.
+3. Verifica que:
+   - El `/collect` principal sigue funcionando (otros eventos no se afectan)
+   - `POST /recording/start` devuelve `{ "ok": true }` (sin error)
+   - `POST /recording/chunk` devuelve `{ "ok": false }` con mensaje de error pero sin `500`
+   - El dashboard carga sin errores (sin el botón "Ver grabación")
+
+---
+
+### Test 10 — HMAC-SHA-256 en identity graph
+
+**Qué verificar:** los nuevos eventos usan HMAC en lugar de SHA-256 para PII.
+
+1. Configura `HMAC_EMAIL_KEY` y `HMAC_PHONE_KEY`.
+2. Ejecuta la migración: `node backend/scripts/migrate-hmac-hashes.js`.
+3. Verifica output: `Done — re-hashed N identity_graph rows.`
+4. Haz una nueva compra de prueba con un email conocido.
+5. Consulta:
+
+```sql
+SELECT email_hash FROM identity_graph
+WHERE account_id = '<tu_account_id>'
+ORDER BY last_seen_at DESC LIMIT 3;
+```
+
+6. Verifica localmente que el hash coincide con HMAC:
+```javascript
+const crypto = require('crypto');
+const key = Buffer.from(process.env.HMAC_EMAIL_KEY, 'hex');
+console.log(crypto.createHmac('sha256', key).update('tu@email.com'.toLowerCase().trim()).digest('hex'));
+```
+
+---
+
+### Test 11 — Worker de recording corriendo en Render
+
+**Qué verificar:** el tercer servicio está activo.
+
+1. Render dashboard → Services → `adnova-ai-recording-worker` → status `Live`.
+2. En los logs debe aparecer:
+   ```
+   [recordingWorker] Started on queue "recording-process" (prefix: bull)
+   ```
+3. Cuando llegue un job, los logs deben mostrar:
+   ```
+   [recordingWorker:finalize] rec_xxx... reason=session_end
+   [recordingWorker:finalize] rec_xxx... READY — N events, X bytes
+   [recordingWorker:extract-signals] rec_xxx... signals saved, riskScore=NN
+   ```
+
+---
+
+### Qué verás en el dashboard después del deploy
+
+| Elemento | Dónde | Cuándo aparece |
+|---|---|---|
+| Botón **"Ver grabación"** morado | Selected Journey panel → al lado de Download CSV | Cuando la sesión tenga una grabación con `status=READY` |
+| Player rrweb inline | Dentro del Selected Journey panel | Al hacer click en el botón |
+| Badge de archetype | Dentro del player (debajo del video) | Si `riskScore >= 60` y OPENROUTER_API_KEY está configurado |
+| Narrative en español | Debajo del badge | Mismo caso que arriba |
+| Link Clarity (fallback) | Same location | Sesiones anteriores con Clarity pero sin rrweb |
+| Nuevo worker en Render | Render dashboard → Services | Después del deploy |
 
 ---
 

@@ -1593,5 +1593,171 @@
     }, 250);
   })();
 
+  // =========================================================================
+  // ADRAY BRI — rrweb Recording Module
+  // Lazy-loads rrweb from CDN only when add_to_cart fires.
+  // Records from AddToCart onwards (not from page load) — privacy-first,
+  // cost-efficient, and focused on the moments that matter.
+  // =========================================================================
+
+  var _adrayRrwebLoaded = false;
+  var _adrayRrwebLoading = false;
+  var _adrayRecordingId = null;
+  var _adrayChunkIndex = 0;
+  var _adrayChunkBuffer = [];
+  var _adrayStopFn = null;
+  var _adrayFlushTimer = null;
+  var _ADRAY_FLUSH_MS = 4000;
+  var _ADRAY_CHUNK_MAX_BYTES = 200000;
+  var _ADRAY_RRWEB_CDN = 'https://cdn.jsdelivr.net/npm/rrweb@2/dist/rrweb.min.js';
+  var _ADRAY_REC_BASE = ADRAY_ENDPOINT.replace('/collect', '');
+
+  function _adrayLoadRrweb(callback) {
+    if (_adrayRrwebLoaded) { callback(); return; }
+    if (_adrayRrwebLoading) {
+      window.__adray_rrweb_cbs = window.__adray_rrweb_cbs || [];
+      window.__adray_rrweb_cbs.push(callback);
+      return;
+    }
+    _adrayRrwebLoading = true;
+    window.__adray_rrweb_cbs = [callback];
+    var s = document.createElement('script');
+    s.src = _ADRAY_RRWEB_CDN;
+    s.async = true;
+    s.onload = function() {
+      _adrayRrwebLoaded = true;
+      _adrayRrwebLoading = false;
+      (window.__adray_rrweb_cbs || []).forEach(function(cb) { try { cb(); } catch(_) {} });
+      window.__adray_rrweb_cbs = [];
+    };
+    s.onerror = function() { _adrayRrwebLoading = false; };
+    document.head.appendChild(s);
+  }
+
+  function _adrayFlushChunk() {
+    if (!_adrayChunkBuffer.length || !_adrayRecordingId) return;
+    var events = _adrayChunkBuffer.splice(0, _adrayChunkBuffer.length);
+    var idx = _adrayChunkIndex++;
+    var body = JSON.stringify({
+      account_id: getAccountId(),
+      recording_id: _adrayRecordingId,
+      session_id: getOrCreateSessionId(),
+      chunk_index: idx,
+      events: events,
+      timestamp: new Date().toISOString()
+    });
+    var endpoint = _ADRAY_REC_BASE + '/recording/chunk';
+    try {
+      if (navigator.sendBeacon) {
+        navigator.sendBeacon(endpoint, new Blob([body], { type: 'application/json' }));
+        return;
+      }
+    } catch(_) {}
+    fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      keepalive: true,
+      body: body
+    }).catch(function(){});
+  }
+
+  function _adrayStartRecording(cartPayload) {
+    if (_adrayStopFn) return; // already recording
+    if (!window.rrweb || !window.rrweb.record) return;
+
+    _adrayRecordingId = 'rec_' + generateId();
+    _adrayChunkIndex = 0;
+    _adrayChunkBuffer = [];
+
+    // Notify backend: recording started
+    fetch(_ADRAY_REC_BASE + '/recording/start', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({
+        account_id: getAccountId(),
+        recording_id: _adrayRecordingId,
+        session_id: getOrCreateSessionId(),
+        browser_id: getOrCreateBrowserId(),
+        trigger_event: 'add_to_cart',
+        cart_value: cartPayload && cartPayload.cart_value ? cartPayload.cart_value : null,
+        checkout_token: cartPayload && cartPayload.checkout_token ? cartPayload.checkout_token : null,
+        timestamp: new Date().toISOString()
+      })
+    }).catch(function(){});
+
+    _adrayStopFn = window.rrweb.record({
+      emit: function(event) {
+        _adrayChunkBuffer.push(event);
+        if (JSON.stringify(_adrayChunkBuffer).length >= _ADRAY_CHUNK_MAX_BYTES) {
+          _adrayFlushChunk();
+        }
+      },
+      maskAllInputs: true,
+      blockSelector: '[data-adray-block]',
+      sampling: {
+        mousemove: 100,
+        mouseInteraction: true,
+        scroll: 150,
+        input: 'last'
+      }
+    });
+
+    _adrayFlushTimer = setInterval(_adrayFlushChunk, _ADRAY_FLUSH_MS);
+  }
+
+  function _adrayStopRecording(reason) {
+    if (_adrayStopFn) { try { _adrayStopFn(); } catch(_) {} _adrayStopFn = null; }
+    if (_adrayFlushTimer) { clearInterval(_adrayFlushTimer); _adrayFlushTimer = null; }
+    _adrayFlushChunk();
+    if (!_adrayRecordingId) return;
+    var body = JSON.stringify({
+      account_id: getAccountId(),
+      recording_id: _adrayRecordingId,
+      session_id: getOrCreateSessionId(),
+      reason: reason || 'session_end',
+      final_chunk_index: _adrayChunkIndex,
+      timestamp: new Date().toISOString()
+    });
+    var endpoint = _ADRAY_REC_BASE + '/recording/end';
+    try {
+      if (navigator.sendBeacon) {
+        navigator.sendBeacon(endpoint, new Blob([body], { type: 'application/json' }));
+        return;
+      }
+    } catch(_) {}
+    fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      keepalive: true,
+      body: body
+    }).catch(function(){});
+  }
+
+  // Flush remaining events on page unload
+  window.addEventListener('pagehide', function() { _adrayFlushChunk(); });
+  window.addEventListener('beforeunload', function() { _adrayFlushChunk(); });
+
+  // Hook into sendEvent: trigger recording on add_to_cart, stop on purchase
+  var _adrayOrigSendEvent = sendEvent;
+  sendEvent = function(eventName, eventData) {
+    var result = _adrayOrigSendEvent.apply(this, arguments);
+    try {
+      if (eventName === 'add_to_cart') {
+        _adrayLoadRrweb(function() { _adrayStartRecording(eventData || {}); });
+      }
+      if (eventName === 'purchase') {
+        _adrayStopRecording('purchase');
+      }
+    } catch(_) {}
+    return result;
+  };
+
+  // =========================================================================
+  // END ADRAY BRI Recording Module
+  // =========================================================================
+
 })();
 
