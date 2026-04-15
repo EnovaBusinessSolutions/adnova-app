@@ -6504,10 +6504,61 @@
                 const eventsResp = await fetch(data.presignedUrl);
                 const eventsRaw = await eventsResp.json();
                 const eventsArr = Array.isArray(eventsRaw) ? eventsRaw : (eventsRaw?.events || []);
-                console.log('[adrayOpenPlayer] events count:', eventsArr.length);
+
+                // ── Diagnostic logs ──────────────────────────────────────────
+                // rrweb event types: 0=DomContentLoaded 1=Load 2=FullSnapshot
+                //                   3=IncrementalSnapshot 4=Meta 5=Custom
+                // IncrementalSnapshot sources: 0=Mutation 1=MouseMove 2=MouseInteraction
+                //   3=Scroll 4=ViewportResize 5=Input 8=StyleSheetRule
+                const typeCount = {};
+                let mouseMovCount = 0, mutationCount = 0, stylesheetRuleCount = 0;
+                let fullSnapshotNode = null, metaEvent = null;
+                for (const ev of eventsArr) {
+                    typeCount[ev.type] = (typeCount[ev.type] || 0) + 1;
+                    if (ev.type === 2) fullSnapshotNode = ev;   // FullSnapshot
+                    if (ev.type === 4) metaEvent = ev;          // Meta (viewport)
+                    if (ev.type === 3) {
+                        if (ev.data?.source === 1) mouseMovCount++;
+                        if (ev.data?.source === 0) mutationCount++;
+                        if (ev.data?.source === 8) stylesheetRuleCount++;
+                    }
+                }
+                console.group('[adrayOpenPlayer] Event diagnostics ─ ' + eventsArr.length + ' total');
+                console.log('Type breakdown:', typeCount);
+                console.log('Mouse move events (source=1):', mouseMovCount);
+                console.log('DOM mutation events (source=0):', mutationCount);
+                console.log('StyleSheetRule events (source=8):', stylesheetRuleCount);
+                console.log('Meta (viewport):', metaEvent?.data || 'MISSING');
+                if (fullSnapshotNode) {
+                    const snap = fullSnapshotNode.data;
+                    const hasInitialOffset = snap?.initialOffset != null;
+                    const nodeType = snap?.node?.type;
+                    const childCount = snap?.node?.childNodes?.length || 0;
+                    const cssNodes = [];
+                    (function walkCss(node) {
+                        if (!node) return;
+                        if (node.type === 8 /* Comment */ || node.type === 1 /* DocumentType */) return;
+                        if (node.tagName === 'style' || node.tagName === 'link') cssNodes.push({ tag: node.tagName, attrs: node.attributes });
+                        (node.childNodes || []).forEach(walkCss);
+                    })(snap?.node);
+                    console.log('FullSnapshot: node type=' + nodeType + ' children=' + childCount + ' initialOffset=' + hasInitialOffset);
+                    console.log('FullSnapshot: CSS nodes found (style/link tags):', cssNodes.length, cssNodes.slice(0, 5));
+                    console.log('FullSnapshot: inlineStylesheet flag (from snap):', snap?.node?.attributes?.['data-rrweb-id'] ? 'has rrweb id' : 'no rrweb id');
+                } else {
+                    console.error('FullSnapshot MISSING — player will show blank');
+                }
+                console.groupEnd();
+                // ── End diagnostics ──────────────────────────────────────────
 
                 if (!eventsArr.length) {
                     content.innerHTML = '<p style="color:#f87171;font-size:13px;padding:40px;text-align:center;">Sin eventos de grabación (0 eventos).</p>';
+                    return;
+                }
+
+                if (!fullSnapshotNode) {
+                    const diagMsg = `Sin FullSnapshot en la grabación (${eventsArr.length} eventos: ${JSON.stringify(typeCount)}). La grabación no puede reproducirse.`;
+                    console.error('[adrayOpenPlayer]', diagMsg);
+                    content.innerHTML = `<p style="color:#f87171;font-size:13px;padding:40px;text-align:center;">${diagMsg}</p>`;
                     return;
                 }
 
@@ -6530,7 +6581,8 @@
                             speed: 1,
                         },
                     });
-                    console.log('[adrayOpenPlayer] rendered', eventsArr.length, 'events @', playerWidth, 'x', playerHeight);
+                    console.log('[adrayOpenPlayer] player rendered:', eventsArr.length, 'events @', playerWidth, 'x', playerHeight,
+                        '| mouseMoves:', mouseMovCount, '| mutations:', mutationCount);
                 } catch (playerErr) {
                     console.error('[adrayOpenPlayer] player init error:', playerErr);
                     content.innerHTML = `<p style="color:#f87171;font-size:13px;padding:40px;text-align:center;">Error al inicializar player: ${playerErr.message}</p>`;
