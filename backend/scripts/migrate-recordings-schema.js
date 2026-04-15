@@ -11,10 +11,12 @@ const prisma = new PrismaClient();
 
 async function run() {
   try {
-    // 1. Add rrweb_recording_id to sessions
+    // 1. Add sessions columns (clarity + rrweb) — idempotent fallback in case migrate-clarity-columns.js failed
     await prisma.$executeRawUnsafe(`
       ALTER TABLE sessions
-        ADD COLUMN IF NOT EXISTS rrweb_recording_id TEXT;
+        ADD COLUMN IF NOT EXISTS clarity_session_id    TEXT,
+        ADD COLUMN IF NOT EXISTS clarity_playback_url  TEXT,
+        ADD COLUMN IF NOT EXISTS rrweb_recording_id    TEXT;
     `);
 
     // 2. Create recording status and outcome enums (if not exist)
