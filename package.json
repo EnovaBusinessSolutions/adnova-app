@@ -19,7 +19,7 @@
     "prisma:generate": "prisma generate --schema=backend/prisma/schema.prisma",
     "prisma:migrate": "prisma migrate dev --schema=backend/prisma/schema.prisma",
     "prisma:deploy": "prisma migrate deploy --schema=backend/prisma/schema.prisma",
-    "prisma:push": "prisma db push --schema=backend/prisma/schema.prisma --skip-generate",
+    "prisma:push": "prisma db push --schema=backend/prisma/schema.prisma --skip-generate --accept-data-loss",
     "db:backfill:layer45": "node backend/scripts/backfill-layer45.js",
     "db:wipe-tests": "node backend/scripts/wipe-test-orders.js",
     "db:pc:check": "node scripts/platform-connections-dedupe.js --check",
@@ -63,7 +63,7 @@
     "puppeteer": "^24.39.1",
     "qs": "^6.14.0",
     "resend": "^6.9.4",
-    "rrweb": "^2.0.0-alpha.4",
+    "rrweb": "^2.0.0-alpha.13",
     "stripe": "^19.1.0",
     "zod": "^3.25.76"
   },
