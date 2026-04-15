@@ -1,7 +1,23 @@
 // AdRay Tracking Pixel - v2.0 (Universal)
 // Usage: <script src="https://cdn.adray.io/pixel.js" data-account-id="acct_YOUR_ID"></script>
 (function() {
-  const ADRAY_ENDPOINT = "https://adray-app-staging-german.onrender.com/collect";
+  const ADRAY_ENDPOINT = (function () {
+    try {
+      var s = document.currentScript;
+      if (s) {
+        var ep = s.getAttribute('data-endpoint');
+        if (ep) return ep.replace(/\/+$/, '');
+        if (s.src) return new URL(s.src).origin + '/collect';
+      }
+      var tags = document.querySelectorAll('script[src*="adray-pixel"], script[src*="pixel.js"]');
+      for (var i = 0; i < tags.length; i++) {
+        ep = tags[i].getAttribute('data-endpoint');
+        if (ep) return ep.replace(/\/+$/, '');
+        if (tags[i].src) return new URL(tags[i].src).origin + '/collect';
+      }
+    } catch (_) {}
+    return 'https://adray.ai/collect';
+  }());
   const EVENT_TTL_MS = 2000;
   const ADRAY_LAST_CART_VALUE_KEY = '__adray_last_cart_value_v1';
   const sentEventMap = new Map();
