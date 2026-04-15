@@ -2,7 +2,6 @@ services:
   - type: web
     name: adnova-ai
     env: node
-    branch: german/dev
     autoDeploy: true
     buildCommand: npm ci && npm run build:landing && npm run build:dashboard && npx prisma generate --schema=backend/prisma/schema.prisma
     startCommand: node backend/scripts/migrate-clarity-columns.js && node backend/scripts/migrate-recordings-schema.js && npm run prisma:push && node backend/scripts/backfill-clarity-urls.js && npm run db:backfill:layer45 && node backend/index.js
@@ -13,7 +12,6 @@ services:
   - type: worker
     name: adnova-ai-mcp-worker
     env: node
-    branch: german/dev
     autoDeploy: true
     buildCommand: npm ci
     startCommand: npm run worker:mcp
@@ -24,7 +22,6 @@ services:
   - type: worker
     name: adnova-ai-recording-worker
     env: node
-    branch: german/dev
     autoDeploy: true
     buildCommand: npm ci
     startCommand: node backend/workers/recordingWorker.js
