@@ -1613,6 +1613,7 @@
   var _ADRAY_RRWEB_CDN = _ADRAY_REC_BASE + '/static/dom-observer.min.js';
 
   function _adrayLoadRrweb(callback) {
+    console.log('[ADRAY-REC] _adrayLoadRrweb called. loaded:', _adrayRrwebLoaded, 'loading:', _adrayRrwebLoading);
     if (_adrayRrwebLoaded) { callback(); return; }
     if (_adrayRrwebLoading) {
       window.__adray_rrweb_cbs = window.__adray_rrweb_cbs || [];
@@ -1623,21 +1624,30 @@
     window.__adray_rrweb_cbs = [callback];
     var s = document.createElement('script');
     s.src = _ADRAY_RRWEB_CDN;
+    console.log('[ADRAY-REC] Loading rrweb from:', s.src);
     s.async = true;
     s.onload = function() {
+      console.log('[ADRAY-REC] rrweb loaded OK. window.rrweb:', !!window.rrweb, 'record:', !!(window.rrweb && window.rrweb.record));
       _adrayRrwebLoaded = true;
       _adrayRrwebLoading = false;
-      (window.__adray_rrweb_cbs || []).forEach(function(cb) { try { cb(); } catch(_) {} });
+      (window.__adray_rrweb_cbs || []).forEach(function(cb) { try { cb(); } catch(e) { console.error('[ADRAY-REC] callback error:', e); } });
       window.__adray_rrweb_cbs = [];
     };
-    s.onerror = function() { _adrayRrwebLoading = false; };
+    s.onerror = function(e) {
+      console.error('[ADRAY-REC] rrweb FAILED to load from:', s.src, e);
+      _adrayRrwebLoading = false;
+    };
     document.head.appendChild(s);
   }
 
   function _adrayFlushChunk() {
-    if (!_adrayChunkBuffer.length || !_adrayRecordingId) return;
+    if (!_adrayChunkBuffer.length || !_adrayRecordingId) {
+      console.log('[ADRAY-REC] flush skipped — buffer:', _adrayChunkBuffer.length, 'recId:', _adrayRecordingId);
+      return;
+    }
     var events = _adrayChunkBuffer.splice(0, _adrayChunkBuffer.length);
     var idx = _adrayChunkIndex++;
+    console.log('[ADRAY-REC] flushing chunk', idx, '—', events.length, 'events');
     var body = JSON.stringify({
       account_id: getAccountId(),
       recording_id: _adrayRecordingId,
@@ -1647,31 +1657,33 @@
       timestamp: new Date().toISOString()
     });
     var endpoint = _ADRAY_REC_BASE + '/collect/x/buf';
-    try {
-      if (navigator.sendBeacon) {
-        navigator.sendBeacon(endpoint, new Blob([body], { type: 'application/json' }));
-        return;
-      }
-    } catch(_) {}
+    // Use fetch (not sendBeacon) so it appears in Network tab DevTools
     fetch(endpoint, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      credentials: 'include',
       keepalive: true,
       body: body
-    }).catch(function(){});
+    }).then(function(r) {
+      console.log('[ADRAY-REC] chunk', idx, 'sent →', r.status);
+    }).catch(function(e) {
+      console.error('[ADRAY-REC] chunk', idx, 'FAILED:', e.message || e);
+    });
   }
 
   function _adrayStartRecording(cartPayload) {
-    if (_adrayStopFn) return; // already recording
-    if (!window.rrweb || !window.rrweb.record) return;
+    console.log('[ADRAY-REC] _adrayStartRecording called. stopFn:', !!_adrayStopFn, 'rrweb:', !!window.rrweb);
+    if (_adrayStopFn) { console.log('[ADRAY-REC] already recording, skip'); return; }
+    if (!window.rrweb || !window.rrweb.record) { console.error('[ADRAY-REC] rrweb.record not available!'); return; }
 
     _adrayRecordingId = 'rec_' + generateId();
     _adrayChunkIndex = 0;
     _adrayChunkBuffer = [];
+    console.log('[ADRAY-REC] starting recording:', _adrayRecordingId, 'account:', getAccountId(), 'session:', getOrCreateSessionId());
 
     // Notify backend: recording started
-    fetch(_ADRAY_REC_BASE + '/collect/x/init', {
+    var initUrl = _ADRAY_REC_BASE + '/collect/x/init';
+    console.log('[ADRAY-REC] POST init →', initUrl);
+    fetch(initUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
@@ -1685,26 +1697,40 @@
         checkout_token: cartPayload && cartPayload.checkout_token ? cartPayload.checkout_token : null,
         timestamp: new Date().toISOString()
       })
-    }).catch(function(){});
-
-    _adrayStopFn = window.rrweb.record({
-      emit: function(event) {
-        _adrayChunkBuffer.push(event);
-        if (JSON.stringify(_adrayChunkBuffer).length >= _ADRAY_CHUNK_MAX_BYTES) {
-          _adrayFlushChunk();
-        }
-      },
-      maskAllInputs: true,
-      blockSelector: '[data-adray-block]',
-      sampling: {
-        mousemove: 100,
-        mouseInteraction: true,
-        scroll: 150,
-        input: 'last'
-      }
+    }).then(function(r) {
+      console.log('[ADRAY-REC] init →', r.status, r.ok ? 'OK' : 'ERROR');
+      return r.ok ? r.json() : r.text().then(function(t) { throw new Error(t); });
+    }).then(function(data) {
+      console.log('[ADRAY-REC] init response:', JSON.stringify(data));
+    }).catch(function(e) {
+      console.error('[ADRAY-REC] init FAILED:', e.message || e);
     });
 
+    try {
+      _adrayStopFn = window.rrweb.record({
+        emit: function(event) {
+          _adrayChunkBuffer.push(event);
+          if (JSON.stringify(_adrayChunkBuffer).length >= _ADRAY_CHUNK_MAX_BYTES) {
+            _adrayFlushChunk();
+          }
+        },
+        maskAllInputs: true,
+        blockSelector: '[data-adray-block]',
+        sampling: {
+          mousemove: 100,
+          mouseInteraction: true,
+          scroll: 150,
+          input: 'last'
+        }
+      });
+      console.log('[ADRAY-REC] rrweb.record() started, stopFn:', typeof _adrayStopFn);
+    } catch(e) {
+      console.error('[ADRAY-REC] rrweb.record() threw:', e);
+      return;
+    }
+
     _adrayFlushTimer = setInterval(_adrayFlushChunk, _ADRAY_FLUSH_MS);
+    console.log('[ADRAY-REC] flush timer started, every', _ADRAY_FLUSH_MS, 'ms');
   }
 
   function _adrayStopRecording(reason) {
@@ -1741,17 +1767,23 @@
   window.addEventListener('beforeunload', function() { _adrayFlushChunk(); });
 
   // Hook into sendEvent: trigger recording on add_to_cart, stop on purchase
+  console.log('[ADRAY-REC] BRI recording module initialized. Hooking sendEvent...');
   var _adrayOrigSendEvent = sendEvent;
   sendEvent = function(eventName, eventData) {
     var result = _adrayOrigSendEvent.apply(this, arguments);
+    console.log('[ADRAY-REC] sendEvent intercepted:', eventName);
     try {
       if (eventName === 'add_to_cart') {
+        console.log('[ADRAY-REC] add_to_cart detected → loading rrweb');
         _adrayLoadRrweb(function() { _adrayStartRecording(eventData || {}); });
       }
       if (eventName === 'purchase') {
+        console.log('[ADRAY-REC] purchase detected → stopping recording');
         _adrayStopRecording('purchase');
       }
-    } catch(_) {}
+    } catch(e) {
+      console.error('[ADRAY-REC] sendEvent hook error:', e);
+    }
     return result;
   };
 
