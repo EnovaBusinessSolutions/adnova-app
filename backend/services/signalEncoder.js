@@ -120,9 +120,6 @@ function buildEncodedContextMini({ summary = {}, priorityActions = [], existingM
 
 function encodeSignalPayload({ signalPayload, unifiedBase, root, user }) {
   const payload = signalPayload && typeof signalPayload === 'object' ? signalPayload : {};
-  const structuredSignal = payload?.structured_signal && typeof payload.structured_signal === 'object'
-    ? payload.structured_signal
-    : null;
   const ai = root?.aiContext && typeof root.aiContext === 'object' ? root.aiContext : {};
 
   const generatedAt =
@@ -231,17 +228,11 @@ function encodeSignalPayload({ signalPayload, unifiedBase, root, user }) {
       risk_flags: uniqStrings(payload?.risk_flags || negatives || [], 12),
       prompt_hints: uniqStrings(payload?.prompt_hints || [], 20),
       channel_story: toSerializable(payload?.channel_story || null, null),
-      structured_signal: toSerializable(
-        structuredSignal || {
-          schema: payload?.schema || null,
-          meta: payload?.meta || null,
-          daily_index: payload?.daily_index || [],
-          campaigns: payload?.campaigns || [],
-          anomalies: payload?.anomalies || [],
-          benchmarks: payload?.benchmarks || null,
-        },
-        null
-      ),
+      structured_signal: toSerializable({
+        meta: payload?.meta || null,
+        daily_index: payload?.daily_index || [],
+        campaigns: payload?.campaigns || [],
+      }, null),
     },
 
     blocks: {

@@ -363,24 +363,21 @@ await _post('/api/onboarding/reset', { source: 'asm', target });
     style.id = 'asm-styles';
     style.textContent = `
       :root{
-        --asm-bg: rgba(4,4,8,.70);
-        --asm-panel: linear-gradient(180deg, rgba(18,14,28,.76) 0%, rgba(10,10,16,.90) 100%);
-        --asm-surface: linear-gradient(180deg, rgba(18,14,28,.68) 0%, rgba(11,11,16,.82) 100%);
-        --asm-surface-2: linear-gradient(180deg, rgba(15,14,22,.86) 0%, rgba(8,9,13,.88) 100%);
-        --asm-border: rgba(255,255,255,.08);
-        --asm-border-soft: rgba(255,255,255,.05);
-        --asm-text: rgba(239,235,249,.96);
-        --asm-muted: rgba(181,174,199,.82);
-        --asm-purple: #b55cff;
-        --asm-purple-2: #c87cff;
-        --asm-cyan: #4fe3c1;
-        --asm-purple-soft: rgba(181,92,255,.16);
-        --asm-cyan-soft: rgba(79,227,193,.10);
-        --asm-shadow: 0 20px 80px rgba(0,0,0,.42);
-        --asm-shadow-2: 0 0 30px rgba(181,92,255,.16);
-        --asm-shadow-3: 0 0 26px rgba(79,227,193,.12);
-        --asm-radius: 24px;
-        --asm-radius-2: 16px;
+        --asm-bg: rgba(0,0,0,.62);
+        --asm-panel: rgba(12,12,18,.80);
+        --asm-border: rgba(255,255,255,.10);
+        --asm-text: rgba(231,231,241,.92);
+        --asm-muted: rgba(161,161,170,.92);
+
+        --asm-purple: #7c3aed;
+        --asm-purple-2: #a78bfa;
+
+        --asm-shadow: 0 24px 80px rgba(0,0,0,.55);
+        --asm-shadow-2: 0 28px 120px rgba(124,58,237,.14);
+
+        --asm-radius: 18px;
+        --asm-radius-2: 14px;
+
         --asm-ease: cubic-bezier(.2,.9,.2,1);
       }
 
@@ -410,12 +407,11 @@ await _post('/api/onboarding/reset', { source: 'asm', target });
       .asm-backdrop{
         position:absolute; inset:0;
         background:
-          radial-gradient(1100px 480px at 14% -4%, rgba(181,92,255,.18), transparent 58%),
-          radial-gradient(820px 340px at 86% 8%, rgba(79,227,193,.10), transparent 56%),
-          radial-gradient(760px 300px at 50% 100%, rgba(181,92,255,.09), transparent 60%),
-          rgba(4,4,8,.68);
-        backdrop-filter: blur(12px) saturate(125%);
-        -webkit-backdrop-filter: blur(12px) saturate(125%);
+          radial-gradient(1200px 700px at 20% 10%, rgba(124,58,237,.16), transparent 60%),
+          radial-gradient(900px 600px at 80% 30%, rgba(34,211,238,.08), transparent 55%),
+          rgba(0,0,0,.62);
+        backdrop-filter: blur(10px);
+        -webkit-backdrop-filter: blur(10px);
         opacity: 0;
         animation: asmFadeIn .18s var(--asm-ease) forwards;
       }
@@ -427,65 +423,58 @@ await _post('/api/onboarding/reset', { source: 'asm', target });
         margin: 14px auto;
         border-radius: var(--asm-radius);
         border: 1px solid var(--asm-border);
-        background: var(--asm-panel);
-        box-shadow:
-          inset 0 1px 0 rgba(255,255,255,.04),
-          var(--asm-shadow),
-          var(--asm-shadow-2),
-          var(--asm-shadow-3);
-        backdrop-filter: blur(16px) saturate(135%);
-        -webkit-backdrop-filter: blur(16px) saturate(135%);
+        background: linear-gradient(180deg, rgba(12,12,18,.88), rgba(10,10,14,.74));
+        box-shadow: var(--asm-shadow), var(--asm-shadow-2);
         overflow: hidden;
         display:flex;
         flex-direction:column;
+
         transform: translateY(14px) scale(.985);
         opacity: 0;
         animation: asmPopIn .24s var(--asm-ease) .02s forwards;
       }
 
-      .asm-panel::before{
-        content:"";
-        position:absolute;
-        inset:0;
-        pointer-events:none;
-        background:
-          radial-gradient(460px 180px at 12% 0%, rgba(181,92,255,.12), transparent 62%),
-          radial-gradient(340px 150px at 92% 14%, rgba(79,227,193,.08), transparent 58%);
-        opacity:.95;
-      }
-
       .asm-panel::after{
         content:"";
-        position:absolute;
-        inset:0;
+        position:absolute; left:-40%; top:-60%;
+        width: 180%; height: 120%;
+        background: radial-gradient(circle at 30% 30%, rgba(167,139,250,.12), transparent 55%);
+        opacity:.75;
         pointer-events:none;
-        background: linear-gradient(110deg, transparent, rgba(255,255,255,.035), transparent);
-        transform: translateX(-120%);
-        opacity:.6;
-        animation: asmAmbientSweep 5.2s ease-in-out infinite;
       }
 
       .asm-head{
         position: relative;
-        padding: 15px 16px;
+        padding: 14px 16px;
         display:flex;
         align-items:center;
         justify-content:space-between;
-        border-bottom: 1px solid var(--asm-border-soft);
-        background: linear-gradient(180deg, rgba(255,255,255,.03), rgba(255,255,255,0));
+        border-bottom: 1px solid rgba(255,255,255,.08);
+        background: linear-gradient(180deg, rgba(255,255,255,.04), rgba(255,255,255,.00));
       }
 
       .asm-title{
         font-weight: 800;
         font-size: 14px;
-        letter-spacing: .18px;
+        letter-spacing: .22px;
         display:flex;
+        gap:10px;
         align-items:center;
         color: var(--asm-text);
       }
 
       .asm-title::before{
-        content:none;
+        content:"✦";
+        display:inline-flex;
+        width: 26px;
+        height: 26px;
+        align-items:center;
+        justify-content:center;
+        border-radius: 999px;
+        background: rgba(124,58,237,.14);
+        border: 1px solid rgba(124,58,237,.28);
+        color: rgba(167,139,250,.95);
+        box-shadow: 0 10px 30px rgba(124,58,237,.18);
       }
 
       .asm-sub{
@@ -496,20 +485,18 @@ await _post('/api/onboarding/reset', { source: 'asm', target });
 
       .asm-x{
         appearance:none;
-        border: 1px solid var(--asm-border);
-        background: linear-gradient(180deg, rgba(255,255,255,.04), rgba(255,255,255,.02));
-        color: rgba(235,232,244,.90);
+        border: 1px solid rgba(255,255,255,.10);
+        background: rgba(255,255,255,.04);
+        color: rgba(226,232,240,.88);
         cursor:pointer;
         padding: 8px 10px;
-        border-radius: 14px;
-        box-shadow: inset 0 1px 0 rgba(255,255,255,.03);
-        transition: transform .14s var(--asm-ease), background .14s var(--asm-ease), border-color .14s var(--asm-ease), box-shadow .14s var(--asm-ease);
+        border-radius: 12px;
+        transition: transform .14s var(--asm-ease), background .14s var(--asm-ease), border-color .14s var(--asm-ease);
       }
       .asm-x:hover{
         transform: translateY(-1px);
-        background: linear-gradient(180deg, rgba(181,92,255,.10), rgba(255,255,255,.04));
-        border-color: rgba(181,92,255,.24);
-        box-shadow: 0 0 18px rgba(181,92,255,.14);
+        background: rgba(255,255,255,.08);
+        border-color: rgba(167,139,250,.35);
       }
 
       .asm-body{
@@ -518,27 +505,22 @@ await _post('/api/onboarding/reset', { source: 'asm', target });
         overflow-x: hidden;
       }
 
-      .asm-body::-webkit-scrollbar{ width: 8px; }
-      .asm-body::-webkit-scrollbar-track{
-        background: rgba(8,8,12,.92);
-        border-radius: 999px;
-      }
+      .asm-body::-webkit-scrollbar{ width: 10px; }
+      .asm-body::-webkit-scrollbar-track{ background: rgba(255,255,255,.03); border-radius: 999px; }
       .asm-body::-webkit-scrollbar-thumb{
-        background: linear-gradient(180deg, rgba(44,37,48,.92) 0%, rgba(181,92,255,.52) 100%);
+        background: rgba(167,139,250,.22);
         border-radius: 999px;
-        border: 1px solid rgba(255,255,255,.03);
+        border: 2px solid rgba(0,0,0,.25);
       }
-      .asm-body::-webkit-scrollbar-thumb:hover{
-        background: linear-gradient(180deg, rgba(88,66,104,.96) 0%, rgba(181,92,255,.88) 100%);
-      }
+      .asm-body::-webkit-scrollbar-thumb:hover{ background: rgba(167,139,250,.30); }
 
       .asm-section{ margin-top: 14px; }
       .asm-section h4{
         margin: 0 0 10px 0;
         font-size: 12.5px;
         font-weight: 800;
-        letter-spacing: .16px;
-        color: rgba(235,232,244,.94);
+        letter-spacing: .18px;
+        color: rgba(226,232,240,.92);
         display:flex;
         align-items:center;
         gap:8px;
@@ -546,14 +528,13 @@ await _post('/api/onboarding/reset', { source: 'asm', target });
 
       .asm-count{
         margin-left: auto;
-        color: rgba(194,189,210,.88);
+        color: rgba(148,163,184,.92);
         font-weight: 700;
         font-size: 12px;
-        padding: 4px 10px;
+        padding: 3px 8px;
         border-radius: 999px;
-        border: 1px solid var(--asm-border);
-        background: linear-gradient(180deg, rgba(19,18,28,.82), rgba(12,12,18,.72));
-        box-shadow: inset 0 1px 0 rgba(255,255,255,.03);
+        border: 1px solid rgba(255,255,255,.10);
+        background: rgba(255,255,255,.03);
       }
 
       .asm-list{
@@ -570,27 +551,19 @@ await _post('/api/onboarding/reset', { source: 'asm', target });
         gap:12px;
         padding: 12px 12px;
         border-radius: var(--asm-radius-2);
-        border: 1px solid var(--asm-border);
-        background: var(--asm-surface);
+        border: 1px solid rgba(255,255,255,.10);
+        background: linear-gradient(180deg, rgba(255,255,255,.05), rgba(255,255,255,.02));
         cursor:pointer;
         user-select:none;
         overflow:hidden;
-        box-shadow:
-          inset 0 1px 0 rgba(255,255,255,.025),
-          0 10px 28px rgba(0,0,0,.20);
         transition: transform .14s var(--asm-ease), border-color .14s var(--asm-ease), background .14s var(--asm-ease), box-shadow .14s var(--asm-ease);
       }
 
       .asm-chip:hover{
         transform: translateY(-1px);
-        border-color: rgba(181,92,255,.20);
-        box-shadow:
-          inset 0 1px 0 rgba(255,255,255,.03),
-          0 16px 36px rgba(0,0,0,.24),
-          0 0 18px rgba(181,92,255,.12);
-        background:
-          radial-gradient(320px 120px at 0% 0%, rgba(181,92,255,.08), transparent 60%),
-          linear-gradient(180deg, rgba(20,16,30,.84), rgba(11,11,16,.86));
+        border-color: rgba(167,139,250,.22);
+        box-shadow: 0 14px 40px rgba(0,0,0,.30);
+        background: linear-gradient(180deg, rgba(124,58,237,.10), rgba(255,255,255,.03));
       }
 
       .asm-chip::after{
@@ -598,14 +571,14 @@ await _post('/api/onboarding/reset', { source: 'asm', target });
         position:absolute;
         inset: 0;
         border-radius: var(--asm-radius-2);
-        background: linear-gradient(120deg, transparent 0%, rgba(255,255,255,.06) 48%, transparent 72%);
+        background: linear-gradient(120deg, transparent 0%, rgba(167,139,250,.10) 45%, transparent 70%);
         transform: translateX(-120%);
         opacity: 0;
         pointer-events:none;
       }
       .asm-chip:hover::after{
         opacity: 1;
-        animation: asmShimmer .9s var(--asm-ease) forwards;
+        animation: asmShimmer .85s var(--asm-ease) forwards;
       }
 
       .asm-chip-text{
@@ -614,9 +587,9 @@ await _post('/api/onboarding/reset', { source: 'asm', target });
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
-        color: rgba(236,233,244,.94);
+        color: rgba(226,232,240,.92);
         font-weight: 650;
-        letter-spacing: .08px;
+        letter-spacing: .1px;
       }
 
       .asm-chip input[type="checkbox"]{
@@ -625,27 +598,22 @@ await _post('/api/onboarding/reset', { source: 'asm', target });
         height: 18px;
         flex: 0 0 18px;
         border-radius: 6px;
-        border: 1px solid rgba(255,255,255,.14);
-        background: rgba(8,8,12,.52);
+        border: 1px solid rgba(255,255,255,.20);
+        background: rgba(0,0,0,.22);
         display:inline-flex;
         align-items:center;
         justify-content:center;
-        box-shadow:
-          inset 0 1px 0 rgba(255,255,255,.05),
-          0 0 0 1px rgba(255,255,255,.015);
-        transition: border-color .14s var(--asm-ease), background .14s var(--asm-ease), transform .14s var(--asm-ease), box-shadow .14s var(--asm-ease);
+        box-shadow: inset 0 1px 0 rgba(255,255,255,.06);
+        transition: border-color .14s var(--asm-ease), background .14s var(--asm-ease), transform .14s var(--asm-ease);
       }
-      .asm-chip input[type="checkbox"]:hover{ border-color: rgba(181,92,255,.38); }
+      .asm-chip input[type="checkbox"]:hover{ border-color: rgba(167,139,250,.40); }
       .asm-chip input[type="checkbox"]:checked{
-        background: linear-gradient(180deg, rgba(181,92,255,.98), rgba(126,73,234,.78));
-        border-color: rgba(200,124,255,.55);
-        box-shadow:
-          0 0 0 1px rgba(181,92,255,.18),
-          0 0 18px rgba(181,92,255,.24);
+        background: linear-gradient(180deg, rgba(124,58,237,.95), rgba(124,58,237,.70));
+        border-color: rgba(167,139,250,.55);
         transform: scale(1.02);
       }
       .asm-chip input[type="checkbox"]:checked::before{
-        content:"*";
+        content:"✓";
         font-size: 12px;
         color: white;
         font-weight: 900;
@@ -665,18 +633,16 @@ await _post('/api/onboarding/reset', { source: 'asm', target });
         margin-bottom: 10px;
         display:none;
         padding: 10px 12px;
-        border-radius: 14px;
-        border: 1px solid rgba(239,68,68,.22);
-        background: linear-gradient(180deg, rgba(127,29,29,.18), rgba(55,15,15,.14));
-        box-shadow: inset 0 1px 0 rgba(255,255,255,.02);
+        border-radius: 12px;
+        border: 1px solid rgba(239,68,68,.25);
+        background: rgba(239,68,68,.10);
       }
 
       #asm-hint, #pxm-hint{
-        padding: 9px 11px;
-        border-radius: 14px;
-        border: 1px solid var(--asm-border);
-        background: var(--asm-surface-2);
-        box-shadow: inset 0 1px 0 rgba(255,255,255,.025);
+        padding: 8px 10px;
+        border-radius: 12px;
+        border: 1px solid rgba(255,255,255,.10);
+        background: rgba(255,255,255,.03);
         margin-top: 12px;
       }
 
@@ -686,8 +652,8 @@ await _post('/api/onboarding/reset', { source: 'asm', target });
         gap:10px;
         justify-content:flex-end;
         align-items:center;
-        border-top: 1px solid var(--asm-border-soft);
-        background: linear-gradient(180deg, rgba(255,255,255,.02), rgba(255,255,255,.01));
+        border-top: 1px solid rgba(255,255,255,.08);
+        background: rgba(255,255,255,.02);
       }
 
       .asm-footer-left{
@@ -701,13 +667,12 @@ await _post('/api/onboarding/reset', { source: 'asm', target });
       .asm-step{
         font-size: 12px;
         font-weight: 800;
-        letter-spacing: .16px;
-        color: rgba(240,236,248,.92);
-        padding: 5px 11px;
+        letter-spacing: .18px;
+        color: rgba(226,232,240,.90);
+        padding: 4px 10px;
         border-radius: 999px;
-        border: 1px solid var(--asm-border);
-        background: linear-gradient(180deg, rgba(28,26,38,.88), rgba(15,15,22,.78));
-        box-shadow: inset 0 1px 0 rgba(255,255,255,.03);
+        border: 1px solid rgba(255,255,255,.10);
+        background: rgba(255,255,255,.03);
         white-space: nowrap;
       }
 
@@ -715,55 +680,47 @@ await _post('/api/onboarding/reset', { source: 'asm', target });
         appearance:none;
         border: none;
         background: transparent;
-        color: rgba(200,162,255,.94);
+        color: rgba(167,139,250,.95);
         cursor:pointer;
         font-weight: 750;
         font-size: 12.5px;
         padding: 6px 8px;
         border-radius: 10px;
-        transition: background .14s var(--asm-ease), transform .14s var(--asm-ease), color .14s var(--asm-ease);
+        transition: background .14s var(--asm-ease), transform .14s var(--asm-ease);
         white-space: nowrap;
       }
       .asm-link:hover{
-        background: rgba(181,92,255,.12);
-        color: #e6d5ff;
+        background: rgba(124,58,237,.14);
         transform: translateY(-1px);
       }
 
       .asm-btn{
         appearance:none;
-        border: 1px solid rgba(255,255,255,.10);
-        background: linear-gradient(180deg, rgba(34,34,44,.62), rgba(20,20,28,.82));
-        color: rgba(238,235,246,.94);
-        padding: 10px 14px;
-        border-radius: 14px;
+        border: 1px solid rgba(255,255,255,.14);
+        background: rgba(255,255,255,.05);
+        color: rgba(226,232,240,.92);
+        padding: 10px 12px;
+        border-radius: 12px;
         cursor:pointer;
         font-weight: 700;
         font-size: 13px;
-        box-shadow: inset 0 1px 0 rgba(255,255,255,.03);
-        transition: transform .14s var(--asm-ease), background .14s var(--asm-ease), border-color .14s var(--asm-ease), box-shadow .14s var(--asm-ease);
+        transition: transform .14s var(--asm-ease), background .14s var(--asm-ease), border-color .14s var(--asm-ease);
       }
       .asm-btn:hover{
         transform: translateY(-1px);
-        background: linear-gradient(180deg, rgba(42,42,56,.72), rgba(22,22,32,.88));
-        border-color: rgba(181,92,255,.18);
-        box-shadow: 0 0 16px rgba(181,92,255,.08);
+        background: rgba(255,255,255,.08);
+        border-color: rgba(167,139,250,.22);
       }
 
       .asm-btn-primary{
-        background: linear-gradient(135deg, #b55cff 0%, #c87cff 55%, #8e53ff 100%);
-        border-color: rgba(200,124,255,.34);
+        background: linear-gradient(180deg, rgba(124,58,237,1), rgba(124,58,237,.72));
+        border-color: rgba(167,139,250,.35);
         color:#fff;
-        box-shadow:
-          inset 0 1px 0 rgba(255,255,255,.12),
-          0 14px 36px rgba(181,92,255,.24);
+        box-shadow: 0 16px 50px rgba(124,58,237,.25);
       }
       .asm-btn-primary:hover{
-        background: linear-gradient(135deg, #ac50ff 0%, #d08cff 55%, #9a60ff 100%);
-        border-color: rgba(210,167,255,.46);
-        box-shadow:
-          inset 0 1px 0 rgba(255,255,255,.12),
-          0 18px 42px rgba(181,92,255,.30);
+        background: linear-gradient(180deg, rgba(109,40,217,1), rgba(124,58,237,.70));
+        border-color: rgba(167,139,250,.55);
       }
 
       .asm-btn-primary--disabled{
@@ -774,33 +731,20 @@ await _post('/api/onboarding/reset', { source: 'asm', target });
       }
 
       .asm-spot{
-        border: 1px solid var(--asm-border);
-        background: var(--asm-surface);
-        border-radius: 18px;
-        padding: 13px 13px;
+        border: 1px solid rgba(255,255,255,.10);
+        background: rgba(255,255,255,.03);
+        border-radius: 14px;
+        padding: 12px 12px;
         margin-bottom: 12px;
         overflow:hidden;
         position:relative;
-        box-shadow:
-          inset 0 1px 0 rgba(255,255,255,.025),
-          0 12px 32px rgba(0,0,0,.18);
-      }
-
-      .asm-spot::before{
-        content:"";
-        position:absolute;
-        inset:0;
-        pointer-events:none;
-        background:
-          radial-gradient(340px 120px at 0% 0%, rgba(181,92,255,.09), transparent 60%),
-          radial-gradient(280px 110px at 100% 0%, rgba(79,227,193,.05), transparent 58%);
       }
 
       .asm-spot::after{
         content:"";
         position:absolute;
         inset:0;
-        background: linear-gradient(120deg, transparent 0%, rgba(255,255,255,.05) 48%, transparent 72%);
+        background: linear-gradient(120deg, transparent 0%, rgba(167,139,250,.10) 45%, transparent 70%);
         transform: translateX(-120%);
         opacity: 0;
         pointer-events:none;
@@ -813,8 +757,8 @@ await _post('/api/onboarding/reset', { source: 'asm', target });
 
       .asm-spot-title{
         font-weight: 900;
-        letter-spacing: .14px;
-        color: rgba(240,237,248,.96);
+        letter-spacing: .16px;
+        color: rgba(226,232,240,.95);
         font-size: 13px;
         margin-bottom: 6px;
         display:flex;
@@ -825,21 +769,21 @@ await _post('/api/onboarding/reset', { source: 'asm', target });
       .asm-badge{
         font-size: 11px;
         font-weight: 900;
-        letter-spacing: .16px;
+        letter-spacing: .18px;
         padding: 4px 10px;
         border-radius: 999px;
-        color: rgba(255,255,255,.96);
-        border: 1px solid rgba(200,124,255,.30);
-        background: linear-gradient(180deg, rgba(181,92,255,.26), rgba(110,60,190,.24));
-        box-shadow: 0 0 16px rgba(181,92,255,.12);
+        color: rgba(255,255,255,.95);
+        border: 1px solid rgba(167,139,250,.35);
+        background: rgba(124,58,237,.25);
       }
 
       .asm-spot-sub{
         font-size: 12px;
-        color: rgba(185,179,201,.92);
-        line-height: 1.4;
+        color: rgba(161,161,170,.95);
+        line-height: 1.35;
       }
 
+      /* ✅ exit confirm overlay */
       #asm-exit-confirm{
         position:absolute;
         inset:0;
@@ -848,11 +792,9 @@ await _post('/api/onboarding/reset', { source: 'asm', target });
       .asm-exit-backdrop{
         position:absolute;
         inset:0;
-        background:
-          radial-gradient(480px 180px at 50% 30%, rgba(181,92,255,.12), transparent 62%),
-          rgba(3,4,8,.62);
-        backdrop-filter: blur(8px) saturate(120%);
-        -webkit-backdrop-filter: blur(8px) saturate(120%);
+        background: rgba(0,0,0,.55);
+        backdrop-filter: blur(6px);
+        -webkit-backdrop-filter: blur(6px);
       }
       .asm-exit-card{
         position:absolute;
@@ -860,28 +802,23 @@ await _post('/api/onboarding/reset', { source: 'asm', target });
         top:50%;
         transform: translate(-50%,-50%);
         width: min(520px, calc(100vw - 28px));
-        border-radius: 22px;
-        border: 1px solid var(--asm-border);
-        background: var(--asm-panel);
-        box-shadow:
-          inset 0 1px 0 rgba(255,255,255,.04),
-          var(--asm-shadow),
-          var(--asm-shadow-2);
-        backdrop-filter: blur(18px) saturate(135%);
-        -webkit-backdrop-filter: blur(18px) saturate(135%);
+        border-radius: 18px;
+        border: 1px solid rgba(255,255,255,.12);
+        background: linear-gradient(180deg, rgba(16,16,24,.92), rgba(10,10,14,.86));
+        box-shadow: 0 26px 90px rgba(0,0,0,.55), 0 30px 140px rgba(124,58,237,.14);
         padding: 16px 16px 14px;
       }
       .asm-exit-title{
         font-weight: 900;
-        letter-spacing: .16px;
-        color: rgba(240,237,248,.96);
+        letter-spacing: .18px;
+        color: rgba(226,232,240,.95);
         font-size: 14px;
       }
       .asm-exit-sub{
         margin-top: 8px;
-        color: rgba(185,179,201,.92);
+        color: rgba(161,161,170,.95);
         font-size: 12.5px;
-        line-height: 1.45;
+        line-height: 1.4;
       }
       .asm-exit-actions{
         margin-top: 14px;
@@ -892,7 +829,7 @@ await _post('/api/onboarding/reset', { source: 'asm', target });
       .asm-exit-foot{
         margin-top: 10px;
         font-size: 11.5px;
-        color: rgba(160,170,192,.82);
+        color: rgba(148,163,184,.85);
       }
 
       .asm-shake{
@@ -916,130 +853,120 @@ await _post('/api/onboarding/reset', { source: 'asm', target });
         from { transform: translateX(-120%); }
         to { transform: translateX(120%); }
       }
-      @keyframes asmAmbientSweep{
-        0%{ transform: translateX(-120%); opacity: 0; }
-        20%{ opacity: .55; }
-        65%{ opacity: .55; }
-        100%{ transform: translateX(120%); opacity: 0; }
-      }
 
       @media (max-width: 640px){
-        .asm-panel{
-          width: calc(100vw - 12px);
-          margin: 6px auto;
-          max-height: calc(100vh - 12px);
-          border-radius: 18px;
-          backdrop-filter: blur(12px) saturate(125%);
-          -webkit-backdrop-filter: blur(12px) saturate(125%);
-        }
+  .asm-panel{
+    width: calc(100vw - 12px);
+    margin: 6px auto;
+    max-height: calc(100vh - 12px);
+    border-radius: 16px;
+  }
 
-        .asm-head{
-          padding: 12px 12px;
-          align-items: flex-start;
-          gap: 10px;
-        }
+  .asm-head{
+    padding: 12px 12px;
+    align-items: flex-start;
+    gap: 10px;
+  }
 
-        .asm-title{
-          font-size: 13px;
-          line-height: 1.2;
-          padding-right: 10px;
-        }
+  .asm-title{
+    font-size: 13px;
+    line-height: 1.2;
+    padding-right: 10px;
+  }
 
-        .asm-sub{
-          font-size: 11.5px;
-          line-height: 1.38;
-        }
+  .asm-sub{
+    font-size: 11.5px;
+    line-height: 1.35;
+  }
 
-        .asm-body{
-          padding: 12px 12px 10px;
-        }
+  .asm-body{
+    padding: 12px 12px 10px;
+  }
 
-        .asm-chip{
-          padding: 11px 11px;
-          align-items: flex-start;
-        }
+  .asm-chip{
+    padding: 11px 11px;
+    align-items: flex-start;
+  }
 
-        .asm-chip-text{
-          white-space: normal;
-          overflow: visible;
-          text-overflow: initial;
-          line-height: 1.38;
-          word-break: break-word;
-        }
+  .asm-chip-text{
+    white-space: normal;
+    overflow: visible;
+    text-overflow: initial;
+    line-height: 1.35;
+    word-break: break-word;
+  }
 
-        .asm-spot{
-          padding: 12px;
-          border-radius: 16px;
-        }
+  .asm-spot{
+    padding: 12px;
+  }
 
-        .asm-spot-title{
-          align-items: flex-start;
-          gap: 8px;
-          flex-wrap: wrap;
-        }
+  .asm-spot-title{
+    align-items: flex-start;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
 
-        .asm-spot-sub{
-          font-size: 11.5px;
-          line-height: 1.46;
-        }
+  .asm-spot-sub{
+    font-size: 11.5px;
+    line-height: 1.45;
+  }
 
-        #asm-hint, #pxm-hint{
-          font-size: 11.5px;
-          line-height: 1.42;
-        }
+  #asm-hint, #pxm-hint{
+    font-size: 11.5px;
+    line-height: 1.4;
+  }
 
-        .asm-footer{
-          padding: 10px 12px 12px;
-          flex-direction: column;
-          align-items: stretch;
-          gap: 10px;
-        }
+  .asm-footer{
+    padding: 10px 12px 12px;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+  }
 
-        .asm-footer-left{
-          margin-right: 0;
-          width: 100%;
-          display: flex;
-          flex-wrap: wrap;
-          align-items: center;
-          gap: 8px;
-        }
+  .asm-footer-left{
+    margin-right: 0;
+    width: 100%;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+  }
 
-        .asm-step{
-          font-size: 11px;
-        }
+  .asm-step{
+    font-size: 11px;
+  }
 
-        .asm-link{
-          font-size: 11.5px;
-          padding: 4px 2px;
-          white-space: normal;
-          text-align: left;
-        }
+  .asm-link{
+    font-size: 11.5px;
+    padding: 4px 2px;
+    white-space: normal;
+    text-align: left;
+  }
 
-        .asm-btn{
-          width: 100%;
-          min-height: 44px;
-          font-size: 13px;
-        }
+  .asm-btn{
+    width: 100%;
+    min-height: 44px;
+    font-size: 13px;
+  }
 
-        .asm-x{
-          flex: 0 0 auto;
-        }
+  .asm-x{
+    flex: 0 0 auto;
+  }
 
-        .asm-exit-card{
-          width: min(94vw, 520px);
-          padding: 14px 14px 12px;
-          border-radius: 18px;
-        }
+  .asm-exit-card{
+    width: min(94vw, 520px);
+    padding: 14px 14px 12px;
+  }
 
-        .asm-exit-actions{
-          flex-direction: column;
-        }
+  .asm-exit-actions{
+    flex-direction: column;
+  }
 
-        .asm-exit-actions .asm-btn{
-          width: 100%;
-        }
-+      }
-     `;
+  .asm-exit-actions .asm-btn{
+    width: 100%;
+  }
+}
+    `;
     document.head.appendChild(style);
   }
 
@@ -1058,7 +985,7 @@ await _post('/api/onboarding/reset', { source: 'asm', target });
             <div class="asm-title" id="asm-title">Select accounts</div>
             <div class="asm-sub" id="asm-sub">Select up to ${MAX_SELECT} account per type.</div>
           </div>
-          <button class="asm-x" id="asm-close" aria-label="Close">✕</button>
+          <button class="asm-x" id="asm-close" aria-label="Cerrar">✕</button>
         </div>
 
         <div class="asm-body">
@@ -1152,10 +1079,10 @@ await _post('/api/onboarding/reset', { source: 'asm', target });
       <div class="asm-panel" role="dialog" aria-modal="true">
         <div class="asm-head">
           <div>
-            <div class="asm-title" id="pxm-title">Select pixel</div>
-            <div class="asm-sub" id="pxm-sub">Select 1 option to continue.</div>
+            <div class="asm-title" id="pxm-title">Seleccionar pixel</div>
+            <div class="asm-sub" id="pxm-sub">Selecciona 1 opción para continuar.</div>
           </div>
-          <button class="asm-x" id="pxm-close" aria-label="Close">✕</button>
+          <button class="asm-x" id="pxm-close" aria-label="Cerrar">✕</button>
         </div>
 
         <div class="asm-body">
@@ -1173,8 +1100,8 @@ await _post('/api/onboarding/reset', { source: 'asm', target });
         </div>
 
         <div class="asm-footer">
-          <button class="asm-btn" id="pxm-cancel">Cancel</button>
-          <button class="asm-btn asm-btn-primary" id="pxm-save">Save selection</button>
+          <button class="asm-btn" id="pxm-cancel">Cancelar</button>
+          <button class="asm-btn asm-btn-primary" id="pxm-save">Guardar selección</button>
         </div>
       </div>
     `;
@@ -1426,11 +1353,11 @@ await _post('/api/onboarding/reset', { source: 'asm', target });
 
     if (reached)
       _hint(
-        `Limit reached: you can only select ${MAX_SELECT} account.`,
+        `Límite alcanzado: solo puedes seleccionar ${MAX_SELECT} cuenta.`,
         'warn',
         'account-select-modal'
       );
-    else _hint(`Select up to ${MAX_SELECT} account per type.`, 'info', 'account-select-modal');
+    else _hint(`Selecciona hasta ${MAX_SELECT} cuenta por tipo.`, 'info', 'account-select-modal');
 
     // Wizard Step A: habilitar por selección del tipo requerido
     if (ASM.flow.next === 'metaPixel' && ASM.flow.step === 'A') {
@@ -1452,7 +1379,7 @@ await _post('/api/onboarding/reset', { source: 'asm', target });
       _hideEl(err);
     }
 
-    _hint(`Select up to ${MAX_SELECT} account per type.`, 'info', 'account-select-modal');
+    _hint(`Selecciona hasta ${MAX_SELECT} cuenta por tipo.`, 'info', 'account-select-modal');
 
     const metaTitle = _el('asm-meta-title');
     const metaList = _el('asm-meta-list');
@@ -1477,7 +1404,7 @@ await _post('/api/onboarding/reset', { source: 'asm', target });
           if (checked) {
             if (set.size >= MAX_SELECT) {
               cbEl.checked = false;
-              return _hint(`You can only select up to ${MAX_SELECT} account.`, 'warn', 'account-select-modal');
+              return _hint(`Solo puedes seleccionar hasta ${MAX_SELECT} cuenta.`, 'warn', 'account-select-modal');
             }
             set.clear();
             set.add(val);
@@ -1505,7 +1432,7 @@ await _post('/api/onboarding/reset', { source: 'asm', target });
       ASM.data.googleAds.forEach((a) => {
         const id = normGadsId(a.id || a.customerId || a.customer_id || '');
         const displayName =
-          a.name || a.descriptiveName || a.descriptive_name || `Account ${id}`;
+          a.name || a.descriptiveName || a.descriptive_name || `Cuenta ${id}`;
         const isChecked = ASM.sel.googleAds.has(id);
 
         const chip = _chip(displayName, id, 'googleAds', isChecked, (checked, val, kind, cbEl) => {
@@ -1513,7 +1440,7 @@ await _post('/api/onboarding/reset', { source: 'asm', target });
           if (checked) {
             if (set.size >= MAX_SELECT) {
               cbEl.checked = false;
-              return _hint(`You can only select up to ${MAX_SELECT} account.`, 'warn', 'account-select-modal');
+              return _hint(`Solo puedes seleccionar hasta ${MAX_SELECT} cuenta.`, 'warn', 'account-select-modal');
             }
             set.clear();
             set.add(val);
@@ -1556,7 +1483,7 @@ await _post('/api/onboarding/reset', { source: 'asm', target });
           if (checked) {
             if (_countFor(kind) >= MAX_SELECT) {
               cbEl.checked = false;
-              return _hint(`You can only select up to ${MAX_SELECT} account.`, 'warn', 'account-select-modal');
+              return _hint(`Solo puedes seleccionar hasta ${MAX_SELECT} cuenta.`, 'warn', 'account-select-modal');
             }
             set.clear();
             set.add(val); // ✅ SOLO RAW
@@ -1576,7 +1503,7 @@ await _post('/api/onboarding/reset', { source: 'asm', target });
     }
 
     if (!ASM.visible.meta && !ASM.visible.googleAds && !ASM.visible.googleGa) {
-      _hint('There are not enough accounts to select (or there is only 1 account per type).', 'info', 'account-select-modal');
+      _hint('No hay cuentas suficientes para seleccionar (o solo existe 1 cuenta por tipo).', 'info', 'account-select-modal');
     }
 
     if (ASM.flow.next === 'metaPixel' && ASM.flow.step === 'A') {
@@ -2081,11 +2008,11 @@ function _canSaveGoogleConversion() {
         // Step A: Continue -> save meta account -> load pixels -> Step B
         if (ASM.flow.step === 'A') {
           if (ASM.sel.meta.size === 0) {
-            return _hint('Select a Meta Ads account to continue.', 'warn', 'account-select-modal');
+            return _hint('Selecciona una cuenta de Meta para continuar.', 'warn', 'account-select-modal');
           }
 
           const originalText = saveBtn.textContent;
-          saveBtn.textContent = 'Loading...';
+          saveBtn.textContent = 'Cargando…';
           saveBtn.disabled = true;
 
           try {
@@ -2102,18 +2029,18 @@ function _canSaveGoogleConversion() {
             _setAccountWizardStep('B');
             _renderMetaPixelRecommendedBox();
 
-            saveBtn.textContent = 'Save selection';
+            saveBtn.textContent = 'Guardar selección';
             saveBtn.disabled = false;
             return;
           } catch (e) {
             console.error('metaPixel wizard continue error', e);
             const box = _el('asm-error');
             if (box) {
-              box.textContent = 'Something went wrong while continuing. Please try again.';
+              box.textContent = 'Ocurrió un error al continuar. Intenta de nuevo.';
               _showEl(box);
             }
             _hint('', 'info', 'account-select-modal');
-            saveBtn.textContent = originalText || 'Continue';
+            saveBtn.textContent = originalText || 'Continuar';
             saveBtn.disabled = false;
             return;
           }
@@ -2184,11 +2111,11 @@ function _canSaveGoogleConversion() {
         // Step A: Continue -> save customer -> load conversions -> Step B
         if (ASM.flow.step === 'A') {
           if (ASM.sel.googleAds.size === 0) {
-            return _hint('Select a Google Ads account to continue.', 'warn', 'account-select-modal');
+            return _hint('Selecciona una cuenta de Google Ads para continuar.', 'warn', 'account-select-modal');
           }
 
           const originalText = saveBtn.textContent;
-          saveBtn.textContent = 'Loading...';
+          saveBtn.textContent = 'Cargando…';
           saveBtn.disabled = true;
 
           try {
@@ -2201,18 +2128,18 @@ function _canSaveGoogleConversion() {
             _setAccountWizardStep('B');
             _renderGoogleConversionRecommendedBox();
 
-            saveBtn.textContent = 'Save selection';
+            saveBtn.textContent = 'Guardar selección';
             saveBtn.disabled = false;
             return;
           } catch (e) {
             console.error('googleConversion wizard continue error', e);
             const box = _el('asm-error');
             if (box) {
-              box.textContent = 'Something went wrong while continuing. Please try again.';
+              box.textContent = 'Ocurrió un error al continuar. Intenta de nuevo.';
               _showEl(box);
             }
             _hint('', 'info', 'account-select-modal');
-            saveBtn.textContent = originalText || 'Continue';
+            saveBtn.textContent = originalText || 'Continuar';
             saveBtn.disabled = false;
             return;
           }
@@ -2253,12 +2180,12 @@ function _canSaveGoogleConversion() {
     }
 
     // ✅ Normal mode (cuentas)
-    saveBtn.textContent = 'Save selection';
+    saveBtn.textContent = 'Guardar selección';
     saveBtn.onclick = async () => {
       if (!_canSaveAccounts()) return;
 
       const originalText = saveBtn.textContent;
-      saveBtn.textContent = 'Saving...';
+      saveBtn.textContent = 'Guardando…';
       saveBtn.disabled = true;
 
       try {
@@ -2323,12 +2250,12 @@ function _canSaveGoogleConversion() {
 
         const box = _el('asm-error');
         if (box) {
-          box.textContent = 'Something went wrong while saving your selection. Please try again.';
+          box.textContent = 'Ocurrió un error guardando tu selección. Intenta de nuevo.';
           _showEl(box);
         }
         _hint('', 'info', 'account-select-modal');
 
-        saveBtn.textContent = originalText || 'Save selection';
+        saveBtn.textContent = originalText || 'Guardar selección';
         _enableSave(_canSaveAccounts(), 'asm-save');
       }
     };
@@ -2357,7 +2284,7 @@ function _canSaveGoogleConversion() {
 
     if (!ASM.data.googleConversions.length) {
       _hideEl(gWrap);
-      _hint("We couldn't find any conversions.", 'warn', 'pixel-select-modal');
+      _hint('No encontramos conversiones.', 'warn', 'pixel-select-modal');
       return;
     }
 
@@ -2381,7 +2308,7 @@ function _canSaveGoogleConversion() {
         if (checked) {
           if (set.size >= MAX_SELECT) {
             cbEl.checked = false;
-            return _hint('You can only select 1 option.', 'warn', 'pixel-select-modal');
+            return _hint('Solo puedes seleccionar 1 opción.', 'warn', 'pixel-select-modal');
           }
           set.clear();
           set.add(val);
@@ -2407,13 +2334,13 @@ function _canSaveGoogleConversion() {
       saveBtn.onclick = async () => {
         try {
           if (!_canSaveGoogleConversion()) {
-            return _hint('Select 1 conversion to continue.', 'warn', 'pixel-select-modal');
+            return _hint('Selecciona 1 conversión para continuar.', 'warn', 'pixel-select-modal');
           }
           await _saveGoogleConversionSelectionAndClose(modal);
         } catch (e) {
           console.error('legacy pixel modal save error', e);
           if (err) {
-            err.textContent = 'Something went wrong while saving your selection.';
+            err.textContent = 'Ocurrió un error guardando tu selección.';
             _showEl(err);
           }
         }

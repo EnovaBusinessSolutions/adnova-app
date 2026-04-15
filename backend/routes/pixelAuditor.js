@@ -6,6 +6,7 @@ const fs = require("fs");
 const crypto = require("crypto");
 
 const router = express.Router();
+router.use("/pixel-setup", require("./pixelSetup"));
 
 /* ===========================================================
  * ✅ NUEVO: analytics tracker (NO rompe si falla / no existe)
