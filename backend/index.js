@@ -949,6 +949,23 @@ mountMcpRoutes(app);
 app.use('/oauth', require('./mcp/auth/oauth-server'));
 app.use('/gpt/v1', require('./mcp/rest/router'));
 
+// OAuth 2.0 Authorization Server Metadata (RFC 8414)
+// Required by the MCP spec for remote servers so clients (Claude, ChatGPT, etc.)
+// can auto-discover the authorization and token endpoints.
+app.get('/.well-known/oauth-authorization-server', (req, res) => {
+  const base = (process.env.APP_URL || 'https://adray.ai').replace(/\/$/, '');
+  res.json({
+    issuer: base,
+    authorization_endpoint: `${base}/oauth/authorize`,
+    token_endpoint: `${base}/oauth/token`,
+    revocation_endpoint: `${base}/oauth/revoke`,
+    response_types_supported: ['code'],
+    grant_types_supported: ['authorization_code', 'refresh_token'],
+    code_challenge_methods_supported: ['S256'],
+    token_endpoint_auth_methods_supported: ['client_secret_post', 'none'],
+  });
+});
+
 /* =========================
  * â Integraciones: DISCONNECT (E2E)
  * ========================= */
