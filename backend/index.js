@@ -302,10 +302,10 @@ app.use(
   collectRoutes
 );
 
-// BRI: session capture ingest (pixel-facing, no auth, high rate limit)
-// Neutral path /p/ avoids ad-blocker false positives on "recording" keyword
+// BRI: session capture ingest — mounted under /collect/x so ad-blockers treat it
+// the same as the trusted /collect endpoint
 app.use(
-  "/p",
+  "/collect/x",
   cookieParser(),
   express.json({ limit: "2mb" }),
   rateLimitRecording,
