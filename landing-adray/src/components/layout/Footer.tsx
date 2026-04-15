@@ -19,6 +19,8 @@ const footerLinks = {
     ],
     "Social Connect": [
         { label: "X / Twitter", href: "https://x.com/adray_ai" },
+        { label: "Instagram", href: "https://www.instagram.com/adray_ai?igsh=NGMyNjhuYTVycW1m" },
+        { label: "LinkedIn", href: "https://www.linkedin.com/company/adray-ai/" },
     ],
 };
 
