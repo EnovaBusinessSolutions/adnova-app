@@ -5743,15 +5743,7 @@
                         ${renderTrackedUtmHistory(purchaseUtmHistory, { emptyMessage: 'No UTM URLs have been captured yet for this selected journey.' })}
                     </div>
                     <div class="flex items-center justify-end gap-2 flex-wrap">
-                        ${purchase.rrwebRecordingId ? `
-                        <button type="button" class="journey-export-btn"
-                           style="background:#7c3aed;color:#fff;display:inline-flex;align-items:center;gap:6px;"
-                           onclick="adrayOpenPlayer('${escapeInlineSingleQuotedJs(purchase.rrwebRecordingId)}','${escapeInlineSingleQuotedJs(purchase.sessionId || '')}')">
-                            <i class="fa-solid fa-circle-play"></i>
-                            Ver grabación
-                        </button>
-                        <div id="adray-player-${escapeHtml(purchase.sessionId || purchase.rrwebRecordingId)}" style="display:none;width:100%;margin-top:8px;"></div>` :
-                        purchase.clarityPlaybackUrl ? `
+                        ${purchase.clarityPlaybackUrl ? `
                         <a href="${escapeHtml(purchase.clarityPlaybackUrl)}" target="_blank" rel="noopener noreferrer"
                            class="journey-export-btn"
                            style="background:#5c2d91;color:#fff;text-decoration:none;display:inline-flex;align-items:center;gap:6px;">
@@ -6369,120 +6361,6 @@
                 alert('Could not download this journey.');
             }
         }
-
-        // ─── rrweb Inline Player ──────────────────────────────────────────────────
-        var _adrayPlayerLibLoaded = false;
-
-        async function adrayOpenPlayer(recordingId, sessionId) {
-            const containerId = 'adray-player-' + (sessionId || recordingId);
-            const container = document.getElementById(containerId);
-            if (!container) return;
-
-            // Toggle: if already open, close it
-            if (container.style.display !== 'none' && container.children.length) {
-                container.style.display = 'none';
-                return;
-            }
-
-            container.style.display = 'block';
-            container.innerHTML = '<p style="font-size:12px;color:#888;padding:8px;">Cargando grabación…</p>';
-
-            try {
-                // 1. Fetch presigned URL from backend
-                const resp = await fetch(`/api/recording/${encodeURIComponent(currentShopId)}/${encodeURIComponent(recordingId)}`);
-                const data = await resp.json();
-                console.log('[adrayOpenPlayer] recording data:', data);
-                if (!data.ok) {
-                    container.innerHTML = `<p style="font-size:12px;color:#f87171;padding:8px;">Error: ${data.error || 'Recording not found'}</p>`;
-                    return;
-                }
-                if (!data.presignedUrl) {
-                    const status = data.recording?.status || 'unknown';
-                    const msgs = {
-                        RECORDING: 'Grabando… cierra la página del cliente para finalizar.',
-                        FINALIZING: 'Procesando grabación… espera unos segundos.',
-                        ERROR: 'Error al procesar la grabación. Revisa logs del worker.',
-                        unknown: `Estado desconocido (${status})`,
-                    };
-                    container.innerHTML = `<p style="font-size:12px;color:#f87171;padding:8px;">${msgs[status] || msgs.unknown}</p>`;
-                    return;
-                }
-
-                // 2. Lazy-load rrweb-player from CDN
-                if (!_adrayPlayerLibLoaded) {
-                    await new Promise((resolve, reject) => {
-                        const css = document.createElement('link');
-                        css.rel = 'stylesheet';
-                        css.href = '/static/rp.css';
-                        document.head.appendChild(css);
-                        const s = document.createElement('script');
-                        s.src = '/static/rp.js';
-                        s.onload = resolve;
-                        s.onerror = reject;
-                        document.head.appendChild(s);
-                    });
-                    _adrayPlayerLibLoaded = true;
-                }
-
-                // 3. Fetch recording events from presigned R2 URL
-                const eventsResp = await fetch(data.presignedUrl);
-                const events = await eventsResp.json();
-
-                console.log('[adrayOpenPlayer] events fetched, count:', Array.isArray(events) ? events.length : 'not array', typeof events);
-
-                // Events may be wrapped in an object if S3 returns JSON differently
-                const eventsArr = Array.isArray(events) ? events : (events?.events || []);
-
-                if (!eventsArr.length) {
-                    container.innerHTML = '<p style="font-size:12px;color:#f87171;padding:8px;">Sin eventos de grabación (0 eventos).</p>';
-                    return;
-                }
-
-                // 4. Render rrweb player
-                container.innerHTML = '';
-                const playerWidth = Math.max(container.offsetWidth || 0, 600);
-                const playerHeight = 520;
-                container.style.cssText = `height:${playerHeight}px;border-radius:8px;overflow:visible;background:#111827;position:relative;`;
-                try {
-                    const playerInstance = new window.rrwebPlayer({
-                        target: container,
-                        props: {
-                            events: eventsArr,
-                            width: playerWidth,
-                            height: playerHeight - 80,
-                            autoPlay: true,
-                            showController: true,
-                            skipInactive: true,
-                            speed: 1,
-                        }
-                    });
-                    console.log('[adrayOpenPlayer] player rendered,', eventsArr.length, 'events,', playerWidth, 'x', playerHeight);
-                } catch (playerErr) {
-                    console.error('[adrayOpenPlayer] player init error:', playerErr);
-                    container.innerHTML = `<p style="font-size:12px;color:#f87171;padding:8px;">Error al inicializar player: ${playerErr.message}</p>`;
-                    return;
-                }
-
-                // Show behavioral signals (remove any existing badge first to avoid duplicates)
-                const existingBadge = container.parentNode.querySelector('.adray-signal-badge');
-                if (existingBadge) existingBadge.remove();
-                if (data.recording?.behavioralSignals) {
-                    const sig = data.recording.behavioralSignals;
-                    const signalDiv = document.createElement('div');
-                    signalDiv.className = 'adray-signal-badge';
-                    signalDiv.style.cssText = 'margin-top:8px;padding:10px;background:#1e1b4b;border-radius:6px;font-size:12px;color:#c4b5fd;';
-                    const archetype = sig.archetype ? `<strong>${sig.archetype.replace(/_/g,' ')}</strong> · ` : '';
-                    const score = sig.riskScore != null ? `Riesgo: ${sig.riskScore}/100 · ` : '';
-                    const narrative = sig.narrative ? `<br><span style="color:#e2e8f0;font-style:italic;">${sig.narrative}</span>` : '';
-                    signalDiv.innerHTML = `<i class="fa-solid fa-brain"></i> ${archetype}${score}${sig.abandonmentPattern || ''}${narrative}`;
-                    container.after(signalDiv);
-                }
-            } catch (err) {
-                console.error('[adrayOpenPlayer] Error:', err);
-                container.innerHTML = '<p style="font-size:12px;color:#f87171;padding:8px;">Error cargando grabación.</p>';
-            }
-        }
-        // ─── End rrweb Inline Player ──────────────────────────────────────────────
 
         function rebuildJourneyProfileLookup(profiles = []) {
             const byCustomerId = new Map();
