@@ -1,0 +1,784 @@
+@import "tailwindcss";
+
+/* ═══════════════════════════════════════════
+   Fonts — Inter as primary site font,
+   UlmGrotesk reserved for "Adray" brand text
+   ═══════════════════════════════════════════ */
+
+/* UlmGrotesk: @font-face in layout.tsx (rutas con basePath /landing) */
+
+:root {
+  /* ── Font Tokens — Inter as default, UlmGrotesk only for "Adray" brand ── */
+  --font-brand: "UlmGrotesk", "Space Grotesk", "Inter", ui-sans-serif, system-ui;
+  --font-display: "Inter", ui-sans-serif, system-ui;
+  --font-headline: "Inter", ui-sans-serif, system-ui;
+  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+
+  /* ── Adray Color Tokens ── */
+  --white-100: #FFFFFF;
+  --white-90: #E1D8F3;
+  --white-80: #B0A4C4;
+  --white-40: rgba(255, 255, 255, 0.4);
+  --white-10: rgba(255, 255, 255, 0.1);
+  --white-7: rgba(255, 255, 255, 0.07);
+  --white-0: rgba(255, 254, 250, 0);
+  --black-100: #000000;
+  --ad-dark: #100C12;
+  --black-0: rgba(0, 0, 0, 0);
+  --ad-border: rgba(62, 40, 111, 0.35);
+  --ad-deep: #3E286F;
+  --ad-surface: #0F0B14;
+  --ad-muted: #B0A4C4;
+  --ad-tag: #8A7DA8;
+  --ad-subtitle: #C4B5E0;
+  --ad-primary: #CA8AE5;
+
+  --ad-deep-accent: #3E286F;
+  --ad-accent: #B55CFF;
+
+  --background: #000000;
+  --foreground: #E1D8F3;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-white-100: var(--white-100);
+  --color-white-90: var(--white-90);
+  --color-white-80: var(--white-80);
+  --color-white-40: var(--white-40);
+  --color-white-10: var(--white-10);
+  --color-white-7: var(--white-7);
+  --color-white-0: var(--white-0);
+  --color-black-100: var(--black-100);
+  --color-ad-dark: var(--ad-dark);
+  --color-black-0: var(--black-0);
+  --color-ad-border: var(--ad-border);
+  --color-ad-deep: var(--ad-deep);
+  --color-ad-surface: var(--ad-surface);
+  --color-ad-muted: var(--ad-muted);
+  --color-ad-tag: var(--ad-tag);
+  --color-ad-subtitle: var(--ad-subtitle);
+  --color-ad-primary: var(--ad-primary);
+  --color-ad-deep-accent: var(--ad-deep-accent);
+  --color-ad-accent: var(--ad-accent);
+  --font-sans: "Inter", ui-sans-serif, system-ui;
+
+  /* Framer breakpoints: phone ≤809, tablet 810–1199, desktop ≥1200 */
+  --breakpoint-sm: 640px;
+  --breakpoint-md: 810px;
+  --breakpoint-lg: 1200px;
+  --breakpoint-xl: 1200px;
+  --breakpoint-2xl: 1400px;
+}
+
+/* ═══════════════════════════════════════════
+   Base
+   ═══════════════════════════════════════════ */
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--ad-deep) transparent;
+}
+
+html {
+  scroll-behavior: smooth;
+  overflow-x: clip;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+  overflow-x: clip;
+  max-width: 100vw;
+}
+
+::selection {
+  background: rgba(202, 138, 229, 0.3);
+  color: #FFFFFF;
+}
+
+/* ═══════════════════════════════════════════
+   Component Classes
+   ═══════════════════════════════════════════ */
+
+/* Card base — bg #100C12, border rgba(62,40,111,0.35), radius 1.5rem */
+.card {
+  background-color: var(--ad-dark);
+  border: 0.0625rem solid var(--ad-border);
+  border-radius: 1.5rem;
+  transition: border-color 0.3s ease, box-shadow 0.3s ease;
+}
+
+.card:hover {
+  border-color: rgba(62, 40, 111, 0.6);
+  box-shadow: 0 0 1.5rem rgba(62, 40, 111, 0.2);
+}
+
+/* Glass / frosted — navbar pill, testimonial cards */
+.glass {
+  background: var(--white-7);
+  backdrop-filter: blur(0.5rem);
+  -webkit-backdrop-filter: blur(0.5rem);
+}
+
+/* Primary button glow — full Framer shadow (5 outer + 2 inset) */
+.glow-btn {
+  box-shadow:
+    0rem 0.052rem 0.052rem -0.047rem rgba(0, 0, 0, 0.18),
+    0rem 0.141rem 0.141rem -0.094rem rgba(0, 0, 0, 0.18),
+    0rem 0.31rem 0.31rem -0.141rem rgba(0, 0, 0, 0.17),
+    0rem 0.688rem 0.688rem -0.188rem rgba(0, 0, 0, 0.14),
+    0rem 1.75rem 1.75rem -0.234rem rgba(0, 0, 0, 0.06),
+    0 0 1.25rem rgba(62, 40, 111, 0.35),
+    inset -0.25rem 0.188rem 0.563rem 0rem rgb(202, 138, 229),
+    inset 0.188rem -0.125rem 0.5rem 0rem rgb(181, 92, 255);
+}
+
+/* Gradient text — ice → purple (cold → warm) */
+.text-gradient {
+  background: linear-gradient(91deg, #E1D8F3 0%, #B55CFF 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* Section tag line — thin divider after tag label */
+.tag-line {
+  height: 0.0625rem;
+  background: linear-gradient(90deg, var(--ad-deep) 0%, var(--ad-border) 100%);
+  flex: 1;
+}
+
+/* Noise overlay texture */
+.noise-overlay {
+  background-image: url("https://framerusercontent.com/images/6mcf62RlDfRfU61Yg5vb2pefpi4.png");
+  background-size: 8rem;
+  background-repeat: repeat;
+  pointer-events: none;
+}
+
+/* ═══════════════════════════════════════════
+   Animations
+   ═══════════════════════════════════════════ */
+
+/* Marquee — infinite horizontal scroll */
+@keyframes marquee {
+  0% {
+    transform: translateX(0);
+  }
+
+  100% {
+    transform: translateX(-50%);
+  }
+}
+
+.animate-marquee {
+  animation: marquee 30s linear infinite;
+}
+
+/* Testimonial marquee — slower, wider cards */
+.animate-marquee-testimonial {
+  animation: marquee 40s linear infinite;
+}
+
+/* Nav link underline */
+.nav-link-underline {
+  position: absolute;
+  bottom: -0.125rem;
+  left: 0;
+  right: 0;
+  height: 0.0625rem;
+  background: #E1D8F3;
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: transform 0.3s ease;
+}
+
+.group:hover .nav-link-underline {
+  transform: scaleX(1);
+}
+
+/* Fade in up */
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(1.875rem);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fade-in-up {
+  animation: fadeInUp 0.6s ease-out forwards;
+}
+
+/* Beam line — horizontal glow sweep for steps */
+@keyframes beamLine {
+  0% {
+    transform: translateX(-100%);
+  }
+
+  100% {
+    transform: translateX(200%);
+  }
+}
+
+.animate-beam {
+  animation: beamLine 3s ease-in-out infinite;
+}
+
+/* Rotating gradient — for speed card */
+@keyframes rotateGradient {
+  0% {
+    transform: rotate(0deg);
+  }
+
+  100% {
+    transform: rotate(360deg);
+  }
+}
+
+.animate-rotate {
+  animation: rotateGradient 8s linear infinite;
+}
+
+/* Shine dot pulse — for deep capabilities card */
+@keyframes shineDot {
+
+  0%,
+  100% {
+    opacity: 0.3;
+    transform: scale(1);
+  }
+
+  50% {
+    opacity: 1;
+    transform: scale(1.5);
+  }
+}
+
+.animate-shine {
+  animation: shineDot 2s ease-in-out infinite;
+}
+
+/* Slide down entrance — navbar */
+@keyframes slideDown {
+  from {
+    opacity: 0;
+    transform: translateY(-3.125rem);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-slide-down {
+  animation: slideDown 0.8s ease-out forwards;
+}
+
+/* Float */
+@keyframes float {
+
+  0%,
+  100% {
+    transform: translateY(0rem);
+  }
+
+  50% {
+    transform: translateY(-0.625rem);
+  }
+}
+
+.animate-float {
+  animation: float 6s ease-in-out infinite;
+}
+
+/* Progress line fill — for feature tabs */
+@keyframes progressFill {
+  from {
+    width: 0;
+  }
+
+  to {
+    width: 100%;
+  }
+}
+
+.animate-progress {
+  animation: progressFill 5s linear forwards;
+}
+
+@keyframes speed-line-travel {
+  0% {
+    transform: translateX(0rem);
+    opacity: 0;
+  }
+
+  5% {
+    opacity: 0.9;
+  }
+
+  95% {
+    opacity: 0.9;
+  }
+
+  100% {
+    transform: translateX(var(--travel, 50cqi));
+    opacity: 0;
+  }
+}
+
+@keyframes slider-dot {
+  0% {
+    top: var(--dot-from, 10%);
+  }
+
+  100% {
+    top: var(--dot-to, 75%);
+  }
+}
+
+@keyframes signal-pulse {
+  0% {
+    transform: scale(0.2);
+    opacity: 0.8;
+  }
+
+  80% {
+    opacity: 0.15;
+  }
+
+  100% {
+    transform: scale(1.1);
+    opacity: 0;
+  }
+}
+
+@keyframes beacon-glow {
+
+  0%,
+  100% {
+    box-shadow: 0 0 0.5rem rgba(181, 92, 255, 0.6), 0 0 1.5rem rgba(181, 92, 255, 0.3);
+    transform: scale(1);
+  }
+
+  50% {
+    box-shadow: 0 0 1rem rgba(181, 92, 255, 1), 0 0 2.5rem rgba(202, 138, 229, 0.5);
+    transform: scale(1.15);
+  }
+}
+
+@keyframes orbit-spin {
+  from {
+    transform: rotate(var(--orbit-start, 0deg));
+  }
+
+  to {
+    transform: rotate(calc(var(--orbit-start, 0deg) + 360deg));
+  }
+}
+
+/* === Instant Value: Plug + Tesla Lightning === */
+
+@keyframes plug-snap {
+
+  0%,
+  15% {
+    transform: translateY(-50%) translateX(-3em);
+    opacity: 0.4;
+  }
+
+  20% {
+    transform: translateY(-50%) translateX(-3em);
+    opacity: 0.8;
+  }
+
+  /* Snap! Instant click-in */
+  25% {
+    transform: translateY(-50%) translateX(0);
+    opacity: 1;
+  }
+
+  26% {
+    transform: translateY(-50%) translateX(0.08em);
+    opacity: 1;
+  }
+
+  27%,
+  82% {
+    transform: translateY(-50%) translateX(0);
+    opacity: 1;
+  }
+
+  95%,
+  100% {
+    transform: translateY(-50%) translateX(-3em);
+    opacity: 0.4;
+  }
+}
+
+@keyframes cable-glow {
+
+  0%,
+  20% {
+    opacity: 0.5;
+    filter: brightness(0.7);
+  }
+
+  28%,
+  82% {
+    opacity: 1;
+    filter: brightness(1.3);
+  }
+
+  95%,
+  100% {
+    opacity: 0.5;
+    filter: brightness(0.7);
+  }
+}
+
+@keyframes socket-glow {
+
+  0%,
+  24% {
+    opacity: 0;
+  }
+
+  28%,
+  82% {
+    opacity: 1;
+  }
+
+  95%,
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes tesla-arc {
+
+  0%,
+  24% {
+    stroke-dashoffset: 800;
+    opacity: 0;
+  }
+
+  26% {
+    opacity: 1;
+  }
+
+  /* Fast draw-on */
+  38% {
+    stroke-dashoffset: 0;
+    opacity: 1;
+  }
+
+  /* Flicker */
+  42% {
+    opacity: 0.3;
+  }
+
+  44% {
+    opacity: 1;
+  }
+
+  50% {
+    opacity: 0.5;
+  }
+
+  52% {
+    opacity: 1;
+  }
+
+  58% {
+    opacity: 0.7;
+  }
+
+  60%,
+  78% {
+    stroke-dashoffset: 0;
+    opacity: 1;
+  }
+
+  92%,
+  100% {
+    stroke-dashoffset: 0;
+    opacity: 0;
+  }
+}
+
+@keyframes tesla-branch {
+
+  0%,
+  26% {
+    stroke-dashoffset: 300;
+    opacity: 0;
+  }
+
+  28% {
+    opacity: 0.9;
+  }
+
+  42% {
+    stroke-dashoffset: 0;
+    opacity: 0.9;
+  }
+
+  46% {
+    opacity: 0.2;
+  }
+
+  48% {
+    opacity: 0.8;
+  }
+
+  54% {
+    opacity: 0.4;
+  }
+
+  56%,
+  78% {
+    stroke-dashoffset: 0;
+    opacity: 0.8;
+  }
+
+  92%,
+  100% {
+    stroke-dashoffset: 0;
+    opacity: 0;
+  }
+}
+
+@keyframes energy-ring {
+
+  0%,
+  24% {
+    transform: translate(-50%, -50%) scale(0.5);
+    opacity: 0;
+  }
+
+  30% {
+    opacity: 0.8;
+  }
+
+  70% {
+    transform: translate(-50%, -50%) scale(3);
+    opacity: 0;
+  }
+
+  100% {
+    transform: translate(-50%, -50%) scale(3);
+    opacity: 0;
+  }
+}
+
+/* === Data Privacy: Discrete Layer Flash === */
+
+@keyframes layer-flash {
+
+  0%,
+  8% {
+    opacity: 0;
+  }
+
+  /* Snap on */
+  12% {
+    opacity: 1;
+  }
+
+  /* Hold bright */
+  22% {
+    opacity: 1;
+  }
+
+  /* Snap off */
+  28% {
+    opacity: 0;
+  }
+
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes layer-ambient {
+
+  0%,
+  100% {
+    opacity: 0.3;
+    transform: scale(1);
+  }
+
+  50% {
+    opacity: 0.6;
+    transform: scale(1.03);
+  }
+}
+
+/* ═══════════════════════════════════════════
+   Typography — Framer Design Tokens (exact)
+   ═══════════════════════════════════════════ */
+
+/* H1 · 82 - Medium · 5.125rem / 1.2 */
+.t-h1 {
+  font-family: var(--font-display);
+  font-size: 5.125rem;
+  font-weight: 500;
+  line-height: 1.2;
+  letter-spacing: -0.03em;
+}
+
+/* H2 · 56 - Regular · 3.5rem / 1.2 */
+.t-h2 {
+  font-family: var(--font-display);
+  font-size: 3.5rem;
+  font-weight: 400;
+  line-height: 1.2;
+  letter-spacing: -0.03em;
+}
+
+/* H3 · 36 - Regular · 2.25rem / 1.3 */
+.t-h3 {
+  font-family: var(--font-headline);
+  font-size: 2.25rem;
+  font-weight: 400;
+  line-height: 1.3;
+}
+
+/* H3 · 48 - Medium · 3rem / 1.2 */
+.t-h3-lg {
+  font-family: var(--font-display);
+  font-size: 3rem;
+  font-weight: 500;
+  line-height: 1.2;
+  letter-spacing: -0.03em;
+}
+
+/* H4 · 28 - Medium · 1.75rem / 1.2 */
+.t-h4 {
+  font-family: var(--font-headline);
+  font-size: 1.75rem;
+  font-weight: 500;
+  line-height: 1.2;
+}
+
+/* H4 · 24 - Regular · 1.5rem / 1.5 */
+.t-h4-regular {
+  font-family: var(--font-headline);
+  font-size: 1.5rem;
+  font-weight: 400;
+  line-height: 1.5;
+}
+
+/* H4 · 20 - Semibold · 1.25rem / 1.2 */
+.t-h4-sm {
+  font-family: var(--font-headline);
+  font-size: 1.25rem;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+/* P · 18 - Medium · 1.125rem / 1.4 */
+.t-p-lg-medium {
+  font-size: 1.125rem;
+  font-weight: 500;
+  line-height: 1.4;
+}
+
+/* P · 18 - Regular · 1.125rem / 1.4 */
+.t-p-lg {
+  font-size: 1.125rem;
+  font-weight: 400;
+  line-height: 1.4;
+}
+
+/* P · 16 - Semibold · 1rem / 1.2 */
+.t-p-semibold {
+  font-size: 1rem;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+/* P · 16 - Medium · 1rem / 1.5 */
+.t-p-medium {
+  font-size: 1rem;
+  font-weight: 500;
+  line-height: 1.5;
+}
+
+/* P · 16 - Regular · 1rem / 1.5 */
+.t-p {
+  font-size: 1rem;
+  font-weight: 400;
+  line-height: 1.5;
+}
+
+/* P · 14 - Regular · 0.875rem / 1.4 */
+.t-p-sm {
+  font-size: 0.875rem;
+  font-weight: 400;
+  line-height: 1.4;
+}
+
+/* ═══════════════════════════════════════════
+   Responsive typography overrides
+   ═══════════════════════════════════════════ */
+
+@media (max-width: 809px) {
+  .t-h1 {
+    font-size: 2.25rem;
+  }
+
+  .t-h2 {
+    font-size: 1.75rem;
+  }
+
+  .t-h3 {
+    font-size: 1.375rem;
+  }
+
+  .t-h3-lg {
+    font-size: 1.625rem;
+  }
+
+  .t-h4 {
+    font-size: 1.25rem;
+  }
+
+  .t-p-lg-medium,
+  .t-p-lg {
+    font-size: 1rem;
+  }
+
+  .t-p,
+  .t-p-medium,
+  .t-p-semibold {
+    font-size: 0.9375rem;
+  }
+
+  .t-p-sm {
+    font-size: 0.8125rem;
+  }
+}
+
+@media (min-width: 810px) and (max-width: 1199px) {
+  .t-h1 {
+    font-size: 3.625rem;
+  }
+
+  .t-h2 {
+    font-size: 2.75rem;
+  }
+
+  .t-h3-lg {
+    font-size: 2.5rem;
+  }
+}
