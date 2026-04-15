@@ -1657,17 +1657,27 @@
       timestamp: new Date().toISOString()
     });
     var endpoint = _ADRAY_REC_BASE + '/collect/x/buf';
-    // Use fetch (not sendBeacon) so it appears in Network tab DevTools
-    fetch(endpoint, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      keepalive: true,
-      body: body
-    }).then(function(r) {
-      console.log('[ADRAY-REC] chunk', idx, 'sent →', r.status);
-    }).catch(function(e) {
-      console.error('[ADRAY-REC] chunk', idx, 'FAILED:', e.message || e);
-    });
+    // Use sendBeacon for reliability on page unload; fallback to fetch for visibility in DevTools
+    var sent = false;
+    try {
+      if (navigator.sendBeacon) {
+        sent = navigator.sendBeacon(endpoint, new Blob([body], { type: 'application/json' }));
+      }
+    } catch(_) {}
+    if (!sent) {
+      fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        keepalive: true,
+        body: body
+      }).then(function(r) {
+        console.log('[ADRAY-REC] chunk', idx, 'sent →', r.status);
+      }).catch(function(e) {
+        console.error('[ADRAY-REC] chunk', idx, 'FAILED:', e.message || e);
+      });
+    } else {
+      console.log('[ADRAY-REC] chunk', idx, 'sent via sendBeacon');
+    }
   }
 
   function _adrayStartRecording(cartPayload) {

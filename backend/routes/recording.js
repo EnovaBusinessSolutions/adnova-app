@@ -26,8 +26,9 @@ let recordingQueue = null;
 try {
   const { getRecordingQueue } = require('../queues/recordingQueue');
   recordingQueue = getRecordingQueue();
-} catch (_) {
-  // Queue not yet created — jobs will be enqueued once worker is deployed
+  console.log('[recording] Queue initialized:', !!recordingQueue);
+} catch (err) {
+  console.error('[recording] Queue init failed:', err.message);
 }
 
 // Redis TTL for chunk index list (2 hours)
@@ -177,6 +178,7 @@ router.post('/buf', async (req, res) => {
 router.post('/fin', async (req, res) => {
   try {
     const { account_id, recording_id, session_id, reason, final_chunk_index } = req.body || {};
+    console.log(`[recording/fin] recordingId=${recording_id} reason=${reason} queue=${!!recordingQueue}`);
 
     if (!recording_id) {
       return res.status(400).json({ ok: false, error: 'Missing recording_id' });
@@ -185,7 +187,7 @@ router.post('/fin', async (req, res) => {
     await prisma.sessionRecording.updateMany({
       where: { recordingId: recording_id },
       data: { status: 'FINALIZING' },
-    }).catch(() => {});
+    }).catch((e) => console.error('[recording/fin] updateMany error:', e.message));
 
     // Enqueue finalize job
     if (recordingQueue) {
@@ -221,10 +223,33 @@ router.get('/:account_id/:recording_id', async (req, res) => {
 
     const rec = await prisma.sessionRecording.findUnique({
       where: { recordingId: recording_id },
+      select: {
+        recordingId: true, sessionId: true, accountId: true, status: true,
+        outcome: true, cartValue: true, durationMs: true, triggerAt: true,
+        behavioralSignals: true, attributionSnapshot: true, r2Key: true, createdAt: true,
+      },
     });
 
     if (!rec || rec.accountId !== account_id) {
       return res.status(404).json({ ok: false, error: 'Recording not found' });
+    }
+
+    // Auto-finalize: if stuck in RECORDING for >5 min, enqueue finalize job
+    if (rec.status === 'RECORDING' && recordingQueue) {
+      const ageMs = Date.now() - new Date(rec.createdAt).getTime();
+      if (ageMs > 5 * 60 * 1000) {
+        console.log(`[recording GET] ${recording_id} stuck in RECORDING for ${Math.round(ageMs/1000)}s — auto-finalizing`);
+        recordingQueue.add('recording:finalize', {
+          recordingId: recording_id,
+          accountId: account_id,
+          sessionId: rec.sessionId,
+          reason: 'auto_finalize',
+        }, { attempts: 3 }).catch((e) => console.error('[recording GET] auto-finalize enqueue error:', e.message));
+        await prisma.sessionRecording.update({
+          where: { recordingId: recording_id },
+          data: { status: 'FINALIZING' },
+        }).catch(() => {});
+      }
     }
 
     let presignedUrl = null;
