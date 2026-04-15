@@ -319,6 +319,16 @@ app.get("/adray-pixel.js", (req, res) => {
   return res.sendFile(path.join(__dirname, "../public/adray-pixel.js"));
 });
 
+// Self-hosted rrweb (avoids CDN ad-blocker blocks — served from node_modules at runtime)
+app.get("/rrweb.min.js", (req, res) => {
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
+  res.setHeader("Content-Type", "text/javascript; charset=utf-8");
+  res.setHeader("Cache-Control", "public, max-age=604800, immutable"); // 1 week cache
+  const rrwebPath = path.join(__dirname, "../node_modules/rrweb/dist/rrweb-all.min.js");
+  return res.sendFile(rrwebPath);
+});
+
 /* =========================
  * SesiĂłn y Passport
  * (ANTES de Stripe, webhooks y APIs)
