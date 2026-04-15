@@ -384,6 +384,14 @@ router.post('/', async (req, res) => {
       ...(ga4SessionSource ? { ga4SessionSource } : {})
     };
 
+    // Clarity session linking: attach playback URL and Clarity session ID when available.
+    const claritySessionId = String(payload.clarity_session_id || '').trim() || null;
+    const clarityPlaybackUrl = String(payload.clarity_playback_url || '').trim() || null;
+    if (claritySessionId) enrichedSessionCreate.claritySessionId = claritySessionId;
+    if (clarityPlaybackUrl) enrichedSessionCreate.clarityPlaybackUrl = clarityPlaybackUrl;
+    if (claritySessionId) enrichedSessionUpdate.claritySessionId = claritySessionId;
+    if (clarityPlaybackUrl) enrichedSessionUpdate.clarityPlaybackUrl = clarityPlaybackUrl;
+
     let sessionPersisted = false;
     try {
       await prisma.session.upsert({
@@ -414,12 +422,16 @@ router.post('/', async (req, res) => {
               ipHash: undefined,
               ga4SessionSource: undefined,
               sessionEndAt: undefined,
+              claritySessionId: undefined,
+              clarityPlaybackUrl: undefined,
             },
             update: {
               ...enrichedSessionUpdate,
               ipHash: undefined,
               ga4SessionSource: undefined,
               sessionEndAt: undefined,
+              claritySessionId: undefined,
+              clarityPlaybackUrl: undefined,
             }
           });
           sessionPersisted = true;

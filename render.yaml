@@ -5,7 +5,7 @@ services:
     branch: main
     autoDeploy: true
     buildCommand: npm ci && npm run build:landing && npm run build:dashboard && npx prisma generate --schema=backend/prisma/schema.prisma
-    startCommand: npm run prisma:push && npm run db:backfill:layer45 && node backend/index.js
+    startCommand: node backend/scripts/migrate-clarity-columns.js && node backend/scripts/migrate-recordings-schema.js && npm run prisma:push && node backend/scripts/backfill-clarity-urls.js && npm run db:backfill:layer45 && node backend/index.js
     envVars:
       - key: NODE_VERSION
         value: 20
@@ -17,6 +17,17 @@ services:
     autoDeploy: true
     buildCommand: npm ci
     startCommand: npm run worker:mcp
+    envVars:
+      - key: NODE_VERSION
+        value: 20
+
+  - type: worker
+    name: adnova-ai-recording-worker
+    env: node
+    branch: main
+    autoDeploy: true
+    buildCommand: npm ci
+    startCommand: node backend/workers/recordingWorker.js
     envVars:
       - key: NODE_VERSION
         value: 20
