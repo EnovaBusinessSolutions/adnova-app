@@ -6,10 +6,6 @@ const axios = require('axios');
 const FB_VERSION    = process.env.FACEBOOK_API_VERSION || 'v19.0';
 const FB_CAPI_BASE  = `https://graph.facebook.com/${FB_VERSION}`;
 
-function normalizeObject(value) {
-  return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
-}
-
 /**
  * Send a Purchase conversion event to Meta Conversions API.
  *
@@ -26,7 +22,6 @@ async function sendConversion(order, config) {
   // ── event_time: epoch seconds from order date ──────────────────────────────
   const rawDate   = order.platformCreatedAt || order.createdAt;
   const eventTime = Math.floor(new Date(rawDate).getTime() / 1000);
-  const snapshot = normalizeObject(order?.attributionSnapshot);
 
   // ── user_data ──────────────────────────────────────────────────────────────
   // emailHash / phoneHash are already SHA-256(lower+trim) from hashPII(),
@@ -34,14 +29,6 @@ async function sendConversion(order, config) {
   const userData = {};
   if (order.emailHash) userData.em = [order.emailHash];
   if (order.phoneHash) userData.ph = [order.phoneHash];
-  if (snapshot.fbp) userData.fbp = String(snapshot.fbp).trim();
-  if (snapshot.fbc || snapshot._fbc) userData.fbc = String(snapshot.fbc || snapshot._fbc).trim();
-  if (snapshot.client_ip_address || snapshot.client_ip) {
-    userData.client_ip_address = String(snapshot.client_ip_address || snapshot.client_ip).trim();
-  }
-  if (snapshot.user_agent || snapshot.client_user_agent) {
-    userData.client_user_agent = String(snapshot.user_agent || snapshot.client_user_agent).trim();
-  }
 
   // ── custom_data ────────────────────────────────────────────────────────────
   const lineItems = Array.isArray(order.lineItems) ? order.lineItems : [];
@@ -85,30 +72,13 @@ async function sendConversion(order, config) {
   if (testEventCode) body.test_event_code = testEventCode;
 
   // ── POST ───────────────────────────────────────────────────────────────────
-  const url = `${FB_CAPI_BASE}/${pixelId}/events`;
+  const url      = `${FB_CAPI_BASE}/${pixelId}/events`;
+  const response = await axios.post(url, body, {
+    headers: { 'Content-Type': 'application/json' },
+    timeout: 15000,
+  });
 
-  try {
-    const response = await axios.post(url, body, {
-      headers: { 'Content-Type': 'application/json' },
-      timeout: 15000,
-    });
-
-    return { success: true, data: response.data };
-  } catch (error) {
-    const responseData = error?.response?.data || null;
-    const message =
-      responseData?.error?.message ||
-      responseData?.message ||
-      error?.message ||
-      'Meta CAPI request failed';
-
-    console.error('[Meta CAPI Error]', responseData || message);
-    return {
-      success: false,
-      reason: message,
-      data: responseData,
-    };
-  }
+  return { success: true, data: response.data };
 }
 
 module.exports = { sendConversion };

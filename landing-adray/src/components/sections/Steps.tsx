@@ -216,7 +216,7 @@ export default function Steps() {
 
                 <AnimatedSection delay={0.3}>
                     <p className="text-center t-p-sm text-ad-muted mt-12">
-                        🔌 MCP connector for Claude — live now. ChatGPT and Gemini coming Q2 2026.
+                        🔌 Native MCP connectors for Claude, ChatGPT &amp; Gemini — arriving Q2 2026
                     </p>
                 </AnimatedSection>
             </Container>

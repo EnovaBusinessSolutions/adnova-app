@@ -43,16 +43,13 @@ model Account {
   createdAt   DateTime        @default(now()) @map("created_at")
   updatedAt   DateTime        @updatedAt @map("updated_at")
 
-  platformConnections  PlatformConnection[]
-  identityGraphs       IdentityGraph[]
-  sessions             Session[]
-  checkoutSessionMaps  CheckoutSessionMap[]
-  events               Event[]
-  orders               Order[]
-  snapshot             MerchantSnapshot?
-  sessionRecordings    SessionRecording[]
-  abandonmentRiskScores AbandonmentRiskScore[]
-  abandonmentCohorts   AbandonmentCohort[]
+  platformConnections PlatformConnection[]
+  identityGraphs      IdentityGraph[]
+  sessions            Session[]
+  checkoutSessionMaps CheckoutSessionMap[]
+  events              Event[]
+  orders              Order[]
+  snapshot            MerchantSnapshot?
 
   @@map("accounts")
 }
@@ -120,13 +117,10 @@ model Session {
   ttclid         String?
   fbp            String?
   fbc            String?
-  isFirstTouch       Boolean   @map("is_first_touch")
-  startedAt          DateTime  @default(now()) @map("started_at")
-  sessionEndAt       DateTime? @map("session_end_at")
-  lastEventAt        DateTime  @default(now()) @updatedAt @map("last_event_at")
-  claritySessionId   String?   @map("clarity_session_id")
-  clarityPlaybackUrl String?   @map("clarity_playback_url")
-  rrwebRecordingId   String?   @map("rrweb_recording_id")
+  isFirstTouch   Boolean  @map("is_first_touch")
+  startedAt      DateTime @default(now()) @map("started_at")
+  sessionEndAt   DateTime? @map("session_end_at")
+  lastEventAt    DateTime @default(now()) @updatedAt @map("last_event_at")
 
   account Account @relation(fields: [accountId], references: [accountId], onDelete: Cascade)
 
@@ -261,93 +255,4 @@ model FailedJob {
   createdAt   DateTime  @default(now()) @map("created_at")
 
   @@map("failed_jobs")
-}
-
-// ─── BRI: Behavioral Revenue Intelligence ────────────────────────────────────
-
-enum RecordingStatus {
-  RECORDING
-  FINALIZING
-  READY
-  ERROR
-}
-
-enum RecordingOutcome {
-  PURCHASED
-  ABANDONED
-  STILL_BROWSING
-}
-
-model SessionRecording {
-  id                  String            @id @default(uuid())
-  recordingId         String            @unique @map("recording_id")
-  accountId           String            @map("account_id")
-  sessionId           String            @map("session_id")
-  userKey             String            @map("user_key")
-  triggerEvent        String            @default("add_to_cart") @map("trigger_event")
-  triggerAt           DateTime          @map("trigger_at")
-  cartValue           Float?            @map("cart_value")
-  checkoutToken       String?           @map("checkout_token")
-  attributionSnapshot Json?             @map("attribution_snapshot")
-  r2Key               String?           @map("r2_key")
-  r2ChunksPrefix      String?           @map("r2_chunks_prefix")
-  r2Bucket            String?           @map("r2_bucket")
-  durationMs          Int?              @map("duration_ms")
-  chunkCount          Int               @default(0) @map("chunk_count")
-  sizeBytes           BigInt?           @map("size_bytes")
-  status              RecordingStatus   @default(RECORDING)
-  outcome             RecordingOutcome?
-  outcomeAt           DateTime?         @map("outcome_at")
-  orderId             String?           @map("order_id")
-  behavioralSignals   Json?             @map("behavioral_signals")
-  rawErasedAt         DateTime?         @map("raw_erased_at")
-  maskingEnabled      Boolean           @default(true) @map("masking_enabled")
-  createdAt           DateTime          @default(now()) @map("created_at")
-  updatedAt           DateTime          @updatedAt @map("updated_at")
-
-  account Account @relation(fields: [accountId], references: [accountId], onDelete: Cascade)
-
-  @@index([accountId, sessionId])
-  @@index([accountId, status])
-  @@index([accountId, outcome])
-  @@index([accountId, userKey])
-  @@map("session_recordings")
-}
-
-model AbandonmentRiskScore {
-  id            String   @id @default(uuid())
-  sessionId     String   @unique @map("session_id")
-  accountId     String   @map("account_id")
-  userKey       String   @map("user_key")
-  riskScore     Int      @map("risk_score")
-  riskFactors   Json     @map("risk_factors")
-  cartValue     Float?   @map("cart_value")
-  checkoutToken String?  @map("checkout_token")
-  computedAt    DateTime @default(now()) @map("computed_at")
-  expiresAt     DateTime @map("expires_at")
-
-  account Account @relation(fields: [accountId], references: [accountId], onDelete: Cascade)
-
-  @@index([accountId, riskScore])
-  @@index([accountId, computedAt])
-  @@map("abandonment_risk_scores")
-}
-
-model AbandonmentCohort {
-  id                 String   @id @default(uuid())
-  cohortKey          String   @map("cohort_key")
-  accountId          String   @map("account_id")
-  label              String
-  sessionCount       Int      @default(0) @map("session_count")
-  avgCartValue       Float?   @map("avg_cart_value")
-  commonSignals      Json     @map("common_signals")
-  sampleRecordingIds Json     @map("sample_recording_ids")
-  computedAt         DateTime @default(now()) @map("computed_at")
-  dateRange          Json     @map("date_range")
-
-  account Account @relation(fields: [accountId], references: [accountId], onDelete: Cascade)
-
-  @@unique([accountId, cohortKey])
-  @@index([accountId, computedAt])
-  @@map("abandonment_cohorts")
 }

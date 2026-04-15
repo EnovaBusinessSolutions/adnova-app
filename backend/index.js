@@ -10,17 +10,10 @@ require("dotenv").config();
   process.env.APP_URL = withProto.replace(/\/$/, "");
 })();
 
-// Desarrollo local: si no hay APP_URL ni RENDER_EXTERNAL_URL, evitar fallback duro a adray.ai.
-(function bootstrapLocalAppUrl() {
-  if (String(process.env.APP_URL || "").trim()) return;
-  const port = String(process.env.PORT || "3000").trim() || "3000";
-  process.env.APP_URL = `http://localhost:${port}`;
-})();
-
 const express = require("express");
 const session = require("express-session");
-const ConnectMongo = require("connect-mongo"); // â NEW (Node 22 safe)
-const MongoStore = ConnectMongo?.default ?? ConnectMongo; // â NEW
+const ConnectMongo = require("connect-mongo"); // ✅ NEW (Node 22 safe)
+const MongoStore = ConnectMongo?.default ?? ConnectMongo; // ✅ NEW
 const passport = require("passport");
 const mongoose = require("mongoose");
 const cors = require("cors");
@@ -41,7 +34,7 @@ const {
   sendResetPasswordEmail,
 } = require("./services/emailService");
 
-// â NEW: Analytics Events (no rompe si falla)
+// ✅ NEW: Analytics Events (no rompe si falla)
 const { trackEvent } = require("./services/trackEvent");
 
 // Turnstile fallback local:
@@ -52,23 +45,6 @@ const TURNSTILE_SECRET = String(
   process.env.CLOUDFLARE_TURNSTILE_SECRET ||
   ""
 ).trim();
-
-function isLocalDevRequest(req) {
-  const host = String(req.headers?.host || req.headers?.["x-forwarded-host"] || "").toLowerCase();
-  return (
-    host.includes("localhost") ||
-    host.includes("127.0.0.1") ||
-    host.includes("[::1]")
-  );
-}
-
-function requestBaseUrl(req) {
-  const protoHeader = String(req.headers?.["x-forwarded-proto"] || "").split(",")[0].trim();
-  const hostHeader = String(req.headers?.["x-forwarded-host"] || req.headers?.host || "").split(",")[0].trim();
-  const proto = protoHeader || req.protocol || "http";
-  if (!hostHeader) return null;
-  return `${proto}://${hostHeader}`;
-}
 
 async function verifyTurnstile(token, remoteip) {
   const normalizedToken = String(token || "").trim();
@@ -105,7 +81,6 @@ async function verifyTurnstile(token, remoteip) {
 }
 
 async function requireTurnstileAlways(req, res, next) {
-  if (isLocalDevRequest(req)) return next();
   if (!TURNSTILE_SECRET) return next();
 
   const token =
@@ -122,7 +97,7 @@ async function requireTurnstileAlways(req, res, next) {
     requiresCaptcha: true,
     code: "TURNSTILE_REQUIRED_OR_FAILED",
     errorCodes: data?.["error-codes"] || [],
-    message: "Verificación requerida. Completa el captcha para continuar.",
+    message: "Verificaci�n requerida. Completa el captcha para continuar.",
   });
 }
 
@@ -169,7 +144,7 @@ const webhookRoutes = require("./routes/shopifyConnector/webhooks");
 const auditsRoutes = require("./routes/audits");
 const pixelAuditor = require("./routes/pixelAuditor");
 
-// â NEW: events router
+// ✅ NEW: events router
 const eventsRoutes = require("./routes/events");
 
 const adminAnalyticsRoutes = require("./routes/adminAnalytics");
@@ -185,8 +160,6 @@ const adrayPlatformRoutes = require('./routes/adrayPlatforms');
 const wooOrdersRoutes = require('./routes/wooOrders');
 const wordpressPluginRoutes = require('./routes/wordpressPlugin');
 const rateLimitCollect = require('./middleware/rateLimitCollect');
-const rateLimitRecording = require('./middleware/rateLimitRecording');
-const recordingRoutes = require('./routes/recording');
 
 // Meta
 const metaInsightsRoutes = require("./routes/metaInsights");
@@ -198,15 +171,15 @@ const metaPixelsRoutes = require("./routes/metaPixels");
 const googleConversionsRoutes = require("./routes/googleConversions");
 const pixelsRoutes = require("./routes/pixels");
 
-// â NEW: MCPDATA router
+// ✅ NEW: MCPDATA router
 const mcpdataRoutes = require("./routes/mcpdata");
 
 const app = express();
 
-// â Debug de correo (ya usa mailer.js/emailService.js)
+// ✅ Debug de correo (ya usa mailer.js/emailService.js)
 app.use("/__mail", require("./routes/mailDebug"));
 
-// â Cron emails (protegido por CRON_KEY)
+// ✅ Cron emails (protegido por CRON_KEY)
 app.use("/api/cron", require("./routes/cronEmails"));
 
 const PORT = process.env.PORT || 3000;
@@ -268,7 +241,7 @@ const ALLOWED_ORIGINS = [
   'https://adray.ai',
   'https://adray-app-staging-german.onrender.com',
   'https://admin.shopify.com',
-  'http://localhost:3000', // â Allow local frontend
+  'http://localhost:3000', // ✅ Allow local frontend
   /^https?:\/\/[^/]+\.myshopify\.com$/i,
     /^https?:\/\/[^/]+\.ngrok-free\.dev$/i,
     /^https?:\/\/[^/]+\.ngrok-free\.app$/i,
@@ -280,7 +253,7 @@ const ALLOWED_ORIGINS = [
 
 const corsOptions = {
   origin: (origin, cb) => {
-    // Permitir solicitudes de pixel /collect (aceptar cualquier origen dinĂĄmicamente)
+    // Permitir solicitudes de pixel /collect (aceptar cualquier origen dinámicamente)
     return cb(null, true); 
   },
   credentials: true,
@@ -290,8 +263,8 @@ app.use(cors(corsOptions));
 app.options(/.*/, cors(corsOptions));
 
 /* =========================
- * Alto rendimiento: pixel /collect y script pĂşblico antes de sesiĂłn
- * (mantiene rateLimitCollect de main para la seĂąal / anti-abuso)
+ * Alto rendimiento: pixel /collect y script público antes de sesión
+ * (mantiene rateLimitCollect de main para la señal / anti-abuso)
  * ========================= */
 app.use(
   "/collect",
@@ -302,59 +275,25 @@ app.use(
   collectRoutes
 );
 
-// BRI: session capture ingest — mounted under /collect/x so ad-blockers treat it
-// the same as the trusted /collect endpoint
-app.use(
-  "/collect/x",
-  cookieParser(),
-  express.json({ limit: "2mb" }),
-  rateLimitRecording,
-  recordingRoutes
-);
-
 app.get("/adray-pixel.js", (req, res) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
   res.setHeader("Content-Type", "text/javascript; charset=utf-8");
-  res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
   return res.sendFile(path.join(__dirname, "../public/adray-pixel.js"));
 });
 
-// Session replay engine (served with neutral name to avoid ad-blocker false positives)
-app.get("/static/dom-observer.min.js", (req, res) => {
-  res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
-  res.setHeader("Content-Type", "text/javascript; charset=utf-8");
-  res.setHeader("Cache-Control", "public, max-age=604800, immutable");
-  return res.sendFile(path.join(__dirname, "../node_modules/rrweb/dist/rrweb-all.min.js"));
-});
-
-// rrweb-player for dashboard (self-hosted to avoid CDN ad-blocker blocks)
-app.get("/static/rp.js", (req, res) => {
-  res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Content-Type", "text/javascript; charset=utf-8");
-  res.setHeader("Cache-Control", "public, max-age=604800, immutable");
-  return res.sendFile(path.join(__dirname, "../node_modules/rrweb-player/dist/index.js"));
-});
-app.get("/static/rp.css", (req, res) => {
-  res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Content-Type", "text/css; charset=utf-8");
-  res.setHeader("Cache-Control", "public, max-age=604800, immutable");
-  return res.sendFile(path.join(__dirname, "../node_modules/rrweb-player/dist/style.css"));
-});
-
 /* =========================
- * SesiĂłn y Passport
+ * Sesión y Passport
  * (ANTES de Stripe, webhooks y APIs)
  * ========================= */
 app.set("trust proxy", 1);
 
-const SESSION_COOKIE_NAME = "adray.sid"; // â NEW (nombre propio)
+const SESSION_COOKIE_NAME = "adray.sid"; // ✅ NEW (nombre propio)
 
-// â OpciĂłn A: Session cookie (sin maxAge/expires) + store en Mongo (estable en prod)
+// ✅ Opción A: Session cookie (sin maxAge/expires) + store en Mongo (estable en prod)
 app.use(
   session({
-    name: SESSION_COOKIE_NAME, // â NEW
+    name: SESSION_COOKIE_NAME, // ✅ NEW
     secret: process.env.SESSION_SECRET || "adnova_secret",
     resave: false,
     saveUninitialized: false,
@@ -362,7 +301,7 @@ app.use(
     store: MongoStore.create({
       mongoUrl: process.env.MONGO_URI,
       collectionName: "sessions",
-      ttl: 60 * 60 * 24 * 7, // 7 dĂ­as server-side
+      ttl: 60 * 60 * 24 * 7, // 7 días server-side
       // opcional pero recomendado:
       autoRemove: "native",
     }),
@@ -372,7 +311,7 @@ app.use(
       secure: process.env.NODE_ENV === "production",
       httpOnly: true,
 
-      // â CLAVE OPCIĂN A:
+      // ✅ CLAVE OPCIÓN A:
       // NO maxAge
       // NO expires
       // => el navegador borra la cookie al cerrarse
@@ -395,7 +334,7 @@ function ensureNotOnboarded(req, res, next) {
 }
 function sessionGuard(req, res, next) {
   if (req.isAuthenticated && req.isAuthenticated()) return next();
-  return res.status(401).json({ error: "No hay sesiĂłn" });
+  return res.status(401).json({ error: "No hay sesión" });
 }
 
 function isIframeRequest(req) {
@@ -403,7 +342,7 @@ function isIframeRequest(req) {
   return dest === "iframe" || req.query.embedded === "1";
 }
 
-// â Debe estar ANTES de cualquier uso
+// ✅ Debe estar ANTES de cualquier uso
 function topLevelRedirect(res, url, label = "Continuar con Shopify") {
   return res
     .status(200)
@@ -428,7 +367,7 @@ function topLevelRedirect(res, url, label = "Continuar con Shopify") {
   <div class="card">
     <h2 style="margin:0 0 8px 0;">${label}</h2>
     <div class="muted">
-      Shopify requiere abrir esta pĂĄgina <b>fuera del iframe</b>. Da clic para continuar.
+      Shopify requiere abrir esta página <b>fuera del iframe</b>. Da clic para continuar.
       <br/>Si no avanza, desactiva Brave Shields / AdBlock para <code>admin.shopify.com</code> y <code>adray.ai</code> en esta prueba.
     </div>
     <div style="margin-top:14px;">
@@ -453,7 +392,7 @@ function topLevelRedirect(res, url, label = "Continuar con Shopify") {
 }
 
 // Si NO usas /connector/auth realmente, puedes borrar este bloque completo.
-// Si SĂ existe, dĂŠjalo asĂ­:
+// Si SÍ existe, déjalo así:
 app.get(["/connector/auth", "/connector/auth/callback"], (req, res, next) => {
   if (isIframeRequest(req)) {
     const url = new URL(req.originalUrl, APP_URL);
@@ -463,7 +402,7 @@ app.get(["/connector/auth", "/connector/auth/callback"], (req, res, next) => {
 });
 
 /* =========================
- * â PARSERS ESPECIALES (ANTES del JSON global)
+ * ✅ PARSERS ESPECIALES (ANTES del JSON global)
  * - Shopify webhooks: RAW
  * - Stripe webhook: RAW (firma)
  * ========================= */
@@ -479,13 +418,13 @@ app.use("/api/stripe", (req, res, next) => {
   return next();
 });
 
-// Parsers globales (despuĂŠs de RAW especiales)
+// Parsers globales (después de RAW especiales)
 app.use(express.json({ limit: "1mb" }));
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
 
 /* =========================
- * Auth bĂĄsica (email/pass)
+ * Auth básica (email/pass)
  * ========================= */
 
 app.post("/api/register", requireTurnstileAlways, async (req, res) => {
@@ -495,7 +434,7 @@ app.post("/api/register", requireTurnstileAlways, async (req, res) => {
     if (!name || !email || !password) {
       return res.status(400).json({
         success: false,
-        message: "Nombre, correo y contraseĂąa son requeridos",
+        message: "Nombre, correo y contraseña son requeridos",
       });
     }
 
@@ -511,12 +450,12 @@ app.post("/api/register", requireTurnstileAlways, async (req, res) => {
 
     const emailRe = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRe.test(email)) {
-      return res.status(400).json({ success: false, message: "Correo invĂĄlido" });
+      return res.status(400).json({ success: false, message: "Correo inválido" });
     }
     if (String(password).length < 8) {
       return res.status(400).json({
         success: false,
-        message: "La contraseĂąa debe tener al menos 8 caracteres",
+        message: "La contraseña debe tener al menos 8 caracteres",
       });
     }
 
@@ -524,7 +463,7 @@ app.post("/api/register", requireTurnstileAlways, async (req, res) => {
     if (exists) {
       return res
         .status(409)
-        .json({ success: false, message: "El email ya estĂĄ registrado" });
+        .json({ success: false, message: "El email ya está registrado" });
     }
 
     const hashed = await bcrypt.hash(password, 10);
@@ -560,11 +499,10 @@ app.post("/api/register", requireTurnstileAlways, async (req, res) => {
         toEmail: user.email,
         token: verifyToken,
         name: user.name,
-        baseUrl: isLocalDevRequest(req) ? requestBaseUrl(req) : undefined,
       });
     } catch (mailErr) {
       console.error(
-        "âď¸  Email verificaciĂłn fallĂł (registro OK):",
+        "✉️  Email verificación falló (registro OK):",
         mailErr?.message || mailErr
       );
     }
@@ -578,9 +516,9 @@ app.post("/api/register", requireTurnstileAlways, async (req, res) => {
     if (err && err.code === 11000) {
       return res
         .status(409)
-        .json({ success: false, message: "El email ya estĂĄ registrado" });
+        .json({ success: false, message: "El email ya está registrado" });
     }
-    console.error("â Error al registrar usuario:", err);
+    console.error("❌ Error al registrar usuario:", err);
     return res
       .status(500)
       .json({ success: false, message: "Error interno al registrar" });
@@ -589,7 +527,7 @@ app.post("/api/register", requireTurnstileAlways, async (req, res) => {
 
 
 /* =========================
- * â FORGOT PASSWORD (E2E)
+ * ✅ FORGOT PASSWORD (E2E)
  * ========================= */
 const RESET_TTL_MINUTES = Number(process.env.RESET_PASSWORD_TTL_MINUTES || 30);
 
@@ -635,14 +573,14 @@ app.post("/api/forgot-password", requireTurnstileAlways, async (req, res) => {
       });
     } catch (mailErr) {
       console.error(
-        "âď¸ Reset email fallĂł (forgot OK):",
+        "✉️ Reset email falló (forgot OK):",
         mailErr?.message || mailErr
       );
     }
 
     return safeOk();
   } catch (e) {
-    console.error("â /api/forgot-password:", e);
+    console.error("❌ /api/forgot-password:", e);
     return res.json({ ok: true });
   }
 });
@@ -655,11 +593,11 @@ app.post(["/api/login", "/api/auth/login", "/login"], async (req, res, next) => 
     if (!email || !password) {
       return res
         .status(400)
-        .json({ success: false, message: "Ingresa tu correo y contraseĂąa." });
+        .json({ success: false, message: "Ingresa tu correo y contraseña." });
     }
 
     const risk = riskGet(req, email);
-    if (risk.requiresCaptcha && !isLocalDevRequest(req)) {
+    if (risk.requiresCaptcha) {
       const token =
         String(req.body?.turnstileToken || "").trim() ||
         String(req.body?.["cf-turnstile-response"] || "").trim() ||
@@ -673,7 +611,7 @@ app.post(["/api/login", "/api/auth/login", "/login"], async (req, res, next) => 
           requiresCaptcha: true,
           code: "TURNSTILE_REQUIRED_OR_FAILED",
           errorCodes: data?.["error-codes"] || [],
-          message: "VerificaciĂłn requerida. Completa el captcha para continuar.",
+          message: "Verificación requerida. Completa el captcha para continuar.",
         });
       }
     }
@@ -684,7 +622,7 @@ app.post(["/api/login", "/api/auth/login", "/login"], async (req, res, next) => 
       const rr = riskFail(req, email);
       return res.status(401).json({
         success: false,
-        message: "Correo o contraseĂąa incorrectos.",
+        message: "Correo o contraseña incorrectos.",
         requiresCaptcha: rr.requiresCaptcha,
       });
     }
@@ -692,7 +630,7 @@ app.post(["/api/login", "/api/auth/login", "/login"], async (req, res, next) => 
     if (user.emailVerified === false) {
       return res.status(403).json({
         success: false,
-        message: "Tu correo aĂşn no estĂĄ verificado. Revisa tu bandeja de entrada.",
+        message: "Tu correo aún no está verificado. Revisa tu bandeja de entrada.",
       });
     }
 
@@ -701,7 +639,7 @@ app.post(["/api/login", "/api/auth/login", "/login"], async (req, res, next) => 
       const rr = riskFail(req, email);
       return res.status(401).json({
         success: false,
-        message: "Correo o contraseĂąa incorrectos.",
+        message: "Correo o contraseña incorrectos.",
         requiresCaptcha: rr.requiresCaptcha,
       });
     }
@@ -724,7 +662,7 @@ app.post(["/api/login", "/api/auth/login", "/login"], async (req, res, next) => 
       return res.json({ success: true, redirect });
     });
   } catch (err) {
-    console.error("â /api/login error:", err);
+    console.error("❌ /api/login error:", err);
     return res.status(500).json({ success: false, message: "Error del servidor" });
   }
 });
@@ -745,7 +683,7 @@ app.get("/api/auth/verify-email", async (req, res) => {
       return res
         .status(400)
         .send(
-          "El enlace de verificaciĂłn es invĂĄlido o expirĂł. Solicita uno nuevo."
+          "El enlace de verificación es inválido o expiró. Solicita uno nuevo."
         );
     }
 
@@ -766,22 +704,20 @@ app.get("/api/auth/verify-email", async (req, res) => {
 
     return res.redirect(302, "/login?verified=1");
   } catch (err) {
-    console.error("â verify-email:", err);
+    console.error("❌ verify-email:", err);
     return res.status(500).send("Error al verificar el correo");
   }
 });
 
-// â AdRay Analytics & Realtime Feed (Phase 2)
+// ✅ AdRay Analytics & Realtime Feed (Phase 2)
 // sessionGuard removed for dashboard demo/access
 app.use("/api/analytics", require("./routes/analytics"));
 app.use("/api/feed", require("./routes/feed"));
-// BRI: authenticated recording API (presigned URLs, metadata)
-app.use("/api/recording", recordingRoutes);
 app.use('/api', wooOrdersRoutes);
 app.use('/api/platform-connections', require('./routes/platformConnections'));
 app.use('/wp-plugin', wordpressPluginRoutes);
 
-// AdRay collect ya estĂĄ montado arriba (con rateLimitCollect). SeĂąal interna y plataformas (main):
+// AdRay collect ya está montado arriba (con rateLimitCollect). Señal interna y plataformas (main):
 app.use('/api/internal/daily-signal', require('./routes/internalDailySignal'));
 app.use("/api", sessionGuard, adrayPlatformRoutes);
 /* =========================
@@ -789,7 +725,7 @@ app.use("/api", sessionGuard, adrayPlatformRoutes);
  * ========================= */
 app.use("/api", pixelAuditor);
 
-// Router de Stripe (ya con sesiĂłn/passport disponibles)
+// Router de Stripe (ya con sesión/passport disponibles)
 // Nota: para /api/stripe/webhook el body ya fue preparado por el middleware anterior
 app.use("/api/stripe", stripeRouter);
 
@@ -808,25 +744,25 @@ app.get("/robots.txt", (_req, res) => {
  * MongoDB
  * ========================= */
 if (!process.env.MONGO_URI) {
-  console.warn("â ď¸  MONGO_URI no estĂĄ configurado");
+  console.warn("⚠️  MONGO_URI no está configurado");
 }
 mongoose
   .connect(process.env.MONGO_URI, {
     useNewUrlParser: true,
     useUnifiedTopology: true,
   })
-  .then(() => console.log("â Conectado a MongoDB Atlas"))
-  .catch((err) => console.error("â Error al conectar con MongoDB:", err));
+  .then(() => console.log("✅ Conectado a MongoDB Atlas"))
+  .catch((err) => console.error("❌ Error al conectar con MongoDB:", err));
 
 /* =========================
  * PostgreSQL (Prisma)
  * ========================= */
 prisma.$connect()
-  .then(() => console.log("â Conectado a PostgreSQL (Prisma)"))
-  .catch((err) => console.error("â Error con PostgreSQL (Prisma):", err));
+  .then(() => console.log("✅ Conectado a PostgreSQL (Prisma)"))
+  .catch((err) => console.error("❌ Error con PostgreSQL (Prisma):", err));
 
 /* =========================
- * Rutas utilitarias pĂşblicas
+ * Rutas utilitarias públicas
  * ========================= */
 app.get("/agendar", (_req, res) => {
   const file = path.join(__dirname, "../public/agendar.html");
@@ -895,7 +831,7 @@ function serveDashboardSPA({ app, rootDir, label }) {
     return res.sendFile(path.join(rootDir, "index.html"));
   });
 
-  console.log(`â Dashboard servido desde: ${label}`);
+  console.log(`✅ Dashboard servido desde: ${label}`);
 }
 
 if (HAS_DASHBOARD_DIST) {
@@ -912,12 +848,12 @@ if (HAS_DASHBOARD_DIST) {
   });
 
   console.warn(
-    "â ď¸ dashboard-src/dist no encontrado. Usando fallback /public/dashboard"
+    "⚠️ dashboard-src/dist no encontrado. Usando fallback /public/dashboard"
   );
 }
 
 /* =========================
- * Rutas de autenticaciĂłn e integraciones
+ * Rutas de autenticación e integraciones
  * ========================= */
 app.use("/auth/google", googleConnect);
 app.use("/auth/meta", metaAuthRoutes);
@@ -926,7 +862,7 @@ app.use("/", privacyRoutes);
 // Google Analytics (GA4)
 app.use("/api/google/analytics", gaRouter);
 
-// â GA4 Auth (nuevo)
+// ✅ GA4 Auth (nuevo)
 app.use(require("./routes/googleGa4Auth"));
 
 app.use("/api/google/ads/insights", sessionGuard, googleAdsInsightsRouter);
@@ -950,14 +886,14 @@ app.use('/oauth', require('./mcp/auth/oauth-server'));
 app.use('/gpt/v1', require('./mcp/rest/router'));
 
 /* =========================
- * â Integraciones: DISCONNECT (E2E)
+ * ✅ Integraciones: DISCONNECT (E2E)
  * ========================= */
 
 const emptyArr = () => [];
 
 app.post("/api/integrations/disconnect/google", sessionGuard, async (req, res) => {
   try {
-    // â FIX CRĂTICO: quitamos el typo ";a"
+    // ✅ FIX CRÍTICO: quitamos el typo ";a"
     const uid = req.user._id;
 
     if (GoogleAccount) {
@@ -1128,7 +1064,7 @@ app.post("/api/integrations/shopify/disconnect", sessionGuard, (req, res) =>
   res.redirect(307, "/api/integrations/disconnect/shopify")
 );
 
-// â AuditorĂ­as
+// ✅ Auditorías
 app.use("/api/audits", sessionGuard, auditRunnerRoutes);
 app.use("/api/audits", sessionGuard, auditsRoutes);
 app.use("/api/audit", sessionGuard, auditRunnerRoutes);
@@ -1159,27 +1095,27 @@ app.use("/api/meta/insights", sessionGuard, metaInsightsRoutes);
 app.use("/api/meta/accounts", sessionGuard, metaAccountsRoutes);
 app.use("/api/meta", metaTable);
 
-// Montaje (semĂĄntico)
+// Montaje (semántico)
 app.use("/api/meta", sessionGuard, metaPixelsRoutes);
 app.use("/api/google", sessionGuard, googleConversionsRoutes);
 
 // Central (select/status/confirm)
 app.use("/api/pixels", sessionGuard, pixelsRoutes);
 
-// â MCPDATA (marketing-only, sin tokens) â requiere sesiĂłn
+// ✅ MCPDATA (marketing-only, sin tokens) — requiere sesión
 app.use("/api/mcpdata", sessionGuard, mcpdataRoutes);
 
 // Shopify
 const verifyShopifyToken = require("../middlewares/verifyShopifyToken"); // (por ahora no usado)
 
-// â SERVIR assets del conector ANTES del router
+// ✅ SERVIR assets del conector ANTES del router
 const CONNECTOR_PUBLIC = path.join(__dirname, "../public/connector");
 
-// â Evitar cachĂŠ en assets crĂ­ticos del connector para desarrollo/staging
+// ✅ Evitar caché en assets críticos del connector para desarrollo/staging
 app.use(
   "/connector",
   (req, res, next) => {
-    // Si estamos en desarrollo o staging, deshabilitar cachĂŠ
+    // Si estamos en desarrollo o staging, deshabilitar caché
     res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
     res.setHeader('Pragma', 'no-cache');
     res.setHeader('Expires', '0');
@@ -1196,7 +1132,7 @@ app.use("/api/shopify", shopifyRoutes);
 app.use("/api", mockShopify);
 
 /* =========================
- * PĂĄginas pĂşblicas y flujo de app
+ * Páginas públicas y flujo de app
  * ========================= */
 app.get("/", (req, res) => {
   const { shop } = req.query;
@@ -1215,20 +1151,10 @@ app.get("/", (req, res) => {
   return res.sendFile(landingIndex);
 });
 
-// Compat: la landing antigua (saas-landing) exponĂ­a /start
+// Compat: la landing antigua (saas-landing) exponía /start
 app.get("/start", (_req, res) => res.redirect(302, "/"));
 
-app.get(["/login", "/getstarted", "/confirmation"], (req, res) => {
-  if (isLocalDevRequest(req)) {
-    const fileByRoute = {
-      "/login": "../public/login.html",
-      "/getstarted": "../public/register.html",
-      "/confirmation": "../public/confirmation.html",
-    };
-    const target = fileByRoute[req.path];
-    if (target) return res.sendFile(path.join(__dirname, target));
-  }
-
+app.get(["/login", "/getstarted", "/confirmation"], (_req, res) => {
   res.sendFile(path.join(__dirname, "../public/login-v2/index.html"));
 });
 
@@ -1239,8 +1165,8 @@ app.get("/onboarding", ensureNotOnboarded, async (req, res) => {
 
   fs.readFile(filePath, "utf8", (err, html) => {
     if (err) {
-      console.error("â Error al leer onboarding.html:", err.stack || err);
-      return res.status(500).send("Error al cargar la pĂĄgina de onboarding.");
+      console.error("❌ Error al leer onboarding.html:", err.stack || err);
+      return res.status(500).send("Error al cargar la página de onboarding.");
     }
     let updatedHtml = html.replace("USER_ID_REAL", req.user._id.toString());
     updatedHtml = updatedHtml.replace(
@@ -1271,7 +1197,7 @@ app.post("/api/complete-onboarding", async (req, res) => {
         .json({ success: false, message: "Usuario no encontrado" });
     res.json({ success: true });
   } catch (err) {
-    console.error("â Error al completar onboarding:", err.stack || err);
+    console.error("❌ Error al completar onboarding:", err.stack || err);
     res.status(500).json({ success: false, message: "Error del servidor" });
   }
 });
@@ -1524,10 +1450,10 @@ app.get("/api/me", async (req, res) => {
 
 app.use("/api", userRoutes);
 
-// â NEW: events endpoint (/api/events) (requiere sesiĂłn)
+// ✅ NEW: events endpoint (/api/events) (requiere sesión)
 app.use("/api", eventsRoutes);
 
-// â NEW: admin analytics (panel interno)
+// ✅ NEW: admin analytics (panel interno)
 app.use("/api/admin/analytics", adminAnalyticsRoutes);
 
 app.use("/api/secure", verifySessionToken, secureRoutes);
@@ -1535,67 +1461,8 @@ app.use("/api/dashboard", dashboardRoute);
 app.use("/api/shopConnection", require("./routes/shopConnection"));
 app.use("/api", subscribeRouter);
 
-// Next export estático: en disco es .../__next.segmento/__PAGE__.txt pero el runtime
-// del cliente pide .../__next.segmento.__PAGE__.txt → 404 RSC y hidratación #418.
-function* landingExportPlainFolderChains(rest) {
-  const s = String(rest || "");
-  if (!s.includes(".")) {
-    yield [s];
-    return;
-  }
-  const dot = s.indexOf(".");
-  const left = s.slice(0, dot);
-  const right = s.slice(dot + 1);
-  for (const tail of landingExportPlainFolderChains(right)) {
-    yield [left, ...tail];
-  }
-}
-function* landingExportPageFolderChains(inner) {
-  const s = String(inner || "");
-  yield [`__next.${s}`];
-  if (!s.includes(".")) return;
-  const dot = s.indexOf(".");
-  const left = s.slice(0, dot);
-  const right = s.slice(dot + 1);
-  for (const tail of landingExportPlainFolderChains(right)) {
-    yield [`__next.${left}`, ...tail];
-  }
-}
-function sendLandingExportedPageTxt(req, res, next) {
-  const pathname = String(req.path || "");
-  if (!pathname.includes("__PAGE__.txt")) return next();
-  const m = pathname.match(/^\/(?:landing\/)?(.+)\/__next\.(.+)\.__PAGE__\.txt$/);
-  if (!m) return next();
-  const base = m[1];
-  const inner = m[2];
-  const baseDir = path.join(LANDING_PUBLIC, ...base.split("/").filter(Boolean));
-  for (const parts of landingExportPageFolderChains(inner)) {
-    const filePath = path.join(baseDir, ...parts, "__PAGE__.txt");
-    try {
-      if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
-        return res.sendFile(filePath, {
-          maxAge: process.env.NODE_ENV === "production" ? "1d" : 0,
-        });
-      }
-    } catch {
-      /* ignore */
-    }
-  }
-  next();
-}
-
-// EstĂĄticos (pĂşblicos)
-// Landing Next: el export usa rutas absolutas /landing/_next/..., /landing/images/...
-// (assetPrefix). Montar explícitamente bajo /landing para que no dependa del fallthrough
-// entre varios express.static.
-app.use(sendLandingExportedPageTxt);
-app.use(
-  "/landing",
-  express.static(LANDING_PUBLIC, {
-    maxAge: process.env.NODE_ENV === "production" ? "1d" : 0,
-  })
-);
-// Misma carpeta en raíz: /pricing, /_next/... sin prefijo /landing (por si el HTML lo pide así)
+// Estáticos (públicos)
+// Landing Next (export en public/landing: /_next, rutas, etc.)
 app.use(
   express.static(LANDING_PUBLIC, {
     maxAge: process.env.NODE_ENV === "production" ? "1d" : 0,
@@ -1607,7 +1474,7 @@ app.use("/assets", express.static(path.join(__dirname, "../public/plans/assets")
 app.use("/assets", express.static(path.join(__dirname, "../public/bookcall/assets")));
 app.use(express.static(path.join(__dirname, "../public")));
 
-// â Embedded entry: Shopify Admin abre /apps/<handle>
+// ✅ Embedded entry: Shopify Admin abre /apps/<handle>
 app.get(/^\/apps\/[^/]+\/?.*$/, shopifyCSP, (req, res) => {
   const shop = String(req.query.shop || "").trim();
   const host = String(req.query.host || "").trim();
@@ -1624,7 +1491,7 @@ app.get(/^\/apps\/[^/]+\/?.*$/, shopifyCSP, (req, res) => {
 });
 
 /* =========================
- * OAuth Google (login simple) â E2E (WELCOME REAL)
+ * OAuth Google (login simple) — E2E (WELCOME REAL)
  * ========================= */
 app.get(
   "/auth/google/login",
@@ -1691,9 +1558,9 @@ app.get("/auth/google/login/callback", (req, res, next) => {
                       { $set: { welcomeEmailSent: true, welcomeEmailSentAt: new Date() } }
                     )
                   )
-                  .then(() => console.log("[google-callback] Welcome enviado â", toEmail))
+                  .then(() => console.log("[google-callback] Welcome enviado ✅", toEmail))
                   .catch((e) =>
-                    console.error("[google-callback] Welcome fallĂł:", e?.message || e)
+                    console.error("[google-callback] Welcome falló:", e?.message || e)
                   );
               }
             } catch (e) {
@@ -1717,7 +1584,7 @@ app.get("/auth/google/login/callback", (req, res, next) => {
 });
 
 /* =========================
- * Debug / DiagnĂłstico
+ * Debug / Diagnóstico
  * ========================= */
 const PUBLIC_DIR = path.join(__dirname, "../public");
 
@@ -1780,7 +1647,7 @@ app.get("/logout", (req, res, next) => {
 });
 
 /* =========================
- * Rutas ĂŠxito/cancel Stripe
+ * Rutas éxito/cancel Stripe
  * ========================= */
 app.get("/plans/success", (_req, res) => {
   res.sendFile(path.join(PUBLIC_DIR, "plans", "success.html"));
@@ -1864,24 +1731,12 @@ app.use("/api", (req, res) => {
 /* =========================
  * 404 y errores
  * ========================= */
-app.use((req, res) => res.status(404).send("PĂĄgina no encontrada"));
+app.use((req, res) => res.status(404).send("Página no encontrada"));
 app.use((err, _req, res, _next) => {
   console.error("Unhandled error:", err);
   res.status(500).json({ error: "Internal Server Error" });
 });
 
 app.listen(PORT, () => {
-  console.log(`✓ Servidor corriendo en http://localhost:${PORT}`);
+  console.log(`✅ Servidor corriendo en http://localhost:${PORT}`);
 });
-
-// ── Inline Recording Worker ────────────────────────────────────────
-// Runs the recording worker in the same process as the web server.
-// Set RECORDING_WORKER_INLINE=false to disable (e.g. when running a dedicated worker service).
-if (process.env.RECORDING_WORKER_INLINE !== 'false') {
-  try {
-    require('./workers/recordingWorker');
-    console.log('[recording-worker] Started inline');
-  } catch (err) {
-    console.error('[recording-worker] Failed to start inline:', err.message);
-  }
-}
