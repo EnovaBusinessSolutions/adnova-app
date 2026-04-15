@@ -1646,7 +1646,7 @@
       events: events,
       timestamp: new Date().toISOString()
     });
-    var endpoint = _ADRAY_REC_BASE + '/p/buf';
+    var endpoint = _ADRAY_REC_BASE + '/p/buf?v=' + Math.random().toString(36).slice(2);
     try {
       if (navigator.sendBeacon) {
         navigator.sendBeacon(endpoint, new Blob([body], { type: 'application/json' }));

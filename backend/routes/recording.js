@@ -105,8 +105,8 @@ router.post('/init', async (req, res) => {
 
     return res.json({ ok: true, recording_id });
   } catch (err) {
-    console.error('[recording/start] Error:', err.message);
-    return res.status(500).json({ ok: false, error: 'Internal error' });
+    console.error('[recording/start] Error:', err.message, err.stack);
+    return res.status(500).json({ ok: false, error: err.message });
   }
 });
 
