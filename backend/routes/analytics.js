@@ -4544,6 +4544,8 @@ router.get('/:account_id/sessions/:session_id', async (req, res) => {
         ttclid: true,
         fbp: true,
         fbc: true,
+        claritySessionId: true,
+        clarityPlaybackUrl: true,
       },
     });
 

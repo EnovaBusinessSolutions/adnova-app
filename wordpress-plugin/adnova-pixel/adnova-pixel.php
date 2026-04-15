@@ -18,6 +18,7 @@ final class Adnova_Pixel_Plugin {
     const VERSION = '1.2.3';
     const OPTION_SCRIPT_URL = 'adnova_pixel_script_url';
     const OPTION_SITE_ID = 'adnova_pixel_site_id';
+    const OPTION_CLARITY_ID = 'adnova_pixel_clarity_id';
     const OPTION_BACKFILL_DONE = 'adnova_pixel_backfill_done';
     const DEFAULT_SCRIPT_URL = 'https://adray-app-staging-german.onrender.com/adray-pixel.js';
     const DEFAULT_COLLECT_URL = 'https://adray-app-staging-german.onrender.com/collect';
@@ -30,6 +31,8 @@ final class Adnova_Pixel_Plugin {
         add_action('wp_enqueue_scripts', array(__CLASS__, 'enqueue_pixel_script'), 100);
         add_action('wp_footer', array(__CLASS__, 'ensure_pixel_fallback_tag'), 999);
         add_filter('script_loader_tag', array(__CLASS__, 'inject_script_attributes'), 10, 3);
+        add_action('admin_menu', array(__CLASS__, 'register_admin_menu'));
+        add_action('admin_init', array(__CLASS__, 'register_settings'));
         // Enable auto-update infrastructure
         add_filter('pre_set_site_transient_update_plugins', array(__CLASS__, 'inject_plugin_update'));
         add_filter('plugins_api', array(__CLASS__, 'plugins_api_handler'), 10, 3);
@@ -257,13 +260,15 @@ final class Adnova_Pixel_Plugin {
         }
 
         $site_id = self::get_site_id();
+        $clarity_id = self::get_clarity_id();
         $user_payload = self::get_logged_in_customer_payload();
 
         if (!empty($user_payload)) {
             echo '<script>window.adnova_user_data=' . wp_json_encode($user_payload) . ';</script>';
         }
 
-        echo '<script src="' . esc_url($script_url) . '" data-account-id="' . esc_attr($site_id) . '" data-site-id="' . esc_attr($site_id) . '" defer></script>';
+        $clarity_attr = $clarity_id ? ' data-clarity-id="' . esc_attr($clarity_id) . '"' : '';
+        echo '<script src="' . esc_url($script_url) . '" data-account-id="' . esc_attr($site_id) . '" data-site-id="' . esc_attr($site_id) . '"' . $clarity_attr . ' defer></script>';
     }
 
     public static function inject_script_attributes($tag, $handle, $src) {
@@ -272,6 +277,7 @@ final class Adnova_Pixel_Plugin {
         }
 
         $site_id = self::get_site_id();
+        $clarity_id = self::get_clarity_id();
         $safe_src = esc_url($src);
         $user_payload = self::get_logged_in_customer_payload();
 
@@ -281,6 +287,10 @@ final class Adnova_Pixel_Plugin {
             'data-site-id="' . esc_attr($site_id) . '"',
             'defer',
         );
+
+        if ($clarity_id) {
+            $attrs[] = 'data-clarity-id="' . esc_attr($clarity_id) . '"';
+        }
 
         if (!empty($user_payload) && !empty($user_payload['customer_id'])) {
             $attrs[] = 'data-customer-id="' . esc_attr((string) $user_payload['customer_id']) . '"';
@@ -316,6 +326,15 @@ final class Adnova_Pixel_Plugin {
         $detected = self::detect_site_id();
         update_option(self::OPTION_SITE_ID, $detected, false);
         return $detected;
+    }
+
+    /**
+     * Returns the Microsoft Clarity project ID stored in WP options.
+     * Returns empty string when not configured.
+     */
+    private static function get_clarity_id() {
+        $saved = get_option(self::OPTION_CLARITY_ID, '');
+        return is_string($saved) ? trim($saved) : '';
     }
 
     private static function detect_site_id() {
@@ -1048,6 +1067,96 @@ final class Adnova_Pixel_Plugin {
         }
 
         return false;
+    }
+
+    // ── Admin settings page ───────────────────────────────────────────
+
+    public static function register_admin_menu() {
+        add_options_page(
+            'Adnova Pixel',
+            'Adnova Pixel',
+            'manage_options',
+            'adnova-pixel-settings',
+            array(__CLASS__, 'render_settings_page')
+        );
+    }
+
+    public static function register_settings() {
+        register_setting('adnova_pixel_settings_group', self::OPTION_CLARITY_ID, array(
+            'type'              => 'string',
+            'sanitize_callback' => 'sanitize_text_field',
+            'default'           => '',
+        ));
+        register_setting('adnova_pixel_settings_group', self::OPTION_SCRIPT_URL, array(
+            'type'              => 'string',
+            'sanitize_callback' => 'esc_url_raw',
+            'default'           => self::DEFAULT_SCRIPT_URL,
+        ));
+    }
+
+    public static function render_settings_page() {
+        if (!current_user_can('manage_options')) {
+            return;
+        }
+        $clarity_id = get_option(self::OPTION_CLARITY_ID, '');
+        $script_url = get_option(self::OPTION_SCRIPT_URL, self::DEFAULT_SCRIPT_URL);
+        ?>
+        <div class="wrap">
+            <h1>Adnova Pixel — Configuración</h1>
+            <form method="post" action="options.php">
+                <?php settings_fields('adnova_pixel_settings_group'); ?>
+                <table class="form-table" role="presentation">
+                    <tr>
+                        <th scope="row">
+                            <label for="<?php echo esc_attr(self::OPTION_CLARITY_ID); ?>">
+                                Microsoft Clarity ID
+                            </label>
+                        </th>
+                        <td>
+                            <input
+                                type="text"
+                                id="<?php echo esc_attr(self::OPTION_CLARITY_ID); ?>"
+                                name="<?php echo esc_attr(self::OPTION_CLARITY_ID); ?>"
+                                value="<?php echo esc_attr($clarity_id); ?>"
+                                class="regular-text"
+                                placeholder="ej. wbbp6xsuyd"
+                            />
+                            <p class="description">
+                                ID del proyecto de <a href="https://clarity.microsoft.com" target="_blank">Microsoft Clarity</a>.
+                                Déjalo vacío para desactivar la grabación de sesiones.
+                            </p>
+                        </td>
+                    </tr>
+                    <tr>
+                        <th scope="row">
+                            <label for="<?php echo esc_attr(self::OPTION_SCRIPT_URL); ?>">
+                                URL del Pixel
+                            </label>
+                        </th>
+                        <td>
+                            <input
+                                type="url"
+                                id="<?php echo esc_attr(self::OPTION_SCRIPT_URL); ?>"
+                                name="<?php echo esc_attr(self::OPTION_SCRIPT_URL); ?>"
+                                value="<?php echo esc_attr($script_url); ?>"
+                                class="large-text"
+                            />
+                            <p class="description">No cambiar salvo instrucción de Adnova.</p>
+                        </td>
+                    </tr>
+                </table>
+                <?php submit_button('Guardar cambios'); ?>
+            </form>
+            <hr/>
+            <h2>Estado</h2>
+            <ul>
+                <li><strong>Site ID:</strong> <?php echo esc_html(self::get_site_id()); ?></li>
+                <li><strong>Clarity ID:</strong> <?php echo $clarity_id ? esc_html($clarity_id) : '<em>No configurado</em>'; ?></li>
+                <li><strong>Pixel URL:</strong> <?php echo esc_html($script_url); ?></li>
+                <li><strong>Versión:</strong> <?php echo esc_html(self::VERSION); ?></li>
+            </ul>
+        </div>
+        <?php
     }
 }
 

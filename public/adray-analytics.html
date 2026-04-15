@@ -4520,6 +4520,21 @@
                 <p><strong>GA4 Session Source:</strong> ${session.ga4SessionSource || '-'}</p>
                 <p><strong>Referrer:</strong> ${session.referrer || '-'}</p>
                 <p><strong>IP Hash:</strong> ${session.ipHash ? `${String(session.ipHash).slice(0, 10)}...` : '-'}</p>
+                ${session.clarityPlaybackUrl ? `
+                <div class="mt-3">
+                    <a href="${session.clarityPlaybackUrl}" target="_blank" rel="noopener noreferrer"
+                       class="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium"
+                       style="background:#5c2d91;color:#fff;text-decoration:none;">
+                        ▶ Ver grabación de sesión
+                    </a>
+                    <p class="text-xs text-gray-400 mt-1">Abre Microsoft Clarity · ID: ${session.claritySessionId || '-'}</p>
+                </div>` : `
+                <div class="mt-3">
+                    <span class="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs text-gray-400"
+                          style="background:#f3f4f6;border:1px dashed #d1d5db;">
+                        Sin grabación disponible para esta sesión
+                    </span>
+                </div>`}
                 <p><strong>Funnel:</strong> PV ${metrics.pageViews || 0} · VI ${metrics.viewItem || 0} · ATC ${metrics.addToCart || 0} · BC ${metrics.beginCheckout || 0} · P ${metrics.purchase || 0}</p>
                 <p><strong>Otras sesiones del mismo usuario:</strong> ${patterns.peerSessionCount || 0}</p>
                 <p><strong>Sessions trazadas totales:</strong> ${patterns.totalTrackedSessions || ((patterns.peerSessionCount || 0) + 1)}</p>
