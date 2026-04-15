@@ -15,7 +15,7 @@ const footerLinks = {
     ],
     Documentation: [
         { label: "Privacy Policy", href: "/privacy-policy" },
-        { label: "Terms and Conditions", href: "/privacy-policy/terms-and-conditions" },
+        { label: "Terms of Service", href: "/terms-of-service" },
     ],
     "Social Connect": [
         { label: "X / Twitter", href: "https://x.com/adray_ai" },
