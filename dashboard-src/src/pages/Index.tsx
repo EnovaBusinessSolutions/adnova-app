@@ -2,7 +2,6 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
 import { DashboardLayout } from "@/components/DashboardLayout";
-import { PixelSetupWizard } from "@/components/PixelSetupWizard";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import {
@@ -512,7 +511,6 @@ export default function Index() {
   const [status, setStatus] = useState<OnboardingStatus | null>(null);
   const [asmUiLoading, setAsmUiLoading] = useState(false);
   const [asmUiError, setAsmUiError] = useState<string | null>(null);
-  const [pixelWizardOpen, setPixelWizardOpen] = useState(false);
 
   const refreshConnections = async () => {
     setLoadingConnections(true);
@@ -1172,7 +1170,6 @@ export default function Index() {
           </Card>
         </div>
       </div>
-      <PixelSetupWizard open={pixelWizardOpen} onOpenChange={setPixelWizardOpen} />
     </DashboardLayout>
   );
 }

@@ -14,10 +14,7 @@ try {
   trackEvent = null;
 }
 
-const APP_URL = (
-  process.env.APP_URL ||
-  `http://localhost:${String(process.env.PORT || '3000').trim() || '3000'}`
-).replace(/\/$/, '');
+const APP_URL = (process.env.APP_URL || 'https://adray.ai').replace(/\/$/, '');
 
 // IMPORTANTE: debe coincidir con tu ruta real en backend/index.js:
 // app.get('/auth/google/login/callback', ...)

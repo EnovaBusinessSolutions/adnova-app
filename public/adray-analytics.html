@@ -5754,7 +5754,7 @@
                         (typeof purchase.clarityPlaybackUrl === 'string' && purchase.clarityPlaybackUrl.startsWith('http')) ? `
                         <button type="button" class="journey-export-btn"
                            style="background:#5c2d91;color:#fff;display:inline-flex;align-items:center;gap:6px;"
-                           onclick="adrayOpenClarityModal('${escapeInlineSingleQuotedJs(purchase.clarityPlaybackUrl)}')">
+                           onclick="adrayOpenClarityModal('${escapeInlineSingleQuotedJs(purchase.clarityPlaybackUrl)}')">`
                             <i class="fa-solid fa-circle-play"></i>
                             Ver grabación
                         </button>` : ''}
