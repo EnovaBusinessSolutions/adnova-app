@@ -16,8 +16,8 @@ async function run() {
     `);
     console.log('[migrate-clarity-columns] OK — columns ensured.');
   } catch (err) {
-    console.error('[migrate-clarity-columns] ERROR:', err.message);
-    process.exit(1);
+    console.error('[migrate-clarity-columns] ERROR (non-fatal):', err.message);
+    // Do not exit(1) — allow the startup chain to continue to prisma:push
   } finally {
     await prisma.$disconnect();
   }

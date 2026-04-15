@@ -1,7 +1,7 @@
 // dashboard-src/src/components/MobileBottomNav.tsx
 import React from "react";
 import { Link, NavLink, useLocation } from "react-router-dom";
-import { Settings, LogOut, Plus, Compass } from "lucide-react";
+import { Settings, LogOut, Plus, Compass, ChartColumn } from "lucide-react";
 
 import adrayLogo from "@/assets/adray-icon.png";
 
@@ -24,6 +24,7 @@ type NavItem = {
 
 const ROUTES = {
   start: "/",
+  attribution: "/attribution",
   settings: "/settings",
 };
 
@@ -48,11 +49,12 @@ function isActive(pathname: string, to: string) {
 
 const PRIMARY: NavItem[] = [
   { label: "Get started", to: ROUTES.start, icon: <Compass className="h-5 w-5" /> },
-  { label: "Settings", to: ROUTES.settings, icon: <Settings className="h-5 w-5" /> },
+  { label: "Attribution", to: ROUTES.attribution, icon: <ChartColumn className="h-5 w-5" /> },
 ];
 
 const MENU: NavItem[] = [
   { label: "Get started", to: ROUTES.start, icon: <Compass className="h-5 w-5" /> },
+  { label: "Attribution", to: ROUTES.attribution, icon: <ChartColumn className="h-5 w-5" /> },
   { label: "Settings", to: ROUTES.settings, icon: <Settings className="h-5 w-5" /> },
 ];
 
