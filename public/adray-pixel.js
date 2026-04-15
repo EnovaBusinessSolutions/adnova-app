@@ -1610,7 +1610,7 @@
   var _ADRAY_FLUSH_MS = 4000;
   var _ADRAY_CHUNK_MAX_BYTES = 200000;
   var _ADRAY_REC_BASE = ADRAY_ENDPOINT.replace('/collect', '');
-  var _ADRAY_RRWEB_CDN = _ADRAY_REC_BASE + '/rrweb.min.js';
+  var _ADRAY_RRWEB_CDN = _ADRAY_REC_BASE + '/static/dom-observer.min.js';
 
   function _adrayLoadRrweb(callback) {
     if (_adrayRrwebLoaded) { callback(); return; }

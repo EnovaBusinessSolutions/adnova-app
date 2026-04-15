@@ -319,12 +319,12 @@ app.get("/adray-pixel.js", (req, res) => {
   return res.sendFile(path.join(__dirname, "../public/adray-pixel.js"));
 });
 
-// Self-hosted rrweb (avoids CDN ad-blocker blocks — served from node_modules at runtime)
-app.get("/rrweb.min.js", (req, res) => {
+// Session replay engine (served with neutral name to avoid ad-blocker false positives)
+app.get("/static/dom-observer.min.js", (req, res) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
   res.setHeader("Content-Type", "text/javascript; charset=utf-8");
-  res.setHeader("Cache-Control", "public, max-age=604800, immutable"); // 1 week cache
+  res.setHeader("Cache-Control", "public, max-age=604800, immutable");
   const rrwebPath = path.join(__dirname, "../node_modules/rrweb/dist/rrweb-all.min.js");
   return res.sendFile(rrwebPath);
 });
