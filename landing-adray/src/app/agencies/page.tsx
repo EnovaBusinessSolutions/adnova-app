@@ -36,9 +36,22 @@ const howItWorks = [
     },
 ];
 
-const pricingPoints = [
-    "Signal workspaces \u2014 Free for 30-day rolling data. $49/month per workspace for unlimited history and live chat support. Additional workspaces: $29/month each.",
-    "Core workspaces \u2014 Free for 30-day rolling data. $99/month + 1% of that client\u2019s monthly ad spend (capped at $1,500/month) for unlimited history and live chat support. Additional workspaces: $49/month + 1% of ad spend each.",
+const agencyTiers = [
+    {
+        name: "Signal workspaces",
+        free: "Free for 30-day rolling data.",
+        paid: "$49/month per workspace for unlimited history and live chat support.",
+        extra: "Additional workspaces: $29/month each.",
+    },
+    {
+        name: "Core workspaces",
+        free: "Free for 30-day rolling data.",
+        paid: "$99/month + 1% of that client\u2019s monthly ad spend (capped at $1,500/month) for unlimited history and live chat support.",
+        extra: "Additional workspaces: $49/month + 1% of ad spend each.",
+    },
+];
+
+const pricingNotes = [
     "No per-seat fees. No platform minimums. Scales with your client roster.",
     "Need more than 10 workspaces? Contact us for volume pricing and custom setup.",
 ];
@@ -120,7 +133,15 @@ export default function AgenciesPage() {
 
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-12">
                         {howItWorks.map((item, i) => (
-                            <AnimatedSection key={item.title} delay={i * 0.1}>
+                            <AnimatedSection
+                                key={item.title}
+                                delay={i * 0.1}
+                                className={
+                                    i === howItWorks.length - 1
+                                        ? "md:col-span-2 md:max-w-xl md:mx-auto"
+                                        : undefined
+                                }
+                            >
                                 <div className="card p-8 h-full">
                                     <h3 className="t-h4 text-white-90 mb-3">
                                         {item.title}
@@ -163,21 +184,45 @@ export default function AgenciesPage() {
             <section className="py-20 relative">
                 <Container>
                     <AnimatedSection>
-                        <div className="card p-10 md:p-16 max-w-2xl mx-auto">
-                            <h2 className="t-h2 text-white-100 mb-8 text-center">
-                                Pricing for agencies
-                            </h2>
-                            <ul className="space-y-4">
-                                {pricingPoints.map((point) => (
+                        <h2 className="t-h2 text-white-100 mb-10 text-center">
+                            Pricing for agencies
+                        </h2>
+                    </AnimatedSection>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6 max-w-3xl mx-auto">
+                        {agencyTiers.map((tier, i) => (
+                            <AnimatedSection key={tier.name} delay={i * 0.1}>
+                                <div className="card p-8 h-full flex flex-col">
+                                    <h3 className="t-h4 text-white-90 mb-4">
+                                        {tier.name}
+                                    </h3>
+                                    <p className="t-p-sm text-ad-muted leading-relaxed mb-2">
+                                        {tier.free}
+                                    </p>
+                                    <p className="t-p-sm text-white-90 leading-relaxed mb-2">
+                                        {tier.paid}
+                                    </p>
+                                    <p className="t-p-sm text-ad-muted leading-relaxed mt-auto pt-2">
+                                        {tier.extra}
+                                    </p>
+                                </div>
+                            </AnimatedSection>
+                        ))}
+                    </div>
+
+                    <AnimatedSection delay={0.2}>
+                        <div className="max-w-3xl mx-auto mt-8">
+                            <ul className="space-y-3">
+                                {pricingNotes.map((note) => (
                                     <li
-                                        key={point}
-                                        className="flex items-start gap-3 t-p text-white-90"
+                                        key={note}
+                                        className="flex items-start gap-3 t-p-sm text-ad-muted justify-center"
                                     >
                                         <Check
-                                            size={18}
+                                            size={16}
                                             className="text-ad-primary shrink-0 mt-0.5"
                                         />
-                                        {point}
+                                        {note}
                                     </li>
                                 ))}
                             </ul>
