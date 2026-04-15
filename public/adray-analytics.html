@@ -6440,13 +6440,21 @@
 
                 // 4. Render rrweb player
                 container.innerHTML = '';
-                const playerWidth = Math.max(container.clientWidth || 0, 600);
-                const playerHeight = 500;
-                container.style.cssText = `height:${playerHeight}px;border-radius:8px;overflow:hidden;background:#1a1a2e;`;
+                const playerWidth = Math.max(container.offsetWidth || 0, 600);
+                const playerHeight = 520;
+                container.style.cssText = `height:${playerHeight}px;border-radius:8px;overflow:visible;background:#111827;position:relative;`;
                 try {
-                    new window.rrwebPlayer({
+                    const playerInstance = new window.rrwebPlayer({
                         target: container,
-                        props: { events: eventsArr, width: playerWidth, height: playerHeight, autoPlay: false, showController: true }
+                        props: {
+                            events: eventsArr,
+                            width: playerWidth,
+                            height: playerHeight - 80,
+                            autoPlay: true,
+                            showController: true,
+                            skipInactive: true,
+                            speed: 1,
+                        }
                     });
                     console.log('[adrayOpenPlayer] player rendered,', eventsArr.length, 'events,', playerWidth, 'x', playerHeight);
                 } catch (playerErr) {
@@ -6455,10 +6463,13 @@
                     return;
                 }
 
-                // Show behavioral signals if available
+                // Show behavioral signals (remove any existing badge first to avoid duplicates)
+                const existingBadge = container.parentNode.querySelector('.adray-signal-badge');
+                if (existingBadge) existingBadge.remove();
                 if (data.recording?.behavioralSignals) {
                     const sig = data.recording.behavioralSignals;
                     const signalDiv = document.createElement('div');
+                    signalDiv.className = 'adray-signal-badge';
                     signalDiv.style.cssText = 'margin-top:8px;padding:10px;background:#1e1b4b;border-radius:6px;font-size:12px;color:#c4b5fd;';
                     const archetype = sig.archetype ? `<strong>${sig.archetype.replace(/_/g,' ')}</strong> · ` : '';
                     const score = sig.riskScore != null ? `Riesgo: ${sig.riskScore}/100 · ` : '';
