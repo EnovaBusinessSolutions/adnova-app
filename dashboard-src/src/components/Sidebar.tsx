@@ -1,6 +1,6 @@
 // dashboard-src/src/components/Sidebar.tsx
-import React, { useEffect, useState } from "react";
-import { Settings, ChevronLeft, ChevronRight, LogOut, Compass, ChartColumn } from "lucide-react";
+import React, { useEffect, useMemo, useState } from "react";
+import { Settings, ChevronLeft, ChevronRight, LogOut, Compass } from "lucide-react";
 import { Link, useLocation } from "react-router-dom";
 
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -20,20 +20,127 @@ type NavItem = {
 };
 
 const START_PATH = "/";
-const ATTRIBUTION_PATH = "/attribution";
 const SETTINGS_PATH = "/settings";
 const LOGOUT_PATH = "/logout";
 
-const PRIMARY: NavItem[] = [
-  { icon: <Compass className="h-5 w-5" />, label: "Get started", path: START_PATH },
-  { icon: <ChartColumn className="h-5 w-5" />, label: "Attribution", path: ATTRIBUTION_PATH },
-];
+const PRIMARY: NavItem[] = [{ icon: <Compass className="h-5 w-5" />, label: "Get started", path: START_PATH }];
 
 const SECONDARY: NavItem[] = [{ icon: <Settings className="h-5 w-5" />, label: "Settings", path: SETTINGS_PATH }];
 
 function isActivePath(pathname: string, target: string) {
   if (target === "/") return pathname === "/";
   return pathname === target || pathname.startsWith(`${target}/`) || pathname.startsWith(target);
+}
+
+function safeJsonParse(value: string | null) {
+  if (!value) return null;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return null;
+  }
+}
+
+function normalizeName(raw: unknown): string | null {
+  if (typeof raw !== "string") return null;
+  const cleaned = raw.replace(/\s+/g, " ").trim();
+  if (!cleaned) return null;
+  return cleaned;
+}
+
+function getNameFromStoredObject(obj: any): string | null {
+  if (!obj || typeof obj !== "object") return null;
+
+  return (
+    normalizeName(obj.name) ||
+    normalizeName(obj.fullName) ||
+    normalizeName(obj.full_name) ||
+    normalizeName(obj.firstName && obj.lastName ? `${obj.firstName} ${obj.lastName}` : "") ||
+    normalizeName(obj.first_name && obj.last_name ? `${obj.first_name} ${obj.last_name}` : "") ||
+    normalizeName(obj.username) ||
+    null
+  );
+}
+
+function prettifyEmailLocalPart(email: string | null): string | null {
+  if (!email || !email.includes("@")) return null;
+  const local = email.split("@")[0]?.trim();
+  if (!local) return null;
+
+  const pretty = local
+    .replace(/[._-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+
+  return pretty || null;
+}
+
+function truncateName(value: string | null, max = 20): string {
+  if (!value) return "Your account";
+  if (value.length <= max) return value;
+  return `${value.slice(0, max - 1).trimEnd()}…`;
+}
+
+function resolveDisplayName(): string | null {
+  const directNameKeys = ["name", "userName", "username", "fullName", "full_name"];
+
+  for (const key of directNameKeys) {
+    const directValue = normalizeName(sessionStorage.getItem(key));
+    if (directValue) return directValue;
+  }
+
+  const objectKeys = ["user", "authUser", "currentUser", "sessionUser", "profile"];
+
+  for (const key of objectKeys) {
+    const parsed = safeJsonParse(sessionStorage.getItem(key));
+    const parsedName = getNameFromStoredObject(parsed);
+    if (parsedName) return parsedName;
+  }
+
+  const localParsedKeys = ["user", "authUser", "currentUser", "sessionUser", "profile"];
+  for (const key of localParsedKeys) {
+    const parsed = safeJsonParse(localStorage.getItem(key));
+    const parsedName = getNameFromStoredObject(parsed);
+    if (parsedName) return parsedName;
+  }
+
+  const email =
+    normalizeName(sessionStorage.getItem("email")) ||
+    normalizeName(localStorage.getItem("email")) ||
+    null;
+
+  return prettifyEmailLocalPart(email);
+}
+
+async function fetchSessionDisplayName(): Promise<string | null> {
+  try {
+    const res = await fetch("/api/session", {
+      credentials: "include",
+      cache: "no-store",
+    });
+    if (!res.ok) return null;
+
+    const json = await res.json();
+    const user = json?.user || json?.data?.user || json?.data || null;
+    const name =
+      normalizeName(user?.name) ||
+      normalizeName(user?.fullName) ||
+      normalizeName(user?.full_name) ||
+      normalizeName(user?.displayName) ||
+      normalizeName(user?.firstName && user?.lastName ? `${user.firstName} ${user.lastName}` : "");
+
+    if (name) {
+      try {
+        sessionStorage.setItem("name", name);
+      } catch {}
+      return name;
+    }
+
+    return null;
+  } catch {
+    return null;
+  }
 }
 
 function StartBadge({ isOpen }: { isOpen: boolean }) {
@@ -237,13 +344,44 @@ function NavRow({
 
 export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onToggle }) => {
   const location = useLocation();
-  const [email, setEmail] = useState<string | null>(null);
+  const [displayName, setDisplayName] = useState<string | null>(null);
 
   useEffect(() => {
-    setEmail(sessionStorage.getItem("email"));
-  }, []);
+  let cancelled = false;
+
+  const syncDisplayName = async () => {
+    const fromStorage = resolveDisplayName();
+    if (fromStorage) {
+      if (!cancelled) setDisplayName(fromStorage);
+      return;
+    }
+
+    const fromSession = await fetchSessionDisplayName();
+    if (!cancelled) {
+      setDisplayName(fromSession);
+    }
+  };
+
+  syncDisplayName();
+
+  const handleStorageSync = () => {
+    const fromStorage = resolveDisplayName();
+    setDisplayName(fromStorage);
+  };
+
+  window.addEventListener("storage", handleStorageSync);
+  window.addEventListener("focus", syncDisplayName);
+
+  return () => {
+    cancelled = true;
+    window.removeEventListener("storage", handleStorageSync);
+    window.removeEventListener("focus", syncDisplayName);
+  };
+}, []);
 
   const pathname = location.pathname || "/";
+
+  const footerName = useMemo(() => truncateName(displayName, 20), [displayName]);
 
   const logoutItem: NavItem = {
     icon: <LogOut className="h-5 w-5" />,
@@ -257,50 +395,45 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onToggle }) => {
       await fetch(LOGOUT_PATH, { credentials: "include" });
     } catch {}
     sessionStorage.clear();
+    localStorage.removeItem("user");
+    localStorage.removeItem("authUser");
+    localStorage.removeItem("currentUser");
+    localStorage.removeItem("sessionUser");
+    localStorage.removeItem("profile");
     window.location.href = "/dashboard";
   };
 
   return (
     <aside
-  className={[
-    "adray-sidebar-glass fixed left-0 top-0 z-50 h-full",
-    "transition-all duration-300",
-    isOpen ? "w-64" : "w-20",
-    "flex flex-col",
-  ].join(" ")}
->
+      className={[
+        "adray-sidebar-glass fixed left-0 top-0 z-50 h-full",
+        "transition-all duration-300",
+        isOpen ? "w-64" : "w-20",
+        "flex flex-col",
+      ].join(" ")}
+    >
       <div className="pointer-events-none absolute inset-y-0 right-0 w-px bg-gradient-to-b from-transparent via-[#B55CFF]/20 to-transparent" />
       <div className="pointer-events-none absolute left-0 top-0 h-40 w-full bg-[radial-gradient(circle_at_top_left,rgba(181,92,255,0.16),transparent_62%)] opacity-90" />
 
       <div className="relative border-b border-white/[0.06] px-3 py-3">
         <div className="flex items-center justify-between gap-2">
           {isOpen ? (
-  <div className="relative flex min-w-0 items-center overflow-visible -ml-3 pointer-events-none">
-    <img
-      src={adrayLogo}
-      alt="Adray"
-      draggable={false}
-      className="h-16 w-[320px] object-contain select-none pointer-events-none"
-      style={{
-        transform: "translateX(-108px) scale(1.78)",
-        transformOrigin: "left center",
-        filter: "drop-shadow(0 0 18px rgba(181,92,255,0.30))",
-      }}
-    />
-  </div>
-) : (
-  <div className="flex h-16 flex-1 items-center justify-center">
-    <img
-      src={adrayLogo}
-      alt="Adray"
-      draggable={false}
-      className="h-10 w-auto object-contain select-none pointer-events-none"
-      style={{
-        filter: "drop-shadow(0 0 14px rgba(181,92,255,0.20))",
-      }}
-    />
-  </div>
-)}
+            <div className="relative flex min-w-0 items-center overflow-visible -ml-3 pointer-events-none">
+              <img
+                src={adrayLogo}
+                alt="Adray"
+                draggable={false}
+                className="h-16 w-[320px] object-contain select-none pointer-events-none"
+                style={{
+                  transform: "translateX(-108px) scale(1.78)",
+                  transformOrigin: "left center",
+                  filter: "drop-shadow(0 0 18px rgba(181,92,255,0.30))",
+                }}
+              />
+            </div>
+          ) : (
+            <div className="flex h-16 flex-1 items-center justify-center" aria-hidden="true" />
+          )}
 
           <button
             onClick={onToggle}
@@ -340,20 +473,23 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onToggle }) => {
       </nav>
 
       <div className="p-3">
-  <div className="adray-sidebar-footer-card overflow-hidden rounded-2xl px-3 py-3">
-    <div className={`flex items-center ${isOpen ? "justify-start" : "justify-center"}`}>
-      <span className="adray-sidebar-ambient-dot relative inline-flex h-2.5 w-2.5 rounded-full bg-[#EB2CFF] shadow-[0_0_12px_rgba(235,44,255,0.7)]">
-        <span className="absolute inset-0 animate-ping rounded-full bg-[#EB2CFF]/30" />
-      </span>
+        <div className="adray-sidebar-footer-card overflow-hidden rounded-2xl px-3 py-3">
+          <div className={`flex items-center ${isOpen ? "justify-start" : "justify-center"}`}>
+            <span className="adray-sidebar-ambient-dot relative inline-flex h-2.5 w-2.5 rounded-full bg-[#EB2CFF] shadow-[0_0_12px_rgba(235,44,255,0.7)]">
+              <span className="absolute inset-0 animate-ping rounded-full bg-[#EB2CFF]/30" />
+            </span>
 
-      {isOpen && (
-        <span className="ml-2 max-w-[180px] truncate text-xs font-semibold text-[#BFA9E8]">
-          {email ?? "Loading email..."}
-        </span>
-      )}
-    </div>
-  </div>
-</div>
+            {isOpen && (
+              <span
+                className="ml-2 max-w-[180px] truncate text-xs font-semibold text-[#BFA9E8]"
+                title={displayName || "Your account"}
+              >
+                {footerName}
+              </span>
+            )}
+          </div>
+        </div>
+      </div>
     </aside>
   );
 };
