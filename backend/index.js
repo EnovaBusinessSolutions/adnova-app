@@ -302,9 +302,10 @@ app.use(
   collectRoutes
 );
 
-// BRI: rrweb recording ingest (pixel-facing, no auth, high rate limit)
+// BRI: session capture ingest (pixel-facing, no auth, high rate limit)
+// Neutral path /p/ avoids ad-blocker false positives on "recording" keyword
 app.use(
-  "/recording",
+  "/p",
   cookieParser(),
   express.json({ limit: "2mb" }),
   rateLimitRecording,

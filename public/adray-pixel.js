@@ -1646,7 +1646,7 @@
       events: events,
       timestamp: new Date().toISOString()
     });
-    var endpoint = _ADRAY_REC_BASE + '/recording/chunk';
+    var endpoint = _ADRAY_REC_BASE + '/p/buf';
     try {
       if (navigator.sendBeacon) {
         navigator.sendBeacon(endpoint, new Blob([body], { type: 'application/json' }));
@@ -1671,7 +1671,7 @@
     _adrayChunkBuffer = [];
 
     // Notify backend: recording started
-    fetch(_ADRAY_REC_BASE + '/recording/start', {
+    fetch(_ADRAY_REC_BASE + '/p/init', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
@@ -1720,7 +1720,7 @@
       final_chunk_index: _adrayChunkIndex,
       timestamp: new Date().toISOString()
     });
-    var endpoint = _ADRAY_REC_BASE + '/recording/end';
+    var endpoint = _ADRAY_REC_BASE + '/p/fin';
     try {
       if (navigator.sendBeacon) {
         navigator.sendBeacon(endpoint, new Blob([body], { type: 'application/json' }));

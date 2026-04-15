@@ -37,7 +37,7 @@ const CHUNK_INDEX_TTL = 2 * 60 * 60;
  * POST /recording/start
  * Creates a SessionRecording row. Called by the pixel when add_to_cart fires.
  * ───────────────────────────────────────────────────────────────────────────── */
-router.post('/start', async (req, res) => {
+router.post('/init', async (req, res) => {
   try {
     const {
       account_id,
@@ -115,7 +115,7 @@ router.post('/start', async (req, res) => {
  * Receives a batch of rrweb events. Stores chunk in R2 AND indexes in Redis.
  * Redis = fast index, R2 = durable storage.
  * ───────────────────────────────────────────────────────────────────────────── */
-router.post('/chunk', async (req, res) => {
+router.post('/buf', async (req, res) => {
   try {
     const {
       account_id,
@@ -174,7 +174,7 @@ router.post('/chunk', async (req, res) => {
  * POST /recording/end
  * Signals recording end. Enqueues finalize job.
  * ───────────────────────────────────────────────────────────────────────────── */
-router.post('/end', async (req, res) => {
+router.post('/fin', async (req, res) => {
   try {
     const { account_id, recording_id, session_id, reason, final_chunk_index } = req.body || {};
 
