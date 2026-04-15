@@ -120,12 +120,10 @@ function shouldSendOnce(key, ttlMs = DEDUPE_TTL_MS) {
  */
 const VERIFY_PATH = process.env.VERIFY_EMAIL_PATH || '/api/auth/verify-email';
 
-function buildVerifyUrl(token, baseUrl) {
+function buildVerifyUrl(token) {
   const t = String(token || '').trim();
   if (!t) return null;
-  const root = String(baseUrl || APP_URL || '').replace(/\/$/, '');
-  if (!root) return null;
-  return `${root}${VERIFY_PATH}?token=${encodeURIComponent(t)}`;
+  return `${APP_URL}${VERIFY_PATH}?token=${encodeURIComponent(t)}`;
 }
 
 /**
@@ -148,9 +146,9 @@ function buildResetPasswordUrl(token) {
  * Send: Verify Email
  * =========================
  * E2E signature:
- *   sendVerifyEmail({ userId, toEmail, token, name, baseUrl })
+ *   sendVerifyEmail({ userId, toEmail, token, name })
  */
-async function sendVerifyEmail({ userId, toEmail, token, name, baseUrl } = {}) {
+async function sendVerifyEmail({ userId, toEmail, token, name } = {}) {
   if (!HAS_SMTP) {
     if (DEBUG_EMAIL) console.warn('[emailService] SMTP not configured. Skipping verifyEmail.');
     return fail('SMTP_NOT_CONFIGURED', { skipped: true });
@@ -160,7 +158,7 @@ async function sendVerifyEmail({ userId, toEmail, token, name, baseUrl } = {}) {
   if (!to) return fail('MISSING_TO_EMAIL');
   if (!token) return fail('MISSING_VERIFY_TOKEN');
 
-  const verifyUrl = buildVerifyUrl(token, baseUrl);
+  const verifyUrl = buildVerifyUrl(token);
   if (!verifyUrl) return fail('INVALID_VERIFY_URL');
 
   const subject = 'Verify your email · Adray';

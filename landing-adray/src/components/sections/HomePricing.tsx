@@ -19,55 +19,53 @@ const plans: Array<{
     bgImage: string;
 }> = [
     {
-        name: "Adray Signal",
+        name: "Free",
         monthlyPrice: 0,
-        subtitle: "Your entire marketing stack in your LLM and Looker Studio.",
+        subtitle: null,
         features: [
-            "Daily Signal PDF delivered to your inbox — works in any AI",
-            "Custom GPT for ChatGPT",
-            "MCP connector for Claude (live now)",
-            "Looker Studio connector (coming soon)",
-            "Meta Ads · Google Ads · Google Analytics",
-            "30-day rolling data · No credit card needed",
+            "Meta, Google Ads, and GA4 connectors",
+            "Daily Signal PDF",
+            "Works in any AI",
+            "Pre-built prompt library",
+            "60-day rolling data window",
+            "Unlimited seats",
         ],
-        trust: "Need unlimited history? $49/month",
+        trust: null,
         cta: "Get Started Free",
         ctaHref: "/login",
         bgImage:
             "https://framerusercontent.com/images/XXSw2JqvtikgOcaexTTozzVsO54.webp",
     },
     {
-        name: "Adray Core",
-        monthlyPrice: 0,
-        subtitle: "Full attribution depth. Server-side intelligence. Built for performance.",
+        name: "Pro",
+        monthlyPrice: 49,
+        subtitle: "+ 0.3% of ad spend (capped at $2,000/mo)",
         features: [
-            "Everything in Signal",
-            "Adray pixel + CAPI enrichment",
-            "Behavioral Revenue Intelligence (BRI)",
-            "Attribution Deviation Modeling",
-            "Server-side website data",
-            "30-day rolling data · No credit card needed",
+            "Everything in Free",
+            "Unlimited data history",
+            "Priority support",
+            "Early MCP access (Q2 2026)",
+            "Additional workspaces: $25/mo each",
         ],
-        trust: "Need unlimited history? $99/month + 1% ad spend",
-        cta: "Get Started Free",
-        ctaHref: "/login",
+        trust: null,
+        cta: "Start Pro",
+        ctaHref: "/contact",
         bgImage:
             "https://framerusercontent.com/images/4fEwCxLuKCW6ZaczMzoeCElmzBg.webp",
     },
     {
         name: "Enterprise",
         monthlyPrice: null,
-        subtitle: "For advertisers and agencies that need invoicing, credit terms, white-glove setup, and dedicated customer support.",
+        subtitle: "Custom pricing for teams at scale.",
         features: [
-            "Invoicing and credit terms (30–60 days)",
-            "White-glove onboarding and setup",
-            "Dedicated customer success manager",
-            "SLA and priority support",
+            "Custom onboarding",
+            "30–60 day invoicing",
+            "Dedicated support",
+            "SLA",
             "Volume pricing",
-            "Signal or Core — your choice",
         ],
         trust: null,
-        cta: "Contact Us",
+        cta: "Talk to Us",
         ctaHref: "/contact",
         bgImage:
             "https://framerusercontent.com/images/K53jEm1inmwk6lcSyDVU5W7rvLM.webp",
@@ -91,7 +89,7 @@ export default function HomePricing() {
                             />
                         }
                         title="Free to start. Built to scale."
-                        subtitle="Two products. Both free forever for 30-day rolling data."
+                        subtitle="No dashboards to pay for. Just your data, ready for AI."
                         titleClassName="text-white-100"
                     />
                 </AnimatedSection>

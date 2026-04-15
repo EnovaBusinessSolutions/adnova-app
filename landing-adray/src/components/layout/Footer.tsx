@@ -15,12 +15,11 @@ const footerLinks = {
     ],
     Documentation: [
         { label: "Privacy Policy", href: "/privacy-policy" },
-        { label: "Terms of Service", href: "/terms-of-service" },
+        { label: "Terms and Conditions", href: "/privacy-policy/terms-and-conditions" },
     ],
     "Social Connect": [
-        { label: "X / Twitter", href: "https://x.com/adray_ai" },
-        { label: "Instagram", href: "https://www.instagram.com/adray_ai?igsh=NGMyNjhuYTVycW1m" },
-        { label: "LinkedIn", href: "https://www.linkedin.com/company/adray-ai/" },
+        { label: "Instagram", href: "https://www.instagram.com/jitu.ux/" },
+        { label: "LinkedIn", href: "https://www.linkedin.com/in/jitendra-raut/" },
     ],
 };
 

@@ -5,17 +5,6 @@ const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY
   ? Buffer.from(process.env.ENCRYPTION_KEY.substring(0, 64), 'hex')
   : crypto.randomBytes(32); // Creates random key if none provided (will lose data on restart)
 
-// HMAC keys for PII hashing (separate keys per identifier type for security).
-// If not set, falls back to a derived key from ENCRYPTION_KEY so existing
-// SHA-256 hashes will NOT match — run migrate-hmac-hashes.js after setting these.
-const HMAC_EMAIL_KEY = process.env.HMAC_EMAIL_KEY
-  ? Buffer.from(process.env.HMAC_EMAIL_KEY, 'hex')
-  : null;
-
-const HMAC_PHONE_KEY = process.env.HMAC_PHONE_KEY
-  ? Buffer.from(process.env.HMAC_PHONE_KEY, 'hex')
-  : null;
-
 const ALGORITHM = 'aes-256-gcm';
 
 /**
@@ -65,43 +54,14 @@ function decrypt(packed) {
 }
 
 /**
- * Hash PII (Personally Identifiable Information) using HMAC-SHA-256.
- * Falls back to unsalted SHA-256 if no HMAC key is configured (legacy compat).
- *
- * IMPORTANT: Set HMAC_EMAIL_KEY and HMAC_PHONE_KEY env vars in production.
- * After setting them, run backend/scripts/migrate-hmac-hashes.js to re-hash
- * existing identity_graph records.
- *
- * @param {string} value
- * @param {Buffer|null} hmacKey - key buffer from HMAC_EMAIL_KEY or HMAC_PHONE_KEY
- * @returns {string|null} HMAC-SHA-256 hex hash (or SHA-256 fallback)
+ * Hash PII (Personally Identifiable Information) like email or phone
+ * @param {string} value 
+ * @returns {string|null} SHA-256 hex hash
  */
-function hashPII(value, hmacKey = null) {
+function hashPII(value) {
   if (!value) return null;
   const normalized = String(value).toLowerCase().trim();
-  if (hmacKey) {
-    return crypto.createHmac('sha256', hmacKey).update(normalized).digest('hex');
-  }
-  // Legacy fallback — unsalted SHA-256 (only used if HMAC keys not configured)
   return crypto.createHash('sha256').update(normalized).digest('hex');
-}
-
-/**
- * Hash an email address with HMAC-SHA-256 (uses HMAC_EMAIL_KEY if set).
- * @param {string} email
- * @returns {string|null}
- */
-function hashEmail(email) {
-  return hashPII(email, HMAC_EMAIL_KEY);
-}
-
-/**
- * Hash a phone number with HMAC-SHA-256 (uses HMAC_PHONE_KEY if set).
- * @param {string} phone
- * @returns {string|null}
- */
-function hashPhone(phone) {
-  return hashPII(phone, HMAC_PHONE_KEY);
 }
 
 /**
@@ -127,9 +87,5 @@ module.exports = {
   encrypt,
   decrypt,
   hashPII,
-  hashEmail,
-  hashPhone,
-  hashFingerprint,
-  HMAC_EMAIL_KEY,
-  HMAC_PHONE_KEY,
+  hashFingerprint
 };
