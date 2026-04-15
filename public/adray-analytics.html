@@ -6411,15 +6411,15 @@
                 // 2. Lazy-load rrweb-player from CDN
                 if (!_adrayPlayerLibLoaded) {
                     await new Promise((resolve, reject) => {
+                        const css = document.createElement('link');
+                        css.rel = 'stylesheet';
+                        css.href = '/static/rp.css';
+                        document.head.appendChild(css);
                         const s = document.createElement('script');
-                        s.src = 'https://cdn.jsdelivr.net/npm/rrweb-player@2/dist/index.js';
+                        s.src = '/static/rp.js';
                         s.onload = resolve;
                         s.onerror = reject;
                         document.head.appendChild(s);
-                        const css = document.createElement('link');
-                        css.rel = 'stylesheet';
-                        css.href = 'https://cdn.jsdelivr.net/npm/rrweb-player@2/dist/style.css';
-                        document.head.appendChild(css);
                     });
                     _adrayPlayerLibLoaded = true;
                 }

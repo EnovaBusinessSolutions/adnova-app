@@ -326,8 +326,21 @@ app.get("/static/dom-observer.min.js", (req, res) => {
   res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
   res.setHeader("Content-Type", "text/javascript; charset=utf-8");
   res.setHeader("Cache-Control", "public, max-age=604800, immutable");
-  const rrwebPath = path.join(__dirname, "../node_modules/rrweb/dist/rrweb-all.min.js");
-  return res.sendFile(rrwebPath);
+  return res.sendFile(path.join(__dirname, "../node_modules/rrweb/dist/rrweb-all.min.js"));
+});
+
+// rrweb-player for dashboard (self-hosted to avoid CDN ad-blocker blocks)
+app.get("/static/rp.js", (req, res) => {
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Content-Type", "text/javascript; charset=utf-8");
+  res.setHeader("Cache-Control", "public, max-age=604800, immutable");
+  return res.sendFile(path.join(__dirname, "../node_modules/rrweb-player/dist/index.js"));
+});
+app.get("/static/rp.css", (req, res) => {
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Content-Type", "text/css; charset=utf-8");
+  res.setHeader("Cache-Control", "public, max-age=604800, immutable");
+  return res.sendFile(path.join(__dirname, "../node_modules/rrweb-player/dist/style.css"));
 });
 
 /* =========================
