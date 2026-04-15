@@ -18,14 +18,14 @@ logs
 # Producción (Render, Vercel, etc.)
 /dist
 /build
-public/bookcall/
 
 # Credenciales
 backend/credentials.json
 
-# Build output de apps inline
+# Build output de submodulos (ahora directorios inline)
 dashboard-src/node_modules/
 landing-adray/node_modules/
 bookcall-src/node_modules/
 support-src/node_modules/
+saas-landing/node_modules/
 login-src/**/node_modules/

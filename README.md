@@ -1,43 +1,177 @@
 # AdRay / Adnova
 
-Last update: 2026-04-01
+Last update: 2026-04-13 (behavioral analytics plan + Clarity integration)
 
-This is the only documentation file that should be treated as the source of truth for the repository. It consolidates the previous planning files, implementation notes, operational checklist, WordPress plugin readme, Shopify review guide, and frontend README boilerplate.
+This is the only documentation file that should be treated as the source of truth for the repository. It consolidates planning files, implementation notes, operational checklist, WordPress plugin readme, Shopify review guide, and frontend README boilerplate.
+
+---
+
+## How agents should use this file
+
+- Read this file first before touching any code. It contains the current project state, not just the original plan.
+- `Agent-instructions.md` defines the working style and git discipline expected in this repo — read it too.
+- After closing any relevant improvement: update the **Current Status** and **Next Implementation Steps** sections. Do not turn this into a changelog; keep it useful for resuming work.
+- Branch in use: `german/dev`. Render auto-deploys from this branch.
+
+---
 
 ## Product Goal
 
-Build and run a platform-agnostic attribution pipeline for Shopify, WooCommerce, and custom sites that:
+Build and run a platform-agnostic **Behavioral Revenue Intelligence (BRI)** platform for Shopify, WooCommerce, and custom ecommerce sites that:
 
-- captures browser events,
-- stitches attribution,
+- captures browser events and **rrweb session recordings from AddToCart onwards**,
+- stitches attribution (UTM, click IDs, multi-touch models),
 - processes purchases server-side,
 - syncs revenue truth from ecommerce platforms,
-- exposes reliable dashboard metrics,
+- extracts behavioral signals (rage clicks, exit intent, shipping shock, hesitation),
+- classifies abandonment archetypes with LLM (Gemma via OpenRouter),
+- enriches Meta CAPI with behavioral signals (behavioral_archetype, intent_score),
+- exposes reliable dashboard metrics with inline session replay,
 - and prepares clean data for Meta and Google integrations.
+
+---
 
 ## Current Architecture
 
-- Main backend: Node.js + Express.
-- Primary relational data layer: PostgreSQL via Prisma.
-- Legacy and operational modules: MongoDB via Mongoose.
-- Cache and dedup helpers: Redis via ioredis.
-- Deployment baseline: Render.
-- WooCommerce client distribution: WordPress plugin under `wordpress-plugin/adnova-pixel`.
-- Frontend apps: multiple Vite + React + TypeScript + shadcn-ui + Tailwind projects generated from Lovable.
+- **Backend**: Node.js + Express (`backend/index.js`)
+- **Relational data**: PostgreSQL via Prisma (`backend/prisma/schema.prisma`)
+- **Legacy/operational models**: MongoDB via Mongoose (`backend/models/`)
+- **Cache and dedup**: Redis via ioredis (`backend/utils/redisClient.js`)
+- **Deployment**: Render (web service + MCP worker). Config in `render.yaml`.
+- **WooCommerce distribution**: WordPress plugin under `wordpress-plugin/adnova-pixel`
+- **Frontend apps**: multiple Vite + React + TypeScript + shadcn-ui + Tailwind projects (Git submodules)
+- **Public analytics page**: `backend/views/adray-analytics.html` — served at `/analytics/:account_id`
+- **Pixel runtime**: `public/adray-pixel.js` — loaded cross-origin by merchant sites
 
-### Staging vs producción (OAuth, Render, Cloudflare)
+### Render deploy config (`render.yaml`)
+
+Three services:
+
+| Service | Type | Branch | Auto-deploy |
+|---------|------|--------|-------------|
+| `adnova-ai` | web | `german/dev` | yes |
+| `adnova-ai-mcp-worker` | worker | `german/dev` | yes |
+| `adnova-ai-recording-worker` | worker | `german/dev` | yes |
+
+Web build command:
+```
+npm ci && npm run build:landing && npm run build:dashboard && npx prisma generate --schema=backend/prisma/schema.prisma
+```
+
+Web start command:
+```
+node backend/scripts/migrate-clarity-columns.js && node backend/scripts/migrate-recordings-schema.js && npm run prisma:push && node backend/scripts/backfill-clarity-urls.js && npm run db:backfill:layer45 && node backend/index.js
+```
+
+MCP worker start command:
+```
+npm run worker:mcp
+```
+
+Recording worker start command:
+```
+node backend/workers/recordingWorker.js
+```
+
+### Staging vs Production
 
 Checklist operativa y variables por entorno: [docs/STAGING_PRODUCTION.md](docs/STAGING_PRODUCTION.md).
 
+- **Staging URL**: `https://adray-app-staging-german.onrender.com`
+- **Production URL**: `https://adray.ai`
+- `APP_URL` is the key variable that controls OAuth callbacks. Define it explicitly per Render service.
+- `NODE_ENV=production` must be set in all Render services (enables secure cookies).
+- Cloudflare Turnstile was removed from the repo — `TURNSTILE_*` vars can be deleted from Render.
+
+---
+
+## BRI Environment Variables
+
+Required for recording, LLM narratives, and secure PII hashing. Add to Render dashboard under each service.
+
+### Opción A: AWS S3 (recomendado si ya tienes cuenta AWS)
+
+| Variable | Default | Dónde encontrarlo |
+|---|---|---|
+| `S3_ACCESS_KEY_ID` | — | AWS Console → IAM → Users → Create user → Access keys |
+| `S3_SECRET_ACCESS_KEY` | — | Mismo paso, se muestra solo una vez |
+| `S3_REGION` | `us-east-1` | Región donde creaste el bucket |
+| `S3_BUCKET` | `adray-recordings` | S3 → Create bucket → nombre `adray-recordings` |
+
+IAM policy mínima necesaria para el user:
+```json
+{
+  "Effect": "Allow",
+  "Action": ["s3:PutObject", "s3:GetObject", "s3:DeleteObject", "s3:ListBucket"],
+  "Resource": ["arn:aws:s3:::adray-recordings", "arn:aws:s3:::adray-recordings/*"]
+}
+```
+
+### Opción B: Cloudflare R2 (10GB gratis, egress $0)
+
+| Variable | Default | Dónde encontrarlo |
+|---|---|---|
+| `R2_ENDPOINT` | — | `https://<CLOUDFLARE_ACCOUNT_ID>.r2.cloudflarestorage.com` |
+| `R2_ACCESS_KEY_ID` | — | Cloudflare → R2 → Manage R2 API tokens → Create token |
+| `R2_SECRET_ACCESS_KEY` | — | Mismo paso, solo se muestra una vez |
+| `R2_BUCKET` | `adray-recordings` | Crear bucket en Cloudflare R2 |
+
+### Otras variables BRI
+
+| Variable | Default | Descripción |
+|---|---|---|
+| `OPENROUTER_API_KEY` | — | https://openrouter.ai/keys → Create key |
+| `OPENROUTER_MODEL` | `google/gemma-3-27b-it` | Modelo LLM para narrativas de abandono |
+| `HMAC_EMAIL_KEY` | — | `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"` |
+| `HMAC_PHONE_KEY` | — | Igual, genera un key distinto |
+| `RECORDING_QUEUE_NAME` | `recording-process` | Opcional |
+| `RECORDING_RETENTION_HOURS` | `24` | Horas antes de borrar raw recording de R2/S3 |
+
+> **Después de configurar `HMAC_EMAIL_KEY` y `HMAC_PHONE_KEY`**, ejecutar en staging:
+> ```bash
+> node backend/scripts/migrate-hmac-hashes.js
+> ```
+> Esto re-hashea los `email_hash` y `phone_hash` existentes en `identity_graph` de SHA-256 sin sal a HMAC-SHA-256.
+
+### S3 / R2 CORS Configuration
+
+El player inline del dashboard descarga grabaciones directamente desde S3/R2. Necesita CORS habilitado.
+
+**AWS S3:** S3 → bucket `adray-recordings` → Permissions → Cross-origin resource sharing (CORS):
+```json
+[
+  {
+    "AllowedOrigins": ["https://adray.ai", "https://adray-app-staging-german.onrender.com"],
+    "AllowedMethods": ["GET"],
+    "AllowedHeaders": ["*"],
+    "MaxAgeSeconds": 3600
+  }
+]
+```
+
+**Cloudflare R2:** R2 → `adray-recordings` → Settings → CORS policy → mismo JSON de arriba.
+
+---
+
 ## Current Status
 
-### Frontend note
+### Layer 1 Foundation: DELIVERED AND ACCEPTED (2026-03-24)
 
-- The public analytics page at `public/adray-analytics.html` must avoid CSS class names that look like ad containers such as `ad-panel`, `ad-control`, or similar.
-- Brave Shields can apply cosmetic filtering after first paint and hide those elements even when the DOM and data are correct.
-- Neutral naming like `ops-panel` and `ops-control` is the current safe convention for public analytics UI blocks.
+Layer 1 scope from `layer1.md` (Custom Pixel + revenue truth + stitching base + Ads connections and basic pull) was delivered according to contract. Payment checkpoint: **PASS** (staging evidence available).
 
-### Working now
+Delivered:
+1. Custom Pixel V1 capture and collector pipeline.
+2. Revenue truth read-only sync and baseline health.
+3. Session-checkout-order stitching base.
+4. Pixel Health / Match Rate / onboarding validation flow.
+5. Meta and Google Ads connection verification and basic pull execution with stored datasets.
+
+Out of scope and not included (as stated in contract):
+- Phase 2 advanced dedup/reconciliation/scoring/backfill.
+- Full MCP server exposure for third-party AI consumers.
+- Full server-side events parity rollout (Meta CAPI, Google Enhanced Conversions, TikTok Events API).
+
+### What is working now
 
 - Universal pixel is live and loadable cross-origin from the AdRay server.
 - Pixel loading returns `200 OK`.
@@ -47,286 +181,361 @@ Checklist operativa y variables por entorno: [docs/STAGING_PRODUCTION.md](docs/S
 - Shopify webhook ingestion exists for orders and checkouts.
 - WooCommerce order sync path exists through the plugin and backend sync route.
 - Attribution stitching, merchant snapshot updates, and failed job logging are implemented.
-- WooCommerce attribution flow was validated end-to-end in staging on 2026-03-13, including checkout login stitching and attributed order persistence.
-
-### Collector status (2026-03-23)
-
-- Staging collector health is stable.
-- Latest live tests returned `success: true`, `event_persisted: true`, `session_persisted: true`, `fallback_stored: false`.
-- Data coverage endpoint is stable and no longer returning `500`/degraded Prisma errors for staging.
+- WooCommerce attribution flow validated end-to-end in staging on 2026-03-13 (checkout login stitching and attributed order persistence).
+- Collector health stable (staging): `success: true`, `event_persisted: true`, `session_persisted: true`, `fallback_stored: false`.
+- Meta and Google Ads daily pull validated in staging: both return `ready=true`, `chunkCount > 0`.
 - Historical backfill for Layer 4 and Layer 5 session source is automated at service startup.
-
-Current production guidance:
-
-1. Keep monitoring `POST /collect` response flags during rollout.
-2. Treat production as healthy only when the same flags above are observed in production traffic.
-3. If flags regress, inspect `failed_jobs` rows with `collect_` job types first.
-
-### Latest staging validation (2026-03-13)
-
-Validated sample orders from manual operator tests:
-
-- Timestamp captured in dashboard: `13/3/2026, 8:12:57 a.m.`
-- Order: `66308`
-- Customer: `Germán Muñoz`
-- Revenue: `$374.95`
-- Item summary: `ABACO x3`
-- Attribution shown: `Google · brand-test`
-- Source shown: `Woo Orders Sync`
-- Debug shown: `woo=Google | utm=google | campaign=brand-test`
-- Home -> Tienda persistence test: `13/3/2026, 8:48:58 a.m.`, order `66310`, attribution `Google · home_to_store_test`, source `Woo Orders Sync`
-
-Validation result:
-
-- Attribution and campaign persistence: OK.
-- Woo checkout login stitching: OK.
-- Homepage landing -> store navigation -> purchase attribution persistence: OK.
-- End-to-end Woo flow in staging: OK.
-- Live Feed now shows connected user labels when the event can be resolved against WordPress online users: OK.
-- Recent purchases timezone now matches business expectation in the purchases table used by operators: OK.
-
-Notes from this same validation:
-
-- The recent purchases table currently applies a focused display correction for operator readability.
-- Woo sync payloads were also hardened to send and parse explicit creation time metadata for later cleanup of the UI-only adjustment if it becomes unnecessary.
-
-### Build summary (2026-03-27)
-
-What is already built and working in the current dashboard/pipeline baseline:
-
 - `Live Feed` runs over SSE (`/api/feed/:account_id`) and displays real-time `COLLECT` + `WEBHOOK` events.
-- Collector now persists identity/session/event with stable response flags and supports fallback storage for resilience.
-- Event-name normalization was hardened in collect ingestion to unify aliases (for example `added_to_cart`/`cart_add` -> `add_to_cart`).
-- Pixel runtime expanded Woo add-to-cart interception coverage (REST + `wc-ajax` + form submit + click/XHR fallback paths).
-- Historical profile explorer was consolidated into Attribution Journey-first UX with profile search/sort and profile-focus interactions.
-- Customer name extraction and customer-id normalization were improved in backend stitching for Woo profiles and recent purchases.
+- Session Explorer panel: attribution, checkout tokens, top pages, touched products, journey map, related sessions, side-by-side comparison.
+- Woo multi-touch validation: `first_touch`, `last_touch`, `linear` models work and redistribute revenue correctly.
+- CSV export feature completed (2026-04-13): `GET /:account_id/export/candidates` and `POST /:account_id/export/download` produce a ZIP with `orders.csv`, `sessions.csv`, `events.csv`, `items.csv`.
+- Woo customer display names improved in analytics (2026-04-13): resolved names shown instead of generic IDs.
+- Render auto-deploy reconfigured (2026-04-13): `render.yaml` now builds landing, dashboard, and runs Prisma generate + push on every deploy from `german/dev`.
 
-### Next implementation steps (priority, 2026-03-27)
+### Frontend note (ad blocker safety)
 
-1. Make `Live Feed` refresh online-user state on a fixed interval (polling) in addition to event-triggered refresh.
-2. Ensure every live event shows resolved user identity (name, email, phone, or customer id) and explicitly indicates when no logged-in identity is available.
-3. Make Woo sync fully complete for the selected period (no practical 100-order cap), including paginated/backfill strategy for very large stores with queue-safe processing.
-4. Ensure Historical Conversion Journey shows real user names instead of generic `Woo customer #xx` whenever any identity source can resolve the profile.
-5. Ensure Selected Journey renders full stitched event timeline for the selected user/session (not only `Ad Click` + `Purchase`).
-6. Fix Historical Conversion Journey user-filter input UX: black text on white input and verified functional filtering behavior.
+- Public analytics page at `public/adray-analytics.html` must avoid CSS class names that look like ad containers (`ad-panel`, `ad-control`, etc.).
+- Brave Shields can apply cosmetic filtering after first paint and hide those elements.
+- Safe convention: `ops-panel`, `ops-control`.
 
-## Scope and Deliverables
+---
 
-### Layer 1 goal
+## Behavioral Analytics Roadmap
 
-Deliver the first complete layer for first-party event capture and attribution without requiring new Shopify scopes.
+Goal: build the most complete behavioral + attribution + AI product for e-commerce. Own 100% of the data. No third-party data lock-in.
 
-### Functional scope
+### Strategy
 
-- Custom Pixel for Shopify Customer Events.
-- Revenue truth from Shopify orders in read-only mode.
-- Session to checkout to order stitching.
-- Pixel health monitoring.
-- Match rate visibility.
-- Meta and Google connection verification.
-- Basic spend and clicks pull by day and campaign when integrations are available.
+Microsoft Clarity runs today as a scaffold while the self-hosted recording infrastructure is built in parallel. When the native pipeline reaches feature parity, Clarity is turned off.
 
-### Deliverables
+```
+HOY          SEMANAS 1-2    SEMANAS 3-4    SEMANAS 5-6    SEMANAS 7-8    SEMANAS 9-10   SEMANAS 11+
+────         ───────────    ───────────    ───────────    ───────────    ────────────   ──────────
+Clarity      Micro-eventos  rrweb propio   Heatmaps       Behavioral     Session        ML propio
+live +       en pixel       + R2 storage   propios        features +     Replay UI +    scoring
+vinculado    por /collect   + chunk API    + rage/dead    AI Insights    Clarity OFF    tiempo real
+a session_id                               click detect   (Claude API)   en dashboard
+```
 
-- Custom Pixel V1 with installation and verification guidance.
-- Collector endpoint ready to receive browser events.
-- Read-only order sync with basic health metrics.
-- Base attribution stitching.
-- Minimal dashboard for Pixel Health, Match Rate, and Ads Health.
-- Basic ad-platform pull for spend and clicks.
+### Fase 0 — COMPLETADA (2026-04-13): Clarity live
 
-### Original schedule target
+- `data-clarity-id="PROJECT_ID"` en el script tag activa Clarity automáticamente.
+- `clarity('identify', user_key, session_id)` — cada grabación vinculada al identity graph.
+- Tags en Clarity: `adray_session_id`, `utm_source`, `utm_campaign`, `has_gclid`, etc.
+- Evento `clarity_session_linked` llega al collector → `sessions.clarity_playback_url` guardado.
+- El Session Explorer puede mostrar `▶ Ver grabación` con el playback URL de Clarity.
+- Schema Prisma: `Session.claritySessionId` + `Session.clarityPlaybackUrl` añadidos.
 
-- Week 1: schema v0, custom pixel V1, collector base, baseline health.
-- Week 2: revenue sync, stitching base, Pixel Health UI.
-- Week 3: Meta and Google connection validation, Ads Health, spend and clicks pull.
-- Week 4: hardening, pilot onboarding, and demo output.
+### Fase 1 — Semanas 1-2: Micro-eventos conductuales
+
+Extender `adray-pixel.js` con señales de intención que fluyen por `POST /collect` sin infra nueva:
+
+| Evento | Señal |
+|--------|-------|
+| `scroll_depth` (25/50/75/100%) | Engagement con el contenido |
+| `exit_intent` | Intención de abandonar |
+| `rage_click` | Frustración / bug |
+| `dead_click` | Elemento confuso |
+| `tab_visibility_change` | Compara precios en otra pestaña |
+| `form_field_focus/blur` | Fricción en checkout (sin capturar valores) |
+| `form_field_paste` | Pegó email — señal de identidad pre-submit |
+| `checkout_hesitation` | >30s parado en un paso |
+| `cursor_idle` | Parálisis de decisión |
+
+### Fase 2 — Semanas 3-4: rrweb propio + Cloudflare R2
+
+- `rrweb` en el pixel graba DOM mutations, clics, scrolls, movimientos
+- Chunks cada 5s → `POST /collect/recording/chunk` (endpoint nuevo)
+- Redis acumula chunks → comprimir → subir a Cloudflare R2 (`{account_id}/{date}/{session_id}.json.gz`)
+- Metadata en `session_recordings` table (Prisma)
+- Costo R2: $0.015/GB/mes — a 10K sesiones/día son ~$1.80/mes
+
+### Fase 3 — Semanas 5-6: Heatmaps propios
+
+- Job de agregación: lee `events` (clicks con coordenadas X/Y + scrolls) por URL
+- Tabla `heatmap_data`: clicks agrupados por URL + viewport + fecha
+- API: `GET /api/heatmap/:account_id?url=...&days=30` → canvas overlay en dashboard
+- Cuando esté listo: Clarity pierde el caso de heatmaps
+
+### Fase 4 — Semanas 7-8: Behavioral features + AI Insights
+
+`behavioral_features` table (una fila por sesión, lista para ML):
+```
+converted, funnel_depth, last_step_before_exit,
+max_scroll_depth_pct, active_time_ms, page_count,
+rage_click_count, exit_intent_count, checkout_hesitation_ms,
+form_fields_abandoned, form_paste_count, tab_switch_count,
+utm_source, attributed_channel, device_type, is_returning_user
+```
+
+AI Insights job (Claude API, cada 24h): agrupa sesiones por canal + último paso antes de salir → revenue perdido estimado → recomendaciones en lenguaje natural → guardado en `merchant_snapshots.ai_insights`.
+
+### Fase 5 — Semanas 9-10: Session Replay propio + migración
+
+- Integrar `rrweb-player` en `dashboard-src` como componente React
+- Session Explorer muestra replay inline desde R2 (reemplaza el link de Clarity)
+- Clarity se desactiva quitando `data-clarity-id` del script tag
+
+### Fase 6 — Semanas 11+: ML propio
+
+Con 60-90 días de `behavioral_features` acumulados:
+- **Clasificador de abandono**: P(conversión) en tiempo real → intervención si score < 0.15
+- **Predictor de LTV**: revenue esperado en 90 días → priorizar retargeting
+- **Clustering**: segmentos conductuales → personalización por segmento
+
+---
+
+## Next Implementation Steps (priority, updated 2026-04-13)
+
+1. **Live Feed polling**: add a fixed-interval refresh of online-user state in addition to event-triggered refresh.
+2. **Identity resolution in Live Feed**: every live event should show resolved user identity (name, email, phone, or customer ID); explicitly indicate when no logged-in identity is available.
+3. **Woo sync pagination**: remove the practical 100-order cap; implement paginated/backfill strategy for large stores with queue-safe processing.
+4. **Historical Conversion Journey — real names**: show actual user names instead of generic `Woo customer #xx` wherever any identity source can resolve the profile.
+5. **Selected Journey — full event timeline**: render the complete stitched event timeline for the selected user/session (not only `Ad Click` + `Purchase`).
+6. **User filter UX fix**: black text on white input in Historical Conversion Journey user-filter, plus verified functional filtering behavior.
+7. **Shopify pixel validation**: confirm browser event capture, checkout continuity, and purchase visibility in staging (Woo already passed this bar).
+8. **Meta CAPI**: complete real purchase fanout in `backend/services/capiFanout.js` (currently placeholder).
+9. **Google conversions**: replace stub in `backend/routes/adrayPlatforms.js` with validated end-to-end upload.
+10. **`ENCRYPTION_KEY` fallback**: remove unsafe production fallback that regenerates on restart.
+11. **Rate limit key**: confirm `account_id` is used (not legacy `shop_id`) for public non-Shopify traffic.
+
+---
 
 ## Canonical Pipeline
 
-- Browser Pixel -> `POST /collect` -> PostgreSQL.
-- Checkout map persists attribution snapshot at checkout time.
-- Purchase webhooks or Woo order sync persist orders server-side.
-- Async pipeline performs attribution stitching, order enrichment, CAPI fanout, snapshot update, and failed job logging.
+```
+Browser Pixel -> POST /collect -> PostgreSQL
+Checkout map persists attribution snapshot at checkout time
+Purchase webhooks or Woo order sync persist orders server-side
+Async pipeline: attribution stitching -> order enrichment -> CAPI fanout -> snapshot update -> failed job logging
+```
+
+---
 
 ## Canonical Data Model
 
-The effective Prisma model set is:
+Prisma schema at `backend/prisma/schema.prisma`. All models use `account_id`-centric design with partial legacy `shop_id` fallback in some paths.
 
-- `Account`
-- `PlatformConnection`
-- `IdentityGraph`
-- `Session`
-- `CheckoutSessionMap`
-- `Event`
-- `Order`
-- `EventDedup`
-- `MerchantSnapshot`
-- `FailedJob`
+| Model | Table | Purpose |
+|-------|-------|---------|
+| `Account` | `accounts` | Merchant account, platform type |
+| `PlatformConnection` | `platform_connections` | Meta/Google/TikTok OAuth tokens per account |
+| `IdentityGraph` | `identity_graph` | Per-user identity node with all click IDs, hashes |
+| `Session` | `sessions` | Browser visit with UTMs, referrer, landing page |
+| `CheckoutSessionMap` | `checkout_session_map` | Checkout token -> session stitch key |
+| `Event` | `events` | Individual browser events with full enrichment |
+| `Order` | `orders` | Revenue truth with attribution, CAPI status |
+| `EventDedup` | `event_dedup` | Browser + server event dedup tracking |
+| `MerchantSnapshot` | `merchant_snapshots` | Aggregated revenue/channel/funnel summary |
+| `FailedJob` | `failed_jobs` | Async job failures with retry state |
+| `SessionRecording` | `session_recordings` | **BRI** — rrweb recording triggered from AddToCart, R2 keys, behavioral signals, LLM archetype |
+| `AbandonmentRiskScore` | `abandonment_risk_scores` | **BRI** — Real-time risk score (0-100) per active checkout session |
+| `AbandonmentCohort` | `abandonment_cohorts` | **BRI** — Daily-computed abandonment cohorts by friction pattern |
 
-The original planning spec described a shop-centric version of the same pipeline with these equivalent entities:
+Key enums:
+- `Platform`: `META`, `GOOGLE`, `TIKTOK`
+- `ConnectionStatus`: `ACTIVE`, `DISCONNECTED`, `ERROR`
+- `DedupStatus`: `SINGLE`, `BROWSER_ONLY`, `SERVER_ONLY`, `DEDUPLICATED`
+- `AccountPlatform`: `SHOPIFY`, `WOOCOMMERCE`, `MAGENTO`, `CUSTOM`, `OTHER`
+- `RecordingStatus`: `RECORDING`, `FINALIZING`, `READY`, `ERROR` *(BRI)*
+- `RecordingOutcome`: `PURCHASED`, `ABANDONED`, `STILL_BROWSING` *(BRI)*
 
-- `shops`
-- `platform_connections`
-- `identity_graph`
-- `sessions`
-- `checkout_session_map`
-- `events`
-- `orders`
-- `event_dedup`
-- `merchant_snapshots`
+MongoDB models (legacy/operational, in `backend/models/`):
+- `User`, `ShopConnections`, `McpData`, `MetaAccount`, `GoogleAccount`, `PixelSelection`, `AnalyticsEvent`, `Audit`, `TaxProfile`, `DailySignalDeliveryRun`
 
-The current implementation uses an `account_id`-centric model with partial legacy `shop_id` fallback in some paths.
-
-## Phase 1 Data Coverage Audit (datos-pixel.md)
-
-Reference reviewed: `datos-pixel.md` (March 2026). The list below maps requested Phase 1 fields against current implementation.
-
-### Layer 1: Identity anchors
-
-- `user_key`: YES. Persisted in `identity_graph`, `events`, `sessions`, and used in `orders` when available.
-- `email_hash`: PARTIAL. Persisted in `identity_graph` and `orders` when payload/webhook includes email; not guaranteed from all Shopify pixel events.
-- `phone_hash`: PARTIAL. Persisted in `identity_graph` and `orders` when payload/webhook includes phone; not guaranteed from all Shopify pixel events.
-- `customer_id`: PARTIAL. Persisted when present in browser payload or ecommerce order payload; not guaranteed on anonymous browser events.
-
-### Layer 2: Session events
-
-- `session_id`: YES. Persisted in `sessions` and `events`.
-- `utm_source`, `utm_medium`, `utm_campaign`: YES. Persisted in `sessions` and checkout attribution snapshots.
-- `fingerprint_hash`: YES. Persisted in `identity_graph`.
-- `ip_hash`: YES. Persisted as hashed value in identity/session/event write paths.
-- `page_events[]`: PARTIAL. Events are persisted row-by-row in `events`, not as one array field in `sessions`.
-- `session_start_at`: YES (`sessions.started_at`).
-- `session_end_at`: PARTIAL (`sessions.last_event_at` works as last activity, but no explicit immutable end marker).
-
-### Layer 3: Touchpoints and click IDs
-
-- `fbclid`, `gclid`, `ttclid`: YES. Persisted in `identity_graph`, `sessions`, and attribution snapshots when available.
-- `event_id` server-generated: YES. Generated server-side in collector/webhooks/order sync paths.
-- `landing_page`: PARTIAL. Field exists (`sessions.landing_page_url`) but still depends on sender payload consistency.
-- `referrer`: YES. Persisted in `sessions` and attribution snapshots when provided.
-
-### Layer 4: Order truth
-
-- `order_id`: YES. Stored in `orders.order_id`.
-- `gross_revenue`: YES (`orders.revenue` from platform order payload).
-- `refund_amount`: PARTIAL. Dedicated field now exists and is updated from Shopify `orders-updated` and Woo sync when payloads include it.
-- `chargeback_flag`: PARTIAL. Dedicated field now exists and is updated from webhook payload heuristics, but still needs disputes API parity.
-- `orders_count` stamp at purchase time: PARTIAL. Field now exists and is written from order payloads when present, but not guaranteed for all stores/payload variants.
-- `checkout_token`: YES. Stored in `checkout_session_map` and `orders`, used as stitch key.
-- `customer_id` on order: YES when provided by platform payload.
-- `created_at` (platform order creation time): YES (`orders.platform_created_at`).
-
-### Layer 5: Platform daily pull
-
-- `meta_spend`, `meta_impressions`: YES (available in MCP adapters/chunks and channel summary paths).
-- `meta_reported_conv_value`: PARTIAL (available in MCP campaign payloads as conversion value/ROAS context, not yet standardized as one canonical DB field in Prisma).
-- `google_spend`, `google_clicks`: YES (available in MCP adapters/chunks and channel summary paths).
-- `ga4_session_source`: NO (not found as canonical persisted field in current MCP models/routes).
-
-### Layer 6: Raw enrichment on every event
-
-- `confidence_score`: YES (event-level field now persisted from identity resolution output in collect path).
-- `match_type` (`deterministic` / `probabilistic`): YES (event-level field now persisted in collect path).
-- `raw_source` (`pixel` / `webhook` / `api`): PARTIAL (dedicated event field now exists and is written in collect; webhook/api parity still needs full rollout).
-- `collected_at`: PARTIAL (dedicated event field now exists and is written in collect; other ingestion paths still need harmonization).
-
-### Critical stitch status
-
-- `checkout_token -> session_id` at checkout time: YES for browser `begin_checkout` path (`POST /collect`) via `checkout_session_map` upsert.
-- Shopify `checkouts/create` webhook currently backfills with `unknown` session and user when browser context is missing (good fallback, but weaker than browser begin_checkout mapping).
+---
 
 ## Confirmed Endpoints
 
 ### Core pipeline
 
-- `POST /collect`
-- `POST /webhooks/shopify/orders-create`
-- `POST /webhooks/shopify/orders-updated`
-- `POST /webhooks/shopify/checkouts-create`
-- `POST /api/woo/orders-sync`
+| Method | Path | Purpose |
+|--------|------|---------|
+| `POST` | `/collect` | Browser event ingestion (main entry point) |
+| `POST` | `/webhooks/shopify/orders-create` | Shopify order webhook |
+| `POST` | `/webhooks/shopify/orders-updated` | Shopify order update webhook |
+| `POST` | `/webhooks/shopify/checkouts-create` | Shopify checkout webhook (critical stitch) |
+| `POST` | `/api/woo/orders-sync` | WooCommerce order sync from plugin |
+
+### Analytics and dashboard
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| `GET` | `/api/analytics/:account_id` | Main analytics payload |
+| `GET` | `/api/analytics/:account_id/data-coverage?days=30` | Phase 1 field coverage audit |
+| `GET` | `/api/analytics/:account_id/export/candidates` | List exportable journeys |
+| `POST` | `/api/analytics/:account_id/export/download` | Download CSV ZIP (orders, sessions, events, items) |
+| `GET` | `/api/feed/:account_id` | SSE Live Feed stream |
+| `GET` | `/api/analytics/shops` | List authorized shops for logged-in user |
 
 ### Platform integrations
 
-- `GET /api/pixels/:account_id/meta`
-- `GET /api/conversions/:account_id/google`
-- `POST /api/connections/:account_id`
+| Method | Path | Purpose |
+|--------|------|---------|
+| `GET` | `/api/pixels/:account_id/meta` | Meta pixel list |
+| `GET` | `/api/conversions/:account_id/google` | Google conversions (partial — stub) |
+| `POST` | `/api/connections/:account_id` | Save platform connection |
+| `POST` | `/api/mcpdata/collect-now` | Trigger immediate MCP pull |
+| `GET` | `/api/mcpdata/meta/status` | Meta pull status |
+| `GET` | `/api/mcpdata/google-ads/status` | Google Ads pull status |
+| `GET` | `/api/mcpdata/ga4/status` | GA4 pull status |
+
+### BRI: Session recording ingest (pixel-facing, no auth)
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| `POST` | `/recording/start` | Create `SessionRecording` row when AddToCart fires |
+| `POST` | `/recording/chunk` | Receive rrweb event batch → write to R2 chunk + Redis index |
+| `POST` | `/recording/end` | Finalize recording → enqueue BullMQ `recording:finalize` job |
+
+### BRI: Recording API (dashboard, no auth required same as analytics)
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| `GET` | `/api/recording/:account_id/:recording_id` | Metadata + presigned R2 URL for inline player (TTL 15min) |
+| `GET` | `/api/recording/:account_id/session/:session_id` | Recording linked to a specific session |
 
 ### WordPress plugin distribution
 
-- `GET /wp-plugin/adnova-pixel/update.json`
-- `GET /wp-plugin/adnova-pixel/download`
+| Method | Path | Purpose |
+|--------|------|---------|
+| `GET` | `/wp-plugin/adnova-pixel/update.json` | Auto-update metadata |
+| `GET` | `/wp-plugin/adnova-pixel/download` | Plugin ZIP download |
+
+---
 
 ## Service Responsibilities
 
-### Identity resolution
+### Identity resolution (`backend/services/identityResolution.js`)
 
-The collector resolves a persistent `user_key` with the following priority:
-
-1. Existing first-party cookie.
-2. Click IDs like `fbclid`, `gclid`, or `ttclid`.
+Resolves a persistent `user_key` with the following priority:
+1. Existing first-party cookie (`_adray_uid`).
+2. Click IDs: `fbclid`, `gclid`, `ttclid`.
 3. Customer ID if present.
 4. Fingerprint derived from request metadata.
 
-It then upserts identity data and refreshes the `_adray_uid` cookie.
+Upserts `identity_graph` and refreshes the `_adray_uid` cookie.
 
-### Attribution stitching
+### Attribution stitching (`backend/services/attributionStitching.js`)
 
-The order pipeline looks up the checkout token, retrieves the attribution snapshot, classifies the channel, and assigns confidence based on the strongest available signal.
+Looks up checkout token, retrieves attribution snapshot, classifies channel, assigns confidence:
 
-Confidence targets from the original design:
+| Signal | Confidence |
+|--------|-----------|
+| Click ID present | `1.0` |
+| UTM only | `0.85` |
+| Referrer only | `0.7` |
+| Fingerprint match | `0.6` |
+| No attribution signal | `0.0` |
 
-- click ID present: `1.0`
-- UTM only: `0.85`
-- referrer only: `0.7`
-- fingerprint match: `0.6`
-- no attribution signal: `0.0`
+Supported models: `first_touch`, `last_touch`, `linear`, `meta`, `google_ads`.
 
-### CAPI fanout
+### CAPI fanout (`backend/services/capiFanout.js`)
 
-The intended design is parallel platform fanout with isolated failures. One failed platform send must not block the others.
+**Status: placeholder — not complete for production.**
 
-Planned platform behavior:
+Intended design: parallel platform fanout with isolated failures. One failed platform send must not block others.
 
-- Meta CAPI purchase send with hashed PII, `event_id`, `fbp`, `fbc`, IP, user-agent, revenue, currency, and order contents.
-- Google conversions upload when `gclid` and a valid conversion action are available.
+Planned:
+- Meta CAPI purchase send with hashed PII, `event_id`, `fbp`, `fbc`, IP, user-agent, revenue, currency, order contents.
+- Google conversions upload when `gclid` and valid conversion action are available.
 - TikTok parity where relevant.
 
-### Merchant snapshot
+### Merchant snapshot (`backend/services/merchantSnapshot.js`)
 
-The merchant snapshot is intended to summarize:
+Summarizes: total revenue, order count, AOV, revenue by channel, ROAS when spend data exists, funnel metrics, pixel health, top products, attribution confidence distribution, unattributed order count and rate.
 
-- total revenue,
-- order count,
-- AOV,
-- revenue by channel,
-- ROAS when spend data exists,
-- funnel metrics,
-- pixel health,
-- top products,
-- attribution confidence distribution,
-- unattributed order count and rate.
+### MCP worker (`npm run worker:mcp`)
+
+Runs background jobs for Meta, Google Ads, and GA4 daily pull. Stores datasets as `McpData` chunks in MongoDB. Triggered via `POST /api/mcpdata/collect-now` or scheduled interval.
+
+---
+
+## Phase 1 Data Coverage Audit
+
+Reference: `datos-pixel.md` (March 2026). Validate with:
+
+```
+GET /api/analytics/:account_id/data-coverage?days=30
+```
+
+### Layer 1: Identity anchors
+- `user_key`: YES
+- `email_hash`: PARTIAL (reliable at order/login time; checkout blur capture implemented but not guaranteed for all flows)
+- `phone_hash`: PARTIAL (same as email_hash)
+- `customer_id`: PARTIAL (present when included in browser or order payload)
+
+### Layer 2: Session events
+- `session_id`: YES
+- `utm_source`, `utm_medium`, `utm_campaign`: YES
+- `fingerprint_hash`: YES
+- `ip_hash`: YES
+- `page_events[]`: PARTIAL (row-by-row in `events`, not an array field in `sessions`)
+- `session_start_at`: YES (`sessions.started_at`)
+- `session_end_at`: PARTIAL (`sessions.last_event_at` as proxy; explicit close policy not yet implemented)
+
+### Layer 3: Touchpoints and click IDs
+- `fbclid`, `gclid`, `ttclid`: YES
+- `event_id` server-generated: YES
+- `landing_page`: PARTIAL (`sessions.landing_page_url` exists but depends on sender payload)
+- `referrer`: YES
+
+### Layer 4: Order truth
+- `order_id`: YES
+- `gross_revenue`: YES
+- `refund_amount`: PARTIAL (field exists; updated from Shopify `orders-updated` and Woo sync when payloads include it)
+- `chargeback_flag`: PARTIAL (field exists; webhook/order-meta heuristic, not disputes API)
+- `orders_count`: PARTIAL (field exists; written when present in payload, not guaranteed for all stores)
+- `checkout_token`: YES
+- `customer_id` on order: YES when provided
+- `created_at`: YES (`orders.platform_created_at`)
+
+### Layer 5: Platform daily pull
+- `meta_spend`, `meta_impressions`: YES (MCP chunks)
+- `meta_reported_conv_value`: PARTIAL (available in MCP payloads; not a canonical DB field)
+- `google_spend`, `google_clicks`: YES (MCP chunks)
+- `ga4_session_source`: EXISTS as `sessions.ga4_session_source` in Prisma schema but canonical population still needs validation
+
+### Layer 6: Raw enrichment
+- `confidence_score`: YES (event-level, persisted from identity resolution)
+- `match_type`: YES (event-level)
+- `raw_source`: PARTIAL (in collect; webhook/api parity needs rollout)
+- `collected_at`: PARTIAL (in collect; other ingestion paths need harmonization)
+
+### Critical stitch
+- `checkout_token -> session_id` at checkout time: YES for browser `begin_checkout` path (`POST /collect`)
+- Shopify `checkouts/create` webhook backfills with `unknown` when browser context missing (good fallback)
+
+---
 
 ## Security Requirements
 
-- Validate Shopify HMAC on every webhook.
-- Encrypt platform access tokens at rest.
-- Hash email and phone with SHA-256 before storing or sending.
-- Never log raw PII.
+- Validate Shopify HMAC on every webhook (`backend/middleware/verifyShopifyWebhookHmac.js`).
+- Encrypt platform access tokens at rest (`ENCRYPTION_KEY` env var).
+- Hash email and phone with SHA-256 before storing or sending (`backend/utils/encryption.js`).
+- Never log raw PII (`backend/middleware/sanitizeLogs.js`).
 - Validate account or shop identity on protected requests.
-- Rate limit `POST /collect` to `100` requests per minute per merchant.
+- Rate limit `POST /collect` to 100 requests per minute per merchant (`backend/middleware/rateLimitCollect.js`).
+
+---
 
 ## Error Handling Requirements
 
-- Shopify webhooks should return `200` even when downstream processing fails.
-- Failures should be captured in `FailedJob` for retry.
+- Shopify webhooks return `200` even when downstream processing fails.
+- Failures captured in `FailedJob` for retry.
 - CAPI failures are non-fatal.
-- Retry policy target: exponential backoff with `1s`, `5s`, and `30s` delays.
+- Retry policy: exponential backoff with `1s`, `5s`, `30s` delays.
+- `POST /collect` has a three-level persistence fallback:
+  1. Enriched write (all fields).
+  2. Legacy-compatible write.
+  3. Minimal write.
+  4. If all three fail: store payload in `failed_jobs` as safety net (`fallback_stored: true`).
+
+---
 
 ## Environment Variables
 
 ### Core pipeline
-
 - `DATABASE_URL`
 - `REDIS_URL`
 - `ENCRYPTION_KEY`
@@ -335,7 +544,6 @@ The merchant snapshot is intended to summarize:
 - `SHOPIFY_WEBHOOK_SECRET`
 
 ### Integrations
-
 - `META_APP_ID`
 - `META_APP_SECRET`
 - `GOOGLE_CLIENT_ID`
@@ -343,106 +551,43 @@ The merchant snapshot is intended to summarize:
 - `GOOGLE_ADS_DEVELOPER_TOKEN`
 
 ### Runtime and app infra
-
 - `MONGO_URI`
 - `SESSION_SECRET`
-- `APP_URL`
+- `APP_URL` — required; determines OAuth callback URLs; must match the public URL of the Render service
 - `SHOPIFY_API_KEY`
-- Render or environment-specific runtime values as needed.
+- `NODE_ENV=production` — must be set on all Render services
+
+### Optional access control
+- `ADRAY_ALLOWED_ACCOUNT_IDS` — comma-separated list; if set, restricts analytics routes to listed accounts
+
+---
 
 ## Main Risks and Gaps
 
 ### P0
-
-- `/collect` instability in production.
-- Hybrid Prisma plus Mongo data-layer transitions causing mismatched assumptions.
+- Meta CAPI is still placeholder in `backend/services/capiFanout.js` — not sending real purchases.
+- Shopify pixel validation not yet completed (WooCommerce passed; Shopify still pending).
 
 ### P1
-
-- Meta CAPI is still partial or placeholder in current code.
-- Rate limit key still prioritizes legacy `shop_id` instead of `account_id` in non-Shopify traffic.
-- `ENCRYPTION_KEY` fallback behavior is unsafe for production if it regenerates on restart.
-- Time handling is now acceptable for operator review in the recent purchases table, but the long-term cleanup is still to converge Woo source timestamps and dashboard rendering into one unambiguous policy.
+- `ENCRYPTION_KEY` fallback is unsafe for production if it regenerates on restart.
+- Rate limit key may still prioritize legacy `shop_id` instead of `account_id` for non-Shopify traffic.
+- Google conversions endpoint still a stub in `backend/routes/adrayPlatforms.js`.
+- `session_end_at` explicit close policy not implemented (fallback is `last_event_at`).
 
 ### P2
+- `chargeback_flag` from a dedicated disputes API — currently heuristic only.
+- `meta_impressions` and `meta_reported_conv_value` not yet normalized as canonical Prisma fields.
+- `ga4_session_source` field exists in schema but population path needs validation.
 
-- Endpoint naming and historical docs previously diverged.
-- Missing canonical incident playbook was creating confusion before this consolidation.
-
-## Priority Execution Plan
-
-### Phase 1: stabilize ingestion
-
-1. Capture the exact production stack trace for `/collect`.
-2. Confirm deployed Prisma client matches `backend/prisma/schema.prisma`.
-3. Verify required environment variables are set and valid.
-4. Trigger a minimal collector payload and confirm persistence in `events`.
-5. Re-test live WooCommerce traffic from `page_view` through `purchase`.
-
-### Phase 2: close pipeline gaps
-
-1. Implement full Meta CAPI send.
-2. Verify Google conversions listing and upload behavior with real ad accounts after latest backend changes.
-3. Add missing browser fields consistently: `utm_content`, `utm_term`, `landing_page_url`, and `view_item`.
-4. Finish sender coverage so pixel payloads consistently include identity and landing fields across Shopify and Woo.
-5. Extend `raw_source` and `collected_at` to every ingestion path, not only collect.
-6. Add disputes API parity to harden `chargeback_flag` beyond webhook heuristics.
-7. Enforce immutable `orders_count` stamping policy at first order-ingestion write.
-8. Define one canonical persisted field for GA4 session source/medium in MCP or analytics storage.
-
-### Phase 3: consolidate platform behavior
-
-1. Define the final source of truth between Prisma and Mongo for each domain.
-2. Standardize token and integration lookup paths.
-3. Add startup health checks for required environment variables.
-
-### Phase 4: QA and release hardening
-
-1. Run end-to-end flow: `page_view -> add_to_cart -> begin_checkout -> purchase -> dashboard`.
-2. Re-run operational checks and SQL validation.
-3. Keep release evidence from API responses and SQL outputs.
-
-## Definition of Done
-
-- WooCommerce and Shopify purchases persist into `orders`.
-- Orders are attributed at a meaningful rate.
-- Merchant snapshot updates without critical failures.
-- Meta and Google resource endpoints return real data, not placeholders.
-- Meta CAPI purchase send works with `event_id` dedup.
-- Dashboard reflects revenue and channel metrics without relying on fragile fallbacks.
+---
 
 ## Operational Checklist
 
-### Success criteria
-
-The dashboard is considered complete when all are true:
-
-- `POST /collect` returns `2xx` consistently and persists events.
-- Purchases arrive in `orders` for WooCommerce and Shopify.
-- Attribution fields in `orders` are populated for a meaningful percentage of orders.
-- `merchant_snapshots` updates without critical failures.
-- Meta CAPI and Google conversions endpoints are real and not placeholders.
-
-### Known code notes
-
-- Meta CAPI is still placeholder in `backend/services/capiFanout.js`.
-- Google conversions listing was upgraded from stub to real retrieval path in `backend/routes/adrayPlatforms.js`; pending final validation with fully connected production-like accounts.
-- Dashboard still has revenue fallback to purchase events when synced orders are incomplete.
-- Recent purchases timezone has already been validated visually in staging after the focused dashboard adjustment; full source-level time normalization should still be re-checked with fresh Woo orders after plugin rollout.
-
-### Terminal variables
-
-Use PowerShell:
+### Terminal variables (PowerShell)
 
 ```powershell
 $BASE_URL   = "https://adray-app-staging-german.onrender.com"
 $ACCOUNT_ID = "your-domain.com"
-```
-
-Optional local testing:
-
-```powershell
-$BASE_URL = "http://localhost:3000"
 ```
 
 ### API validation
@@ -450,45 +595,40 @@ $BASE_URL = "http://localhost:3000"
 #### Minimal collect
 
 ```powershell
-curl.exe -s -X POST "$BASE_URL/collect" ^
-  -H "Content-Type: application/json" ^
+curl.exe -s -X POST "$BASE_URL/collect" `
+  -H "Content-Type: application/json" `
   -d "{\"account_id\":\"$ACCOUNT_ID\",\"platform\":\"woocommerce\",\"event_name\":\"page_view\",\"page_url\":\"https://$ACCOUNT_ID/\"}"
 ```
 
-Expected:
+Expected: `success: true`, non-empty `event_id`, non-empty `user_key`.
 
-- `success: true`
-- non-empty `event_id`
-- non-empty `user_key`
+Healthy persistence flags:
+- `event_persisted: true`
+- `session_persisted: true`
+- `fallback_stored: false`
+
+If `fallback_stored: true`, inspect `failed_jobs` rows with `job_type` starting with `collect_` and run Prisma schema alignment.
 
 #### begin_checkout mapping
 
 ```powershell
 $CHECKOUT_TOKEN = "chk_test_001"
-
-curl.exe -s -X POST "$BASE_URL/collect" ^
-  -H "Content-Type: application/json" ^
+curl.exe -s -X POST "$BASE_URL/collect" `
+  -H "Content-Type: application/json" `
   -d "{\"account_id\":\"$ACCOUNT_ID\",\"platform\":\"woocommerce\",\"event_name\":\"begin_checkout\",\"checkout_token\":\"$CHECKOUT_TOKEN\",\"page_url\":\"https://$ACCOUNT_ID/checkout\",\"utm_source\":\"google\",\"utm_medium\":\"paid_search\",\"gclid\":\"test-gclid-123\"}"
 ```
 
-Expected:
-
-- `success: true`
-- event persists
-- checkout token can be found in `checkout_session_map`
+Expected: `success: true`, checkout token in `checkout_session_map`.
 
 #### Woo order sync
 
 ```powershell
-curl.exe -s -X POST "$BASE_URL/api/woo/orders-sync" ^
-  -H "Content-Type: application/json" ^
+curl.exe -s -X POST "$BASE_URL/api/woo/orders-sync" `
+  -H "Content-Type: application/json" `
   -d "{\"account_id\":\"$ACCOUNT_ID\",\"order_id\":\"woo_test_1001\",\"order_number\":\"1001\",\"checkout_token\":\"$CHECKOUT_TOKEN\",\"revenue\":199.99,\"subtotal\":180,\"discount_total\":0,\"shipping_total\":10,\"tax_total\":9.99,\"currency\":\"MXN\",\"items\":[{\"id\":\"sku_1\",\"name\":\"Test Product\",\"quantity\":1,\"price\":199.99}],\"utm_source\":\"google\",\"utm_medium\":\"paid_search\",\"utm_campaign\":\"brand\",\"gclid\":\"test-gclid-123\"}"
 ```
 
-Expected:
-
-- `success: true`
-- `attributedChannel` present when attribution is available
+Expected: `success: true`, `attributedChannel` present.
 
 #### Dashboard analytics endpoint
 
@@ -496,116 +636,172 @@ Expected:
 curl.exe -s "$BASE_URL/api/analytics/$ACCOUNT_ID"
 ```
 
-Expected:
+Expected: response contains revenue and event stats, no server error.
 
-- response contains revenue and event stats
-- no server error
-
-#### Platform endpoints health shape
-
-Meta pixels:
+#### Data coverage
 
 ```powershell
-curl.exe -s "$BASE_URL/api/pixels/$ACCOUNT_ID/meta"
+curl.exe -s "$BASE_URL/api/analytics/$ACCOUNT_ID/data-coverage?days=30"
 ```
 
-Google conversions:
+Expected: `missing: []` for Phase 1 completion.
+
+#### MCP status
 
 ```powershell
-curl.exe -s "$BASE_URL/api/conversions/$ACCOUNT_ID/google"
+curl.exe -s "$BASE_URL/api/mcpdata/meta/status"
+curl.exe -s "$BASE_URL/api/mcpdata/google-ads/status"
 ```
 
-Expected:
-
-- Meta should return a real pixel list when connected.
-- Google will remain partial until the stub is replaced.
+Expected: `ready: true`, `chunkCount > 0`.
 
 ### SQL validation
 
-#### Events in last 24h
-
 ```sql
+-- Events in last 24h
 SELECT count(*) AS events_24h
 FROM events
 WHERE account_id = 'your-domain.com'
   AND created_at >= now() - interval '24 hours';
-```
 
-#### Orders in last 24h
-
-```sql
-SELECT count(*) AS orders_24h,
-       coalesce(sum(revenue), 0) AS revenue_24h
+-- Orders in last 24h
+SELECT count(*) AS orders_24h, coalesce(sum(revenue), 0) AS revenue_24h
 FROM orders
 WHERE account_id = 'your-domain.com'
   AND created_at >= now() - interval '24 hours';
-```
 
-#### Attribution fill rate
-
-```sql
+-- Attribution fill rate
 SELECT
   count(*) AS total_orders,
   count(*) FILTER (WHERE attributed_channel IS NOT NULL) AS orders_with_channel,
-  round(
-    100.0 * count(*) FILTER (WHERE attributed_channel IS NOT NULL) / nullif(count(*),0),
-    2
-  ) AS channel_fill_pct
+  round(100.0 * count(*) FILTER (WHERE attributed_channel IS NOT NULL) / nullif(count(*),0), 2) AS channel_fill_pct
 FROM orders
 WHERE account_id = 'your-domain.com'
   AND created_at >= now() - interval '7 days';
-```
 
-#### Checkout map linkage
-
-```sql
+-- Checkout map linkage
 SELECT count(*) AS mapped_orders
 FROM orders o
-JOIN checkout_session_map c
-  ON o.checkout_token = c.checkout_token
+JOIN checkout_session_map c ON o.checkout_token = c.checkout_token
 WHERE o.account_id = 'your-domain.com'
   AND o.created_at >= now() - interval '7 days';
-```
 
-#### Snapshot freshness
+-- Snapshot freshness
+SELECT account_id, updated_at FROM merchant_snapshots WHERE account_id = 'your-domain.com';
 
-```sql
-SELECT account_id, updated_at
-FROM merchant_snapshots
-WHERE account_id = 'your-domain.com';
-```
-
-#### Failed jobs recent
-
-```sql
-SELECT job_type, created_at, error
-FROM failed_jobs
+-- Failed jobs recent
+SELECT job_type, created_at, error FROM failed_jobs
 WHERE created_at >= now() - interval '24 hours'
-ORDER BY created_at DESC
-LIMIT 50;
+ORDER BY created_at DESC LIMIT 50;
 ```
+
+### Operator runbook to unblock Prisma push
+
+Run from the Render shell (or any environment pointing to staging `DATABASE_URL`):
+
+1. `npm run db:pc:check`
+2. If duplicates reported: `npm run db:pc:dedupe`
+3. Re-run `npm run db:pc:check` — confirm zero duplicates
+4. `npm run prisma:push -- --accept-data-loss`
+5. Re-test collect and verify flags: `event_persisted: true`, `session_persisted: true`, `fallback_stored: false`
+
+Safety note: `db:pc:dedupe` creates a backup table `platform_connections_backup_YYYYMMDD_HHMMSS` before deleting duplicates.
 
 ### Quick scoring
-
 - `90-100%`: complete
 - `70-89%`: usable but partial
-- `<70%`: incomplete, fix ingestion and integration first
+- `<70%`: incomplete — fix ingestion and integration first
 
-## Pixel Installation
+---
 
-### Merchant snippet
+## Attribution Test Plan
 
-Use this in the merchant `<head>`:
+### Test 1: browser signal capture
 
-```html
-<script src="https://adray-app-staging-german.onrender.com/adray-pixel.js"
-        data-account-id="merchant-domain-or-acct-id"></script>
+1. Open the store with `utm_source`, `utm_medium`, `utm_campaign` in the URL.
+2. Visit a product page.
+3. Add to cart.
+4. Start checkout.
+5. Complete a purchase.
+6. Verify dashboard shows `view_item`, `add_to_cart`, `begin_checkout`, and attributed purchase.
+
+### Test 2: click ID capture
+
+1. Open store with `gclid` or `fbclid` in the URL.
+2. Complete purchase flow.
+3. Verify order keeps click ID in attribution data and resolves to expected paid channel.
+
+### Test 3: Woo fallback attribution
+
+1. Complete purchase where WooCommerce already has source metadata.
+2. Verify synced order receives attribution even if browser signal is incomplete.
+3. Confirm dashboard exposes Woo source label in recent purchases.
+
+### Test 4: model comparison
+
+1. Load same account in dashboard.
+2. Switch attribution selector between `first touch`, `last touch`, `linear`.
+3. Confirm channel chart and attributed revenue/order breakdown change consistently.
+
+### Test 5: unattributed diagnosis
+
+1. Find a recent unattributed order in dashboard or DB.
+2. Check whether corresponding session exists.
+3. Check whether `checkout_token` was persisted.
+4. Check whether order has attribution snapshot.
+5. Record failure mode before changing code.
+
+Root cause categories:
+- no browser event
+- no checkout map
+- missing UTMs or click IDs
+- order sync arrived without attribution context
+- collector persistence failure
+
+### Test 6: Shopify pixel smoke test
+
+1. Install custom pixel in Shopify staging store.
+2. Open storefront in incognito with tagged URL (`utm_source`, `utm_medium`, `utm_campaign`).
+3. Verify `page_view` reaches `POST /collect` and appears in `Live Feed`.
+4. Visit product page → verify `view_item`.
+5. Add to cart → verify `add_to_cart`.
+6. Start checkout → verify `begin_checkout` + `checkout_token` persistence.
+7. Complete purchase (if possible) → verify order appears with channel and campaign context.
+
+### User-assisted validation URL template
+
+```
+https://your-store-domain/?utm_source=google&utm_medium=paid_search&utm_campaign=brand-test&utm_content=adset-test&utm_term=creative-test&gclid=test-gclid-123
 ```
 
-Notes:
+Send back: exact timestamp, final URL, order number, whether dashboard showed correct channel and campaign.
 
-- `data-account-id` must be a plain value without protocol or trailing slash.
-- Initial `page_view` should reach `/collect` before any cart action.
+---
+
+## Latest Staging Validation Evidence
+
+### WooCommerce (2026-03-13)
+
+- Timestamp: `13/3/2026, 8:12:57 a.m.`
+- Order: `66308`, Customer: `Germán Muñoz`, Revenue: `$374.95`
+- Attribution: `Google · brand-test`, Source: `Woo Orders Sync`
+- Debug: `woo=Google | utm=google | campaign=brand-test`
+- Home → Tienda: order `66310`, attribution `Google · home_to_store_test` ✓
+- Checkout login stitching: OK ✓
+- Attribution and campaign persistence: OK ✓
+- Timezone in recent purchases: OK ✓
+
+### Collector (2026-03-23)
+
+- Latest live tests: `success: true`, `event_persisted: true`, `session_persisted: true`, `fallback_stored: false`.
+- Data coverage endpoint: stable, no `500` or degraded Prisma errors.
+
+### MCP Ads pull (2026-03-24)
+
+- Meta pull: `collectMeta ok=true`, datasets stored, `ready=true`, `chunkCount > 0`.
+- Google Ads pull: `collectGoogle ok=true`, datasets stored, `ready=true`, `chunkCount > 0`.
+
+---
 
 ## WordPress Plugin
 
@@ -615,620 +811,455 @@ Adnova Pixel installs the tracking script automatically on WordPress and uses th
 
 ### Behavior
 
-- Detects the site domain via `home_url()`.
+- Detects site domain via `home_url()`.
 - Injects `https://adray-app-staging-german.onrender.com/adray-pixel.js` into the frontend.
 - Sends a verification event to `/collect` on activation.
-- Supports `page_view`, `view_item`, `add_to_cart`, `begin_checkout`, and `purchase`.
+- Supports `page_view`, `view_item`, `add_to_cart`, `begin_checkout`, `purchase`.
 
-### WooCommerce purchase capture in plugin `v1.1.0`
+### WooCommerce purchase capture (plugin `v1.1.x`)
 
-- Sends `purchase` on the thank-you page with `order_id`, `revenue`, `currency`, and `items`.
-- Includes server-side fallback via `woocommerce_thankyou`.
-- Includes footer fallback for custom themes or checkouts.
-- Includes browser-side DOM scraping fallback when `window.adnova_order_data` is missing.
-- Includes WooCommerce attribution metadata from `_wc_order_attribution_*`.
-- Captures server-side on `payment_complete`, `processing`, and `completed`.
+- Sends `purchase` on thank-you page with `order_id`, `revenue`, `currency`, `items`.
+- Server-side fallback via `woocommerce_thankyou`.
+- Footer fallback for custom themes.
+- Browser-side DOM scraping fallback when `window.adnova_order_data` missing.
+- WooCommerce attribution metadata from `_wc_order_attribution_*`.
+- Server-side capture on `payment_complete`, `processing`, `completed`.
 - Syncs Woo orders directly to backend `orders` in real time.
-- Performs recent order backfill on activation or update.
-- Supports auto-update from staging.
+- Recent order backfill on activation or update.
+- Auto-update from staging.
+- Sends `refund_amount`, `orders_count`, `chargeback_flag`, `raw_source`, `collected_at` in sync payloads.
+- Re-syncs on refund hook (`woocommerce_order_refunded`).
+- Captures checkout email/phone on `blur`/`change`, sends `email_hash` and `phone_hash` in `identity_signal`.
 
-### Dashboard outputs expected from plugin-driven data
+### Woo fields still missing or partial
 
-- total revenue,
-- top products,
-- pixel health,
-- recent purchases with date, order, revenue, products, and source.
+- `email_hash` / `phone_hash` at checkout typing-time (pre-submit): partial — reliable at order/login, not at first keystroke.
+- `session_end_at` explicit close marker: partial (fallback is `last_event_at`).
+- `page_events[]` session array: partial (row-by-row in `events`, not an array in `sessions`).
+- `ga4_session_source` canonical field: field exists in schema; population path not fully validated.
+- `chargeback_flag` from disputes API: partial (heuristic only).
 
 ### Installation
 
-1. Compress the `adnova-pixel` folder as a `.zip`.
-2. Go to WordPress `Plugins > Add New > Upload Plugin`.
-3. Upload the zip and activate it.
-4. The pixel becomes active automatically.
-
-### Troubleshooting
-
-If purchase arrives with `$0` or no items:
-
-- confirm the thank-you page is the real `order-received` page,
-- confirm there is no redirect to a custom page without order data,
-- use plugin version `1.0.1` or later.
-
-If attribution looks incomplete:
-
-- confirm landing URLs include `utm_source`, `utm_medium`, and `utm_campaign`,
-- confirm backend checkout-to-order mapping and attribution rules are functioning.
+1. Compress `adnova-pixel` folder as `.zip`.
+2. WordPress `Plugins > Add New > Upload Plugin`.
+3. Upload and activate.
 
 ### Plugin changelog
 
-#### `1.1.0`
-
+#### `1.1.x`
 - Auto-update from staging.
+- Sends `refund_amount`, `orders_count`, `chargeback_flag`, `raw_source`, `collected_at`.
+- Re-sync on refund.
+- Checkout blur identity capture.
 
 #### `1.0.4`
-
-- Direct Woo order sync to backend for real-time reporting.
-- Recent order backfill on activation and update.
+- Direct Woo order sync to backend.
+- Recent order backfill on activation/update.
 
 #### `1.0.3`
-
 - Server-side purchase capture in payment and status hooks.
 - Stronger WooCommerce source fallback fields.
 
 #### `1.0.2`
-
 - Sends UTM and click ID attribution from WooCommerce order metadata.
-- Reduces unattributed cases when WooCommerce already knows the source.
 
 #### `1.0.1`
-
 - Better purchase capture in custom checkouts.
 - Browser-side fallback for totals and items.
-- Compatibility with expanded dashboard views.
 
 #### `1.0.0`
-
 - Initial auto-configuration by domain.
 
-## Shopify Embedded App Review Guide
+### Troubleshooting
 
-This section condenses the implementation guidance that was previously in a separate review document.
+If purchase arrives with `$0` or no items:
+- Confirm thank-you page is the real `order-received` page.
+- Use plugin version `1.0.1` or later.
 
-### Branching strategy
+If attribution incomplete:
+- Confirm landing URLs include `utm_source`, `utm_medium`, `utm_campaign`.
+- Confirm backend checkout-to-order mapping and attribution rules are functioning.
 
-- Start from a clean `main`.
-- Do not cherry-pick onto a diverged branch.
-- Apply changes manually and smoke test after each one.
+---
 
-### Required local environment
+## Pixel Installation
 
-```bash
-git checkout main
-git pull origin main
-git checkout -b shopify-session-fix
-npm install
+### Merchant snippet (HTML `<head>`)
+
+```html
+<script src="https://adray-app-staging-german.onrender.com/adray-pixel.js"
+        data-account-id="merchant-domain-or-acct-id"></script>
 ```
 
-Required env vars:
+Notes:
+- `data-account-id` must be a plain value without protocol or trailing slash.
+- Initial `page_view` should reach `/collect` before any cart action.
 
-```text
-SHOPIFY_API_KEY=<your client id>
-SHOPIFY_API_SECRET=<your client secret>
+---
+
+## Shopify Embedded App
+
+### Review requirements
+
+Every `401` caused by an invalid Shopify session token must return:
+- `X-Shopify-Retry-Invalid-Session-Request: 1`
+- `X-Shopify-API-Request-Failure-Reauthorize: 1`
+
+### Required backend files
+
+- `middlewares/verifySessionToken.js` — JWT validation, reauthorization headers
+- `backend/routes/secure.js` — protected endpoints
+- `backend/index.js` — CORS, session token bypass list, secure routes mount
+- `public/connector/interface.connector.js` — App Bridge, session-token retrieval
+
+### Required env vars for Shopify embedded
+
+```
+SHOPIFY_API_KEY=<client id>
+SHOPIFY_API_SECRET=<client secret>
 APP_URL=https://adray.ai
 SESSION_SECRET=<long random string>
 ```
 
-### Required backend changes
-
-1. `middlewares/verifySessionToken.js`
-   - Read bearer token.
-   - Validate JWT with `SHOPIFY_API_SECRET` and `SHOPIFY_API_KEY`.
-   - Normalize `.myshopify.com` destination.
-   - Return Shopify-required reauthorization headers on every invalid session response.
-
-2. `backend/routes/secure.js`
-   - Add protected test endpoints like `/ping` and `/audits/latest`.
-
-3. `backend/index.js`
-   - Add `verifySessionToken` and secure routes.
-   - Replace the `ALLOWED_ORIGINS` CORS block so Shopify Admin, app origin, Render origin, and local origins are accepted.
-   - Add an API session-token bypass list for public and webhook-like endpoints.
-   - Mount `/api/secure` behind session token verification.
-
-4. `public/connector/interface.connector.js`
-   - Ensure embedded navigation, host parsing, App Bridge readiness, and session-token retrieval support both modern and legacy Shopify flows.
-
-### Review requirement to remember
-
-Every `401` caused by an invalid Shopify session token must return these headers:
-
-- `X-Shopify-Retry-Invalid-Session-Request: 1`
-- `X-Shopify-API-Request-Failure-Reauthorize: 1`
+---
 
 ## Frontend Workspaces
 
-These folders are standalone frontend workspaces generated from Lovable. Their README files were boilerplate, so the useful retained information is listed here.
+All frontend apps are Git submodules. Stack: Vite + TypeScript + React + shadcn-ui + Tailwind CSS.
 
-### Shared stack
+| Submodule | Lovable project | Notes |
+|-----------|----------------|-------|
+| `dashboard-src` | https://lovable.dev/projects/67643995-c0b5-4b9b-bc02-dc5bf96f004b | Main dashboard; served by backend |
+| `plan-src` | https://lovable.dev/projects/8450252f-ea5d-404e-9f07-f726bf2a1cba | ⚠️ repo currently inaccessible |
+| `saas-landing` | https://lovable.dev/projects/d37e7296-de93-463c-b522-03cb9606122b | SaaS landing page |
+| `support-src` | https://lovable.dev/projects/3ef68002-d162-44ba-8b83-a00c513b5cd9 | Support UI |
+| `bookcall-src` | — | Bookcall UI |
 
-- Vite
-- TypeScript
-- React
-- shadcn-ui
-- Tailwind CSS
+### Dashboard serving behavior
 
-### Lovable project URLs
+- Backend serves `dashboard-src/dist` when it exists.
+- Falls back to `public/dashboard` if `dist` does not exist.
+- `dashboard-src/dist` is gitignored in the submodule.
+- `render.yaml` now includes `npm run build:dashboard` in the web build command.
 
-- `dashboard-src`: `https://lovable.dev/projects/67643995-c0b5-4b9b-bc02-dc5bf96f004b`
-- `plan-src`: `https://lovable.dev/projects/8450252f-ea5d-404e-9f07-f726bf2a1cba`
-- `support-src`: `https://lovable.dev/projects/3ef68002-d162-44ba-8b83-a00c513b5cd9`
+### Dashboard deploy workflow
 
-### Standard local workflow for those frontends
+```sh
+# 1. Make changes inside the submodule
+cd dashboard-src
+git switch -c my-dashboard-branch   # if in detached HEAD
+git add src/App.tsx src/components/...
+git commit -m "describe change"
+git push -u origin my-dashboard-branch
+
+# 2. Update submodule pointer in root repo
+cd ..
+git add dashboard-src README.md
+git commit -m "update dashboard submodule"
+git push origin german/dev
+```
+
+### Standard local workflow for any frontend
 
 ```sh
 npm i
 npm run dev
 ```
 
-### Dashboard deploy workflow (`dashboard-src`)
+### Rules
+- Do not commit `.env`.
+- Do not commit `dashboard-src/dist`.
+- Commit and push submodule first, then root repo.
 
-`dashboard-src` now lives directly inside this repository. Dashboard UI changes deploy with the same branch and commit as the rest of the app.
+---
 
-Current serving behavior:
+## Repo Setup
 
-- Backend serves `dashboard-src/dist` when it exists.
-- If `dashboard-src/dist` does not exist, backend falls back to `public/dashboard`.
-- `dashboard-src/dist` should not be committed.
+### Clone with submodules
 
-Recommended local smoke test before pushing:
-
-```sh
-npm --prefix dashboard-src ci
-npm --prefix dashboard-src run build
-npm start
+```bash
+git clone https://github.com/EnovaBusinessSolutions/adnova-app.git
+cd adnova-app
+git submodule update --init --recursive
 ```
 
-Then open:
+If `plan-src` fails with `Repository not found`, skip it and continue — it is currently inaccessible.
 
-```text
-http://localhost:3000/dashboard/attribution
+### Restore empty submodule directories
+
+```powershell
+foreach ($sub in @("bookcall-src", "dashboard-src", "saas-landing", "support-src")) {
+    Push-Location $sub
+    git reset --hard HEAD
+    Pop-Location
+}
 ```
 
-## Immediate Engineering Actions
+### Submodule table
 
-1. Resolve `/collect` `500` first.
-2. Replace Meta CAPI placeholder.
-3. Replace Google conversions stub.
-4. Re-run API and SQL checklist.
-5. Keep evidence for release validation.
+| Submodule | URL |
+|-----------|-----|
+| `saas-landing` | https://github.com/EnovaBusinessSolutions/landingpagesaas-html.git |
+| `dashboard-src` | https://github.com/EnovaBusinessSolutions/adnova-ai-dashboard-full.git |
+| `support-src` | https://github.com/EnovaBusinessSolutions/adnova-ai-support |
+| `bookcall-src` | https://github.com/EnovaBusinessSolutions/bookcall-adnova.git |
+| `plan-src` | https://github.com/EnovaBusinessSolutions/adnova-plan-zen-1.git — ⚠️ inaccessible |
 
-## Dashboard Completion Plan
+---
 
-Current dashboard status from live review:
+## Definition of Done
 
-- Core summary cards are rendering.
-- Attribution by channel is rendering.
-- Daily revenue trend is rendering.
-- Pixel Health is rendering.
-- Recent purchases are rendering.
-- `Live Feed` is now working correctly in real time after SSE hardening.
-- Visual confirmation received for:
-  - `View Item` card,
-  - `Data Quality` block,
-  - `Integration Health` block.
-- UX confirmation received for:
-  - desktop carousel shows 4 metrics at a time and arrows navigate correctly,
-  - mobile and tablet carousel layout does not break,
-  - new `Live Feed` events show `Sesion: ...` when `sessionId` is present,
-  - clicking a `Live Feed` item with `sessionId` opens session detail,
-  - session detail shows summary, funnel, timeline, and linked orders when they exist,
-  - events without `sessionId` render as `Sin sessionId` without breaking the dashboard.
+The system is considered production-ready when all are true:
 
-### Missing or incomplete data for a complete dashboard
+- `POST /collect` returns `2xx` consistently and persists events.
+- Purchases arrive in `orders` for WooCommerce and Shopify.
+- Attribution fields in `orders` are populated for a meaningful percentage of orders.
+- `merchant_snapshots` updates without critical failures.
+- Meta CAPI and Google conversions endpoints are real and not placeholders.
+- Dashboard reflects revenue and channel metrics without relying on fragile fallbacks.
+- Shopify pixel validated end-to-end (same evidence bar as WooCommerce).
 
-1. Session intelligence now includes a recommended comparison shortcut plus longitudinal reading across many sessions, but still needs deeper operator workflows once real usage reveals the most valuable shortcuts.
-2. Paid media resolution now tries `MetaAccount` and `GoogleAccount` ownership too, but some accounts can still miss a usable `user -> McpData` path if historical onboarding data is incomplete.
-3. Shopify pixel behavior still needs the same practical validation that WooCommerce already passed: browser capture, checkout continuity, purchase visibility, and attribution persistence.
+---
 
-### Execution order
+---
 
-1. Observe how operators use the new suggested comparison and longitudinal cards, then refine the next review shortcuts around the most common decisions.
-2. Keep expanding the bridge between public `account_id` and marketing snapshots so every eligible account resolves paid media automatically.
-3. Start staged Shopify pixel validation to confirm collection, checkout linkage, and purchase reflection without regressing embedded-app session behavior.
+## BRI Testing Guide (updated 2026-04-14)
 
-### Completed dashboard steps
+Checklist completa para verificar que la infraestructura de grabación funciona end-to-end después de deploy.
 
-- `Live Feed` SSE fixed and validated.
-- `Sessions` and `Conversion Rate` added to the UI.
-- `view_item` added as a visible funnel step.
-- Data quality indicators added for revenue source, fallback mode, and snapshot freshness.
-- Attribution detail expanded in recent purchases with campaign and click ID when available.
-- Integration Health added for Meta, Google, and TikTok from `PlatformConnection` status.
-- Metric cards converted into a carousel with 4 visible cards on desktop.
-- `Live Feed` linked to `sessionId` with clickable session drill-down.
-- Session detail converted from modal into a persistent `Session Explorer` panel inside the dashboard.
-- Session detail enriched with attribution, checkout tokens, top pages, and touched products.
-- `Paid Media` moved above `Pixel Health` to prioritize commercial context before ingestion health.
-- `Session Explorer` now includes a visual journey map plus simple behavioral patterns based on other sessions from the same `userKey`.
-- `Session Explorer` now includes related-session navigation and timeline filters for faster operator review.
-- `Session Explorer` now supports side-by-side comparison against another related session.
-- `Session Explorer` now recommends a comparison session automatically and adds longitudinal cards that summarize recurrence, dominant time window, and historical outcome across the tracked sessions of the same user.
-- Paid Media panel added with Meta, Google, and blended spend / revenue / ROAS from `McpData` snapshots when the shop is linked to a user snapshot.
-- Paid Media block now degrades safely to `No vinculado` or `Sin snapshot` when the marketing mapping is missing.
-- Paid Media resolution now tries multiple bridges: `ShopConnections.matchedToUserId`, `User.shop`, `MetaAccount`, `GoogleAccount`, and `PlatformConnection.adAccountId -> McpData.sources`.
-- Manual Woo attribution validation completed on 2026-03-13 with successful campaign persistence (`Google · brand-test`) and checkout login stitching.
-- Manual Woo validation also confirmed Home -> Tienda attribution persistence and operator-readable timezone in recent purchases.
+### Pre-requisitos antes de testear
 
-- Layer 1 analytics now has an embedded entry point at `/dashboard/attribution`, reusing the existing `/analytics` experience inside the main dashboard shell instead of leaving it as a separate dashboard.
-- Desktop and mobile dashboard navigation now expose that embedded attribution view as a full-bleed iframe inside the main shell, while store switching happens inside `backend/views/adray-analytics.html` from the top-right store chip.
-- The current store selector is frontend-only on purpose: it shows the session shop plus shops already seen in the same browser via URL or local storage, not a backend catalog of every pixel-enabled store yet.
+1. Las variables de entorno BRI deben estar configuradas en Render (`R2_*`, `OPENROUTER_API_KEY`, `HMAC_*`).
+2. El bucket `adray-recordings` debe existir en Cloudflare R2 con CORS habilitado para el dominio del dashboard.
+3. Los tres servicios de Render deben estar corriendo: `adnova-ai`, `adnova-ai-mcp-worker`, `adnova-ai-recording-worker`.
+4. El pixel debe estar cargando en la tienda de prueba (`data-account-id` configurado).
 
-### Current development focus
+---
 
-- Run the pending Woo multi-touch validation after the 31-minute cooldown and record how `first_touch`, `last_touch`, and `linear` redistribute the same conversion.
-- Start Shopify pixel validation in staging, beginning with browser event capture and then checkout/purchase continuity.
-- Keep refining the persistent `Session Explorer` only after those platform-validation checkpoints are documented.
-- If the embedded attribution view stays stable, the next optional cleanup is migrating the highest-value widgets from `backend/views/adray-analytics.html` into native `dashboard-src` components gradually instead of in one rewrite.
+### Test 1 — Pixel dispara recording al hacer AddToCart
 
-## Attribution Next Steps
+**Qué verificar:** el pixel lazy-carga rrweb y envía los chunks al backend.
 
-This section is the working checklist for everything still pending to make attribution operationally trustworthy.
+1. Abre DevTools → Network en la tienda de prueba.
+2. Agrega cualquier producto al carrito.
+3. En Network, filtra por `/recording`:
+   - Debes ver `POST /recording/start` → respuesta `{ "ok": true, "recording_id": "rec_..." }`
+   - A los ~4 segundos debes ver `POST /recording/chunk` → `{ "ok": true }`
+   - Los chunks deben seguir llegando cada 4s mientras navegas por el checkout.
+4. En Network, filtra por `rrweb` — debes ver que `rrweb.min.js` se cargó desde `cdn.jsdelivr.net`.
 
-### P0: must close first
+**Si falla:** Revisar que `ADRAY_ENDPOINT` en el pixel apunta al servidor correcto. Verificar CORS en `/recording/*`.
 
-1. Fully stabilize `POST /collect` in production.
-2. Complete and verify real Meta CAPI purchase fanout.
-3. Verify Google conversion upload end-to-end with a real connected account, valid `gclid`, and valid conversion action.
-4. Remove production dependence on the unsafe `ENCRYPTION_KEY` fallback.
-5. Confirm rate limiting keys resolve by `account_id` for public non-Shopify traffic.
-6. Complete the pending Woo multi-touch proof and archive screenshot or row-level evidence for `first_touch`, `last_touch`, and `linear`.
-7. Start equivalent Shopify pixel validation so Woo and Shopify have the same minimum evidence bar.
+---
 
-### Attribution data validation
+### Test 2 — Schema migrado correctamente (tablas BRI en PostgreSQL)
 
-1. Confirm `page_view`, `view_item`, `add_to_cart`, `begin_checkout`, and `purchase` all persist for the same customer journey.
-2. Confirm `checkout_token` links browser session to checkout map and finally to the synced order.
-3. Confirm these fields survive into stored attribution data when present:
-  - `utm_source`
-  - `utm_medium`
-  - `utm_campaign`
-  - `utm_content`
-  - `utm_term`
-  - `gclid`
-  - `fbclid`
-  - `ttclid`
-4. Confirm WooCommerce attribution metadata from `_wc_order_attribution_*` is used as fallback when browser-side signals are weak.
-5. Confirm same-site referrers are not inflating non-direct attribution.
-6. Review unattributed orders one by one and classify the root cause:
-  - no browser event
-  - no checkout map
-  - missing UTMs or click IDs
-  - order sync arrived without enough attribution context
-  - collector persistence failure
+**Qué verificar:** las nuevas tablas existen en la base de datos.
 
-### Attribution model validation
+Conecta a la DB (Neon dashboard o psql) y ejecuta:
 
-1. Re-run the same account with `first_touch`, `last_touch`, and `linear`.
-2. Confirm channel revenue and order allocation actually changes when multiple touchpoints exist.
-3. Confirm the dashboard badge, chart totals, and recent purchases are aligned to the selected model.
-4. Use the already validated Home -> Tienda path as the control case, then compare against the multi-touch case.
+```sql
+SELECT table_name FROM information_schema.tables
+WHERE table_name IN ('session_recordings', 'abandonment_risk_scores', 'abandonment_cohorts');
+-- Deben aparecer las 3 tablas
 
-### Evidence required before calling attribution usable
-
-1. API evidence for `collect`, `begin_checkout`, `woo/orders-sync`, and `analytics`.
-2. SQL evidence for events, orders, checkout linkage, and attribution fill rate.
-3. At least one real order with click ID attribution.
-4. At least one real order with UTM-only attribution.
-5. At least one real order that correctly falls back to Woo source metadata.
-6. A reviewed sample of unattributed orders with documented reason.
-7. At least one Shopify browser session with visible pixel events from landing to checkout.
-8. At least one Shopify purchase reflected end-to-end if the staging store allows completing the order.
-
-### Manual operator checks in dashboard
-
-1. `Recent Purchases` shows channel, platform, campaign, confidence, and debug context when available.
-2. `Atribución por Canal` matches the selected attribution model.
-3. Session detail shows attribution fields, checkout tokens, touched products, and landing/referrer context.
-4. No channel is over-counted when the same order is viewed under different models.
-
-## Attribution Test Plan
-
-Use this exact sequence when validating a WooCommerce account.
-
-### Test 1: browser signal capture
-
-1. Open the store with a URL containing `utm_source`, `utm_medium`, and `utm_campaign`.
-2. Visit at least one product page.
-3. Add a product to cart.
-4. Start checkout.
-5. Complete a purchase.
-6. Verify that the dashboard later shows the same journey with `view_item`, `add_to_cart`, `begin_checkout`, and attributed purchase context.
-
-### Test 2: click ID capture
-
-1. Open the store using a test URL that includes `gclid` or `fbclid`.
-2. Complete the purchase flow.
-3. Verify the resulting order keeps the click ID in attribution data and resolves to the expected paid channel.
-
-### Test 3: Woo fallback attribution
-
-1. Complete a purchase where WooCommerce already has source metadata.
-2. Verify the synced order still receives attribution even if browser signal is incomplete.
-3. Confirm the dashboard exposes the Woo source label in recent purchases when that fallback is used.
-
-### Test 4: model comparison
-
-1. Load the same account in the dashboard.
-2. Switch the attribution selector between `first touch`, `last touch`, and `linear`.
-3. Confirm the channel chart and attributed revenue/order breakdown change consistently.
-
-### Test 5: unattributed diagnosis
-
-1. Find a recent unattributed order in the dashboard or DB.
-2. Check whether the corresponding session exists.
-3. Check whether a `checkout_token` was persisted.
-4. Check whether the order has an attribution snapshot.
-5. Record the failure mode before changing code.
-
-### Test 6: Shopify pixel smoke test
-
-1. Install or confirm the custom pixel in the Shopify staging store.
-2. Open the storefront in an incognito window with a tagged URL containing at least `utm_source`, `utm_medium`, and `utm_campaign`.
-3. Verify `page_view` reaches `POST /collect` and appears in `Live Feed`.
-4. Visit a product page and verify `view_item` appears.
-5. Add to cart and verify `add_to_cart` appears.
-6. Start checkout and verify `begin_checkout` plus `checkout_token` persistence.
-7. If the store permits it, complete a test purchase and verify the order later appears in recent purchases with channel and campaign context.
-8. If purchase is not possible, stop at checkout and at minimum confirm that the session and checkout linkage persisted.
-
-## Immediate Next Tests
-
-1. Finish the Woo multi-touch test after the 31-minute wait using the exact Meta session A and Google session B links already defined.
-2. Capture the resulting order row under `last_touch`, then switch to `first_touch` and `linear` and compare channel redistribution.
-3. Start the Shopify smoke test with `page_view -> view_item -> add_to_cart -> begin_checkout` before attempting purchase.
-4. If Shopify events appear correctly in `Live Feed`, move to purchase validation and then compare recent purchases output against Woo behavior.
-
-## User-Assisted Validation Steps
-
-When asking a human operator to test attribution, use this sequence.
-
-1. Open the store in an incognito window.
-2. Use a URL like:
-
-```text
-https://your-store-domain/?utm_source=google&utm_medium=paid_search&utm_campaign=brand-test&utm_content=adset-test&utm_term=creative-test&gclid=test-gclid-123
+SELECT column_name FROM information_schema.columns
+WHERE table_name = 'sessions' AND column_name = 'rrweb_recording_id';
+-- Debe aparecer 1 fila
 ```
 
-3. Browse the homepage.
-4. Open a product detail page.
-5. Add the product to cart.
-6. Start checkout.
-7. Complete a purchase if the environment allows it, or stop at checkout if you are only validating signal persistence.
-8. Send back:
-  - the exact timestamp,
-  - the final URL reached,
-  - the order number if a purchase completed,
-  - whether the dashboard later showed the correct channel and campaign.
-
-If a login state is involved, repeat the same flow once logged in and once logged out so identity stitching can be compared against attribution behavior.
-
-### Live Feed decision rule
-
-- Keep it because it now reliably shows incoming `COLLECT` and `WEBHOOK` events in near real time.
-- Revisit only if operators stop using it or if persisted activity proves more useful than live observability.
-
-## WooCommerce Plugin Focus (Phase 1)
-
-This section is the technical path to ship missing Phase 1 data by updating only the Woo plugin and validating DB persistence.
-
-### Woo fields still missing or partial
-
-- `email_hash` and `phone_hash` at checkout typing-time (pre-submit): still partial. Current flow hashes reliably at order/login time, but not at first checkout field interaction.
-- `session_end_at` explicit close marker: still partial (current fallback is `sessions.last_event_at`).
-- `page_events[]` session array: still partial (events are persisted row-by-row in `events`).
-- `ga4_session_source` canonical field in analytics storage: still missing as dedicated persisted field.
-- `chargeback_flag` from a dedicated disputes source: still partial (current signal is webhook/order-meta heuristic).
+**Si falla:** revisar los logs de Render para el inicio del servicio web — `migrate-recordings-schema.js` debe haber corrido sin error.
 
-### Already implemented in plugin/backend for Woo
+---
 
-- Plugin now sends `refund_amount`, `orders_count`, `chargeback_flag`, `raw_source`, and `collected_at` in Woo order sync payloads.
-- Plugin triggers re-sync on refund hook (`woocommerce_order_refunded`) so order lifecycle changes reach backend.
-- Woo sync backend now persists those fields and parses `chargeback_flag` safely.
-- Pixel now captures checkout email/phone on `blur`/`change`, sends deterministic `email_hash` and `phone_hash` in `identity_signal`, and backend identity resolution now consumes those hashes for deterministic matching.
+### Test 3 — Recording guardado en PostgreSQL
 
-### Technical rollout steps (plugin-only update path)
+**Qué verificar:** la fila `session_recordings` se crea con status correcto.
 
-1. Publish plugin package version `1.1.8` in the plugin update endpoint used by Woo stores.
-2. In Woo admin, run plugin update and confirm installed version is `1.1.8`.
-3. Run Prisma migration in backend before tests so new columns exist:
-  - `identity_graph.ip_hash`
-  - `sessions.ip_hash`
-  - `events.raw_source`, `events.match_type`, `events.confidence_score`, `events.ip_hash`, `events.collected_at`
-  - `orders.refund_amount`, `orders.chargeback_flag`, `orders.orders_count`
-4. Trigger one normal order and one refund in Woo staging.
-5. Confirm plugin sends new payload keys by inspecting request body to `/api/woo/orders-sync`.
-6. Validate DB rows for that `order_id` contain `refund_amount`, `orders_count`, and `chargeback_flag`.
-7. Validate dashboard recent purchases and attribution remain stable after plugin upgrade.
+Después de Test 1, ejecuta:
 
-### DB confirmation checklist (Woo)
+```sql
+SELECT recording_id, session_id, status, chunk_count, outcome
+FROM session_recordings
+ORDER BY created_at DESC
+LIMIT 5;
+```
 
-1. New order row has expected values in `orders`:
-  - `refund_amount` (0 for non-refunded order)
-  - `orders_count` (customer order count snapshot)
-  - `chargeback_flag` (false unless dispute markers detected)
-2. Refunded order re-sync updates `refund_amount` > 0.
-3. Events from collect still store `raw_source`, `match_type`, `confidence_score`, `ip_hash`, and `collected_at`.
-4. `POST /collect` response should now be reviewed with persistence flags:
-  - `event_persisted`
-  - `session_persisted`
-  - `fallback_stored` (true only when payload had to be stored in `failed_jobs` as safety fallback)
+Esperado:
+- `status = 'RECORDING'` mientras el usuario sigue navegando
+- `status = 'FINALIZING'` justo después de `POST /recording/end`
+- `status = 'READY'` después de que el worker procesa el job (puede tomar 10-60s)
 
-### Current collect resilience status (staging)
+---
 
-- Real-time `Live Feed` ingestion for `identity_signal` is working in staging.
-- Collector fallback into `failed_jobs` remains active as a safety net, but current staging behavior shows canonical persistence working.
+### Test 4 — Chunks almacenados en Cloudflare R2
 
-Latest live evidence (2026-03-22):
+**Qué verificar:** los archivos de chunk y el objeto final existen en R2.
 
-- Earlier validation (before schema alignment) showed degraded persistence:
-  - `success: true`
-  - `event_persisted: false`
-  - `session_persisted: false`
-  - `fallback_stored: true`
-- Latest validation (after alignment) confirms healthy canonical persistence:
-  - `success: true`
-  - `event_persisted: true`
-  - `session_persisted: true`
-  - `fallback_stored: false`
-- Interpretation: browser collection, realtime flow, and canonical persistence into `events`/`sessions` are now aligned in staging.
+1. Cloudflare dashboard → R2 → `adray-recordings` → Browse.
+2. Navega a `recordings/<account_id>/<recording_id>/chunks/` — deben existir archivos `000000.json.gz`, `000001.json.gz`, etc.
+3. Después de que el worker finaliza: navega a `recordings/<account_id>/<YYYY-MM>/` — debe existir `<recording_id>.rrweb.gz`.
 
-### Completion criteria for this task
+**Si los chunks no aparecen:** verificar que `R2_ENDPOINT`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` son correctos. Revisar logs del web service.
 
-1. Run one live checkout test in staging (logged-in Woo flow).
-2. Confirm at least one `identity_signal` appears in `Live Feed`.
-3. Confirm `POST /collect` returns:
-  - `success: true`
-  - `event_persisted: true`
-  - `session_persisted: true`
-  - `fallback_stored: false`
-4. If step 3 fails, inspect `failed_jobs` rows with `job_type` starting with `collect_` and complete DB migration/alignment before re-test.
+**Si el objeto final no aparece:** revisar logs del `adnova-ai-recording-worker` en Render.
 
-Current task state:
+---
 
-- Completed.
-- Done: checkout identity capture + realtime feed validation + canonical DB persistence confirmation.
-- Result: completion criteria satisfied with `event_persisted: true`, `session_persisted: true`, `fallback_stored: false`.
+### Test 5 — Player inline en el Selected Journey panel
 
-### Operator runbook to unblock Prisma push
+**Qué verificar:** el botón "Ver grabación" aparece y reproduce el video inline.
 
-Run from the Render shell (or any environment pointing to staging `DATABASE_URL`):
+1. Abre el attribution dashboard (`/adray-analytics.html?shopId=<account_id>`).
+2. En la sección "Historical Conversion Journeys" o "Recent Purchases", haz click en un order que tenga una grabación (`rrwebRecordingId` no nulo).
+3. Debe aparecer el botón **"Ver grabación"** en morado al lado de "Download CSV".
+4. Click en el botón:
+   - Se carga el spinner "Cargando grabación…"
+   - Se lazy-carga `rrweb-player` desde CDN
+   - El player aparece inline con controles de reproducción (play, timeline, velocidad)
+5. Verifica que el video muestra el DOM de la tienda desde el momento del AddToCart.
 
-1. `npm run db:pc:check`
-2. If duplicates are reported, run `npm run db:pc:dedupe`
-3. Re-run `npm run db:pc:check` and confirm zero duplicates
-4. Run `npm run prisma:push -- --accept-data-loss`
-5. Re-test one live checkout and verify collect response flags:
-  - `event_persisted: true`
-  - `session_persisted: true`
-  - `fallback_stored: false`
+**Fallback Clarity:** si la sesión tiene `clarityPlaybackUrl` pero no `rrwebRecordingId`, debe aparecer el link "Ver grabación" morado oscuro que abre Clarity en tab nueva.
 
-Safety note:
+**Si el player no carga:** revisar que el bucket R2 tiene CORS habilitado para el origen del dashboard. El error más común es `Access-Control-Allow-Origin` faltante.
 
-- `db:pc:dedupe` creates a full backup table named `platform_connections_backup_YYYYMMDD_HHMMSS` before deleting duplicates.
+---
 
-### Phase 1 data coverage verification (all layers)
+### Test 6 — Señales conductuales extraídas (behavioral signals)
 
-Use this endpoint to validate field-by-field coverage against `datos-pixel.md`:
+**Qué verificar:** el worker extrae señales y las guarda en `behavioral_signals`.
 
-- `GET /api/analytics/:account_id/data-coverage?days=30`
+1. Haz una sesión de prueba: agrega al carrito → llega al checkout → **simula abandono** (cierra el tab o navega a otra página).
+2. Espera ~2-3 minutos (worker procesa `finalize` + `extract-signals`).
+3. Consulta:
 
-Example:
+```sql
+SELECT recording_id, outcome, behavioral_signals->>'riskScore' AS risk,
+       behavioral_signals->>'abandonmentPattern' AS pattern,
+       behavioral_signals->>'archetype' AS archetype
+FROM session_recordings
+WHERE outcome = 'ABANDONED'
+ORDER BY created_at DESC LIMIT 5;
+```
 
-- `GET /api/analytics/shogun.mx/data-coverage?days=30`
+Esperado: `outcome = 'ABANDONED'`, `riskScore` entre 0-100, `pattern` = uno de los 5 patrones, y si `riskScore >= 60` debes ver `archetype` con el valor del LLM.
 
-Response includes:
+---
 
-- `totals` (events/sessions/orders/identities/checkoutMaps)
-- `layers` (Layer 1 to Layer 6 + critical stitch)
-- `missing` (list of fields currently not covered in the selected window)
+### Test 7 — Narrativa LLM generada (riskScore >= 60)
 
-Interpretation rule:
+**Qué verificar:** el LLM genera un archetype + narrative en español.
 
-- Task is complete for Phase 1 when `missing` is empty, except fields intentionally marked as not yet exposed canonically (for example `meta_impressions` if MCP/API normalization is pending).
+1. Asegúrate de que `OPENROUTER_API_KEY` está configurado.
+2. En la sesión de prueba del Test 6, navega hasta la sección de shipping/total y quédate ~10-15 segundos sin mover el mouse, luego cierra el tab.
+3. Consulta:
 
-### Latest measured coverage snapshot (staging, 2026-03-24)
+```sql
+SELECT behavioral_signals->>'archetype' AS archetype,
+       behavioral_signals->>'confidence_score' AS confidence,
+       behavioral_signals->>'narrative' AS narrative,
+       behavioral_signals->>'recommended_action' AS action
+FROM session_recordings
+WHERE behavioral_signals->>'riskScore' IS NOT NULL
+ORDER BY created_at DESC LIMIT 3;
+```
 
-Observed after deploy + live collect and Ads pull test:
+Esperado: `archetype` = uno de los 9 valores válidos, `narrative` en español, `recommended_action` con recomendación específica.
 
-- `POST /collect`: persisted correctly (`event_persisted=true`, `session_persisted=true`, `fallback_stored=false`).
-- Coverage endpoint: stable and returning `success=true`.
-- Layer 1, Layer 2, Layer 3, Layer 4, Layer 6, and critical stitch: operationally covered in current staging window.
-- Meta pull executed successfully in staging worker (`collectMeta ok=true`, datasets stored and status ready).
-- Google Ads pull executed successfully in staging worker (`collectGoogle ok=true`, datasets stored and status ready).
-- `GET /api/mcpdata/meta/status` and `GET /api/mcpdata/google-ads/status` returned `ready=true` and `chunkCount>0`.
-- Remaining item in coverage is API canonical exposure detail for `meta_impressions`; this does not block Layer 1 contractual acceptance because pull datasets are already present.
+**Si no genera narrative:** revisar logs del recording worker. Si dice `OPENROUTER_API_KEY not set`, el env var no llegó al worker service.
 
-What this means:
+---
 
-- Core pixel/webhook/session/order identity infrastructure is complete for Phase 1 collection.
-- Ads operational pull path is validated in staging for Meta and Google.
-- Remaining hardening is implementation hygiene (for example, non-blocking root update conflict after chunk upsert) and API field normalization, not contractual Layer 1 scope gap.
+### Test 8 — Borrado automático del raw recording (24h)
 
-### What is still required to collect 100% of datos-pixel.md
+**Qué verificar:** después de 24h, el raw `.rrweb.gz` en R2 se borra pero `behavioral_signals` persiste.
 
-1. Enable/verify Meta Ads connector pull and persist campaign daily metrics.
-2. Enable/verify Google Ads connector pull and persist campaign daily metrics.
-3. Standardize one canonical storage path for `meta_impressions` and `meta_reported_conv_value` used by coverage API.
-4. Run daily pull job at least once with non-empty campaign activity in the selected window.
-5. Re-run coverage and confirm `missing` becomes empty.
+Este test es de larga duración. Para verificarlo manualmente antes de esperar 24h, puedes reducir `RECORDING_RETENTION_HOURS=0.1` temporalmente (6 minutos) en el Render env del worker, desplegar, esperar, y luego verificar:
 
-### Layer 1 Foundation acceptance (payment checkpoint)
+```sql
+SELECT recording_id, raw_erased_at, r2_key,
+       (behavioral_signals IS NOT NULL) AS signals_intact
+FROM session_recordings
+WHERE raw_erased_at IS NOT NULL
+LIMIT 5;
+```
 
-Scope used for acceptance is `layer1.md` (Custom Pixel + revenue truth + stitching base + Ads connections and basic pull), excluding explicit out-of-scope Phase 2 items.
+Esperado: `raw_erased_at` tiene timestamp, `r2_key = null`, `signals_intact = true`.
 
-Status summary (2026-03-24):
+En R2, confirma que el archivo `recordings/<account_id>/<YYYY-MM>/<recording_id>.rrweb.gz` ya no existe.
 
-- Completed: Custom Pixel, collector, revenue truth, base stitching, onboarding/health observability.
-- Completed: Ads pull operational evidence in staging (Meta + Google chunks created with `ready=true`).
-- Out of scope by contract and therefore not required for this checkpoint: Phase 2 MCP server exposure, advanced dedup/scoring, server-side CAPI fanout parity.
+---
 
-Required evidence for Layer 1 payment checkpoint (fulfilled in staging):
+### Test 9 — Fallback si R2 no está configurado
 
-1. Worker active for MCP pulls.
-2. Meta account connected and selected for pilot user.
-3. Google Ads account connected and selected for pilot user.
-4. Pull executed with datasets/chunks created for both sources.
-5. Status endpoints show `ready=true` and non-zero `chunkCount` for Meta and Google Ads.
+**Qué verificar:** si las vars de R2 no están, el sistema no crashea — solo no guarda grabaciones.
 
-Operational commands and endpoints:
+1. En staging, comenta temporalmente `R2_ENDPOINT` en Render.
+2. Haz un AddToCart en la tienda de prueba.
+3. Verifica que:
+   - El `/collect` principal sigue funcionando (otros eventos no se afectan)
+   - `POST /recording/start` devuelve `{ "ok": true }` (sin error)
+   - `POST /recording/chunk` devuelve `{ "ok": false }` con mensaje de error pero sin `500`
+   - El dashboard carga sin errores (sin el botón "Ver grabación")
 
-- Trigger immediate pull for connected sources (authenticated):
-  - `POST /api/mcpdata/collect-now`
-  - Body example: `{ "sources": ["metaAds", "googleAds", "ga4"], "rangeDays": 60, "forceFull": true }`
-- Validate source status:
-  - `GET /api/mcpdata/meta/status`
-  - `GET /api/mcpdata/google-ads/status`
-  - `GET /api/mcpdata/ga4/status`
-- Validate contractual Layer 1 coverage outcome:
-  - `GET /api/analytics/:account_id/data-coverage?days=30`
+---
 
-Acceptance rule for Ads block (Layer 1):
+### Test 10 — HMAC-SHA-256 en identity graph
 
-- Pass when Meta and Google both show recent pull evidence (`chunkCount > 0`) and dashboard/status show connected + ready state.
+**Qué verificar:** los nuevos eventos usan HMAC en lugar de SHA-256 para PII.
 
-### Delivery statement (ready to send)
+1. Configura `HMAC_EMAIL_KEY` y `HMAC_PHONE_KEY`.
+2. Ejecuta la migración: `node backend/scripts/migrate-hmac-hashes.js`.
+3. Verifica output: `Done — re-hashed N identity_graph rows.`
+4. Haz una nueva compra de prueba con un email conocido.
+5. Consulta:
 
-Layer 1 Foundation was delivered according to the contracted scope in `layer1.md`.
+```sql
+SELECT email_hash FROM identity_graph
+WHERE account_id = '<tu_account_id>'
+ORDER BY last_seen_at DESC LIMIT 3;
+```
 
-Delivered:
+6. Verifica localmente que el hash coincide con HMAC:
+```javascript
+const crypto = require('crypto');
+const key = Buffer.from(process.env.HMAC_EMAIL_KEY, 'hex');
+console.log(crypto.createHmac('sha256', key).update('tu@email.com'.toLowerCase().trim()).digest('hex'));
+```
 
-1. Custom Pixel V1 capture and collector pipeline.
-2. Revenue truth read-only sync and baseline health.
-3. Session-checkout-order stitching base.
-4. Pixel Health / Match Rate / onboarding validation flow.
-5. Meta and Google Ads connection verification and basic pull execution with stored datasets.
+---
 
-Out of scope and not included in this acceptance (as stated in contract):
+### Test 11 — Worker de recording corriendo en Render
 
-1. Phase 2 advanced dedup/reconciliation/scoring/backfill.
-2. Full MCP server exposure for third-party AI consumers.
-3. Full server-side events parity rollout (Meta CAPI, Google Enhanced Conversions, TikTok Events API).
+**Qué verificar:** el tercer servicio está activo.
 
-Commercial checkpoint result:
+1. Render dashboard → Services → `adnova-ai-recording-worker` → status `Live`.
+2. En los logs debe aparecer:
+   ```
+   [recordingWorker] Started on queue "recording-process" (prefix: bull)
+   ```
+3. Cuando llegue un job, los logs deben mostrar:
+   ```
+   [recordingWorker:finalize] rec_xxx... reason=session_end
+   [recordingWorker:finalize] rec_xxx... READY — N events, X bytes
+   [recordingWorker:extract-signals] rec_xxx... signals saved, riskScore=NN
+   ```
 
-- Layer 1 payment checkpoint: PASS (staging evidence available).
+---
 
-### Final test checklist (operator)
+### Qué verás en el dashboard después del deploy
 
-1. Send one live browser event and verify collect response persistence flags.
-2. Trigger one purchase flow and verify order truth fields in coverage remain green.
-3. Run Meta/Google daily pulls and verify non-zero platform metrics.
-4. Verify `GET /api/analytics/:account_id/data-coverage?days=30` returns `missing: []`.
+| Elemento | Dónde | Cuándo aparece |
+|---|---|---|
+| Botón **"Ver grabación"** morado | Selected Journey panel → al lado de Download CSV | Cuando la sesión tenga una grabación con `status=READY` |
+| Player rrweb inline | Dentro del Selected Journey panel | Al hacer click en el botón |
+| Badge de archetype | Dentro del player (debajo del video) | Si `riskScore >= 60` y OPENROUTER_API_KEY está configurado |
+| Narrative en español | Debajo del badge | Mismo caso que arriba |
+| Link Clarity (fallback) | Same location | Sesiones anteriores con Clarity pero sin rrweb |
+| Nuevo worker en Render | Render dashboard → Services | Después del deploy |
 
-### Next implementation after plugin rollout
-
-1. Introduce explicit session close policy (`session_end_at`) with inactivity timeout or checkout terminal event.
-2. Add dedicated disputes integration for `chargeback_flag` instead of heuristic status/meta inference.
+---
 
 ## Final Rule
 
