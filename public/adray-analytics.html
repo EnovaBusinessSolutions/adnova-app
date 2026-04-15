@@ -6391,8 +6391,20 @@
                 // 1. Fetch presigned URL from backend
                 const resp = await fetch(`/api/recording/${encodeURIComponent(currentShopId)}/${encodeURIComponent(recordingId)}`);
                 const data = await resp.json();
-                if (!data.ok || !data.presignedUrl) {
-                    container.innerHTML = '<p style="font-size:12px;color:#f87171;padding:8px;">Grabación no disponible aún (procesando…)</p>';
+                console.log('[adrayOpenPlayer] recording data:', data);
+                if (!data.ok) {
+                    container.innerHTML = `<p style="font-size:12px;color:#f87171;padding:8px;">Error: ${data.error || 'Recording not found'}</p>`;
+                    return;
+                }
+                if (!data.presignedUrl) {
+                    const status = data.recording?.status || 'unknown';
+                    const msgs = {
+                        RECORDING: 'Grabando… cierra la página del cliente para finalizar.',
+                        FINALIZING: 'Procesando grabación… espera unos segundos.',
+                        ERROR: 'Error al procesar la grabación. Revisa logs del worker.',
+                        unknown: `Estado desconocido (${status})`,
+                    };
+                    container.innerHTML = `<p style="font-size:12px;color:#f87171;padding:8px;">${msgs[status] || msgs.unknown}</p>`;
                     return;
                 }
 

@@ -185,6 +185,27 @@ async function downloadChunk(key) {
   return JSON.parse(raw.toString('utf8'));
 }
 
+/**
+ * List all chunk keys under a prefix, sorted by key name (preserves chunk order).
+ * @param {string} prefix
+ * @returns {Promise<string[]>} sorted array of S3 keys
+ */
+async function listChunkKeys(prefix) {
+  if (!r2) return [];
+  const keys = [];
+  let continuationToken;
+  do {
+    const list = await r2.send(new ListObjectsV2Command({
+      Bucket: R2_BUCKET,
+      Prefix: prefix,
+      ContinuationToken: continuationToken,
+    }));
+    for (const obj of (list.Contents || [])) keys.push(obj.Key);
+    continuationToken = list.NextContinuationToken;
+  } while (continuationToken);
+  return keys.sort(); // lexicographic = chunk order (000000, 000001, ...)
+}
+
 module.exports = {
   r2,
   R2_BUCKET,
@@ -197,4 +218,5 @@ module.exports = {
   deleteObject,
   deletePrefix,
   downloadChunk,
+  listChunkKeys,
 };

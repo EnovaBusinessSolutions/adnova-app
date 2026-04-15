@@ -7,7 +7,7 @@ const IORedis = require('ioredis');
 const { PrismaClient } = require('@prisma/client');
 const zlib = require('zlib');
 
-const { finalKey, chunksPrefix, chunkKey, uploadFinal, deleteObject, deletePrefix, downloadChunk } = require('../utils/r2Client');
+const { finalKey, chunksPrefix, chunkKey, uploadFinal, deleteObject, deletePrefix, downloadChunk, listChunkKeys } = require('../utils/r2Client');
 const { enqueueRecordingJob } = require('../queues/recordingQueue');
 
 const REDIS_URL = process.env.REDIS_URL || '';
@@ -42,25 +42,28 @@ async function handleFinalize(job) {
   }
 
   const prefix = rec.r2ChunksPrefix || chunksPrefix(rec.accountId || accountId, recordingId);
-  const total = rec.chunkCount || 0;
 
-  if (total === 0) {
-    console.warn(`[recordingWorker:finalize] ${recordingId} has 0 chunks — marking ERROR`);
+  // List chunks from S3 directly — do NOT rely on chunkCount in DB (may be stale/zero)
+  const chunkKeys = await listChunkKeys(prefix);
+  console.log(`[recordingWorker:finalize] ${recordingId} — found ${chunkKeys.length} chunks in S3 under prefix: ${prefix}`);
+
+  if (chunkKeys.length === 0) {
+    console.warn(`[recordingWorker:finalize] ${recordingId} — no chunks in S3, marking ERROR`);
     await prisma.sessionRecording.update({
       where: { recordingId },
       data: { status: 'ERROR' },
-    });
+    }).catch(() => {});
     return;
   }
 
-  // Download all chunks from R2 and assemble
+  // Download all chunks from S3 and assemble
   const allEvents = [];
-  for (let i = 0; i < total; i++) {
+  for (const key of chunkKeys) {
     try {
-      const events = await downloadChunk(chunkKey(prefix, i));
+      const events = await downloadChunk(key);
       allEvents.push(...events);
     } catch (err) {
-      console.error(`[recordingWorker:finalize] Failed to download chunk ${i} for ${recordingId}:`, err.message);
+      console.error(`[recordingWorker:finalize] Failed to download chunk ${key} for ${recordingId}:`, err.message);
     }
   }
 
