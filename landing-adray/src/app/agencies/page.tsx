@@ -10,31 +10,37 @@ import { brandify } from "@/lib/utils";
 
 const howItWorks = [
     {
-        title: "One login, multiple client workspaces",
+        title: "One account. Unlimited clients.",
         description:
-            "Every client lives in their own isolated workspace. Switch in seconds, no separate logins.",
+            "Manage every client from a single Adray account. Each client lives in their own isolated workspace \u2014 switch in seconds, no separate logins.",
     },
     {
-        title: "Separate data link per client",
+        title: "Unlimited seats per workspace",
         description:
-            "Each client gets their own secure, portable link. Drop it in any AI and get that client\u2019s full context instantly.",
+            "Add your full team to each client workspace at no extra cost. No per-seat fees, ever.",
     },
     {
-        title: "Aggregated cross-client reporting",
+        title: "Separate payment details per workspace",
         description:
-            "See performance across your entire book of business in one view. Spot trends, compare clients, identify who needs attention.",
+            "Bill clients directly or manage billing by workspace. Each workspace can have its own payment method.",
+    },
+    {
+        title: "A dedicated Signal per client",
+        description:
+            "Each client gets their own daily Signal PDF delivered to your inbox, plus a dedicated ChatGPT Custom GPT and Claude MCP connector. Drop the PDF in any AI or connect via MCP \u2014 walk into every client call with full context, zero prep.",
     },
     {
         title: "Refreshes automatically",
         description:
-            "Every client\u2019s data link updates daily. No manual pulls, no stale reports.",
+            "Every client\u2019s data updates daily. No manual pulls, no stale reports.",
     },
 ];
 
 const pricingPoints = [
-    "Your first workspace is included in Pro. Each additional client workspace is $25/mo + 0.3% of that client\u2019s ad spend.",
-    "Ad spend fee capped at $1,250/month per workspace.",
+    "Signal workspaces \u2014 Free for 30-day rolling data. $49/month per workspace for unlimited history and live chat support. Additional workspaces: $29/month each.",
+    "Core workspaces \u2014 Free for 30-day rolling data. $99/month + 1% of that client\u2019s monthly ad spend (capped at $1,500/month) for unlimited history and live chat support. Additional workspaces: $49/month + 1% of ad spend each.",
     "No per-seat fees. No platform minimums. Scales with your client roster.",
+    "Need more than 10 workspaces? Contact us for volume pricing and custom setup.",
 ];
 
 const ease = [0.21, 0.47, 0.32, 0.98] as const;
@@ -73,7 +79,7 @@ export default function AgenciesPage() {
                         animate={{ opacity: 1, y: 0 }}
                         transition={{ duration: 0.8, delay: 0.1, ease }}
                     >
-                        One login. Every client. Any AI.
+                        Built by agency marketers. For agency marketers.
                     </motion.h1>
                     <motion.p
                         className="t-p-lg text-ad-subtitle max-w-2xl mx-auto mb-10"
@@ -81,10 +87,11 @@ export default function AgenciesPage() {
                         animate={{ opacity: 1, y: 0 }}
                         transition={{ duration: 0.7, delay: 0.25, ease }}
                     >
-                        Stop switching between accounts, exporting reports, and rebuilding
-                        context every time a client asks a question. <span style={{ fontFamily: 'var(--font-brand)' }}>Adray</span> gives your agency
-                        one place to manage every client&apos;s marketing data &mdash; with a
-                        separate, secure data link for each one.
+                        <span style={{ fontFamily: 'var(--font-brand)' }}>Adray</span> is built by agency marketers for agencies and digital marketing
+                        consulting firms. We work with forward-thinking teams who prioritize
+                        data quality in their client work and implement cutting-edge
+                        technologies in their workflows. We want to help you move faster
+                        and grow efficiently.
                     </motion.p>
                     <motion.div
                         className="flex flex-col sm:flex-row items-center justify-center gap-4"
@@ -119,7 +126,7 @@ export default function AgenciesPage() {
                                         {item.title}
                                     </h3>
                                     <p className="t-p-sm text-ad-muted leading-relaxed">
-                                        {item.description}
+                                        {brandify(item.description)}
                                     </p>
                                 </div>
                             </AnimatedSection>
@@ -138,9 +145,14 @@ export default function AgenciesPage() {
                             </h2>
                             <p className="t-p text-ad-muted leading-relaxed max-w-2xl mx-auto">
                                 Connect a new client in under 2 minutes. Authorize their Meta,
-                                Google, GA4, and Shopify. Their data link is ready. Drop it in
-                                Claude, ChatGPT, or any AI &mdash; and walk into every client
-                                call with full context, zero prep.
+                                Google Ads, and GA4. Their daily Signal PDF is ready and in
+                                your inbox. Drop it in any AI, or connect via Claude MCP or
+                                ChatGPT Custom GPT &mdash; and start doing real analysis, not
+                                data wrangling.
+                            </p>
+                            <p className="t-p text-ad-subtitle leading-relaxed mt-4 max-w-2xl mx-auto">
+                                This is what it looks like when your entire client portfolio
+                                fits in a chat window.
                             </p>
                         </div>
                     </AnimatedSection>
@@ -174,31 +186,9 @@ export default function AgenciesPage() {
                                     Get Started Free
                                 </Button>
                                 <Button variant="ghost" href="/contact">
-                                    Talk to Our Team
+                                    Contact Us for Volume Pricing
                                 </Button>
                             </div>
-                        </div>
-                    </AnimatedSection>
-                </Container>
-            </section>
-
-            {/* ── Built For Agencies ── */}
-            <section className="py-20 relative">
-                <Container>
-                    <AnimatedSection>
-                        <div className="max-w-3xl mx-auto text-center">
-                            <h2 className="t-h2 text-white-100 mb-6">
-                                Built for how agencies actually work
-                            </h2>
-                            <p className="t-p text-ad-muted leading-relaxed mb-4">
-                                Most tools make you log in as each client, manage separate
-                                dashboards, and manually compile reporting. <span style={{ fontFamily: 'var(--font-brand)' }}>Adray</span> flips that
-                                &mdash; your AI does the analysis, you do the strategy.
-                            </p>
-                            <p className="t-p text-ad-subtitle leading-relaxed">
-                                This is what it looks like when your entire client portfolio
-                                fits in a chat window.
-                            </p>
                         </div>
                     </AnimatedSection>
                 </Container>
@@ -212,7 +202,7 @@ export default function AgenciesPage() {
                             Your AI is ready. Give it something real to work with.
                         </h2>
                         <p className="t-p-lg text-ad-muted max-w-xl mx-auto mb-10">
-                            Install free. Connect in 2 minutes. Ask your first real question.
+                            Install free. Connect your first client in 2 minutes. Start doing better work.
                         </p>
                         <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
                             <Button variant="primary" size="lg" href="/login">
