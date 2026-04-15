@@ -11,7 +11,7 @@ import { brandify } from "@/lib/utils";
 const part1 = [
     {
         q: "What is Adray?",
-        a: "Adray is a marketing intelligence platform that connects to your ad accounts, reconciles spend against verified revenue, and delivers a structured daily Signal \u2014 ready to use in any AI you already work with. MCP connectors coming in Q2 2026.",
+        a: "Adray is a marketing intelligence platform that connects to your ad accounts, reconciles spend against verified revenue, and delivers a structured daily Signal \u2014 ready to use in any AI you already work with. MCP connector for Claude is live now. ChatGPT and Gemini coming Q2 2026.",
     },
     {
         q: "Who is Adray for?",

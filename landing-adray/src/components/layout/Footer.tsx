@@ -18,8 +18,7 @@ const footerLinks = {
         { label: "Terms and Conditions", href: "/privacy-policy/terms-and-conditions" },
     ],
     "Social Connect": [
-        { label: "Instagram", href: "https://www.instagram.com/jitu.ux/" },
-        { label: "LinkedIn", href: "https://www.linkedin.com/in/jitendra-raut/" },
+        { label: "X / Twitter", href: "https://x.com/adray_ai" },
     ],
 };
 
