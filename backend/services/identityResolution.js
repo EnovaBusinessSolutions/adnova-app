@@ -15,6 +15,19 @@ function normalizeSha256(value) {
   return /^[a-f0-9]{64}$/.test(v) ? v : null;
 }
 
+function normalizeBrowserId(value) {
+  if (!value || typeof value !== 'string') return null;
+  const normalized = value.trim();
+  if (!normalized) return null;
+  if (normalized.length < 8 || normalized.length > 128) return null;
+  return normalized;
+}
+
+function hashBrowserId(value) {
+  const normalized = normalizeBrowserId(value);
+  return normalized ? hashPII(`browser:${normalized}`) : null;
+}
+
 function getPayloadHashes(payload) {
   const emailHash = normalizeSha256(payload.email_hash) || (payload.email ? hashPII(payload.email) : null);
   const phoneHash = normalizeSha256(payload.phone_hash) || (payload.phone ? hashPII(payload.phone) : null);
@@ -60,6 +73,8 @@ async function resolveUserKey(accountId, cookieUserKey, payload, res) {
   let matchType = 'probabilistic';
   const ipHash = payload.ip ? hashPII(payload.ip) : null;
   const { emailHash, phoneHash } = getPayloadHashes(payload);
+  const browserId = normalizeBrowserId(payload.browser_id || payload.visitor_id);
+  const browserFingerprintHash = hashBrowserId(browserId);
 
   // 1. Check Cookie
   if (cookieUserKey) {
@@ -73,7 +88,19 @@ async function resolveUserKey(accountId, cookieUserKey, payload, res) {
     }
   }
 
-  // 2. Check Click IDs if no cookie match
+  // 2. Check persistent browser ID if no cookie match
+  if (!matchedIdentity && browserFingerprintHash) {
+    matchedIdentity = await prisma.identityGraph.findFirst({
+      where: { accountId, fingerprintHash: browserFingerprintHash }
+    });
+
+    if (matchedIdentity) {
+      finalConfidence = Math.max(matchedIdentity.confidenceScore, 0.98);
+      matchType = 'deterministic';
+    }
+  }
+
+  // 3. Check Click IDs if no cookie/browser match
   if (!matchedIdentity && (payload.fbclid || payload.gclid || payload.ttclid)) {
     const OR = [];
     if (payload.fbclid) OR.push({ fbclid: payload.fbclid });
@@ -90,6 +117,7 @@ async function resolveUserKey(accountId, cookieUserKey, payload, res) {
       const clickIdentityData = {
         accountId,
         userKey,
+        fingerprintHash: browserFingerprintHash,
         ipHash,
         emailHash,
         phoneHash,
@@ -122,7 +150,7 @@ async function resolveUserKey(accountId, cookieUserKey, payload, res) {
     }
   }
 
-  // 3. Check Customer ID
+  // 4. Check Customer ID
   if (!matchedIdentity && payload.customer_id) {
     matchedIdentity = await prisma.identityGraph.findFirst({
       where: { accountId, customerId: payload.customer_id }
@@ -134,7 +162,7 @@ async function resolveUserKey(accountId, cookieUserKey, payload, res) {
     }
   }
 
-  // 3.1 Check deterministic hashed identity anchors from checkout signals
+  // 4.1 Check deterministic hashed identity anchors from checkout signals
   if (!matchedIdentity && (emailHash || phoneHash)) {
     const OR = [];
     if (emailHash) OR.push({ emailHash });
@@ -155,11 +183,11 @@ async function resolveUserKey(accountId, cookieUserKey, payload, res) {
     }
   }
 
-  const fingerprintHash = hashFingerprint(
+  const fingerprintHash = browserFingerprintHash || hashFingerprint(
     payload.user_agent, payload.ip, payload.timezone, payload.language
   );
 
-  // 4. Check Fingerprint
+  // 5. Check Fingerprint
   if (!matchedIdentity) {
     matchedIdentity = await prisma.identityGraph.findFirst({
       where: { accountId, fingerprintHash }
@@ -171,7 +199,7 @@ async function resolveUserKey(accountId, cookieUserKey, payload, res) {
     }
   }
 
-  // 5. Create New
+  // 6. Create New
   if (!matchedIdentity) {
     const userKey = randomUUID();
     const newIdentityData = {
@@ -205,6 +233,7 @@ async function resolveUserKey(accountId, cookieUserKey, payload, res) {
     // Merge new identifiers into existing
     const updates = mergeIdentifiers(matchedIdentity, payload);
     if (ipHash && !matchedIdentity.ipHash) updates.ipHash = ipHash;
+    if (fingerprintHash && !matchedIdentity.fingerprintHash) updates.fingerprintHash = fingerprintHash;
     updates.lastSeenAt = new Date();
     // Only update if there are meaningful changes to reduce DB writes
     if (Object.keys(updates).length > 1) { // >1 because lastSeenAt is always there
@@ -229,9 +258,56 @@ async function resolveUserKey(accountId, cookieUserKey, payload, res) {
         }
       }
     }
+
+    if (browserFingerprintHash && matchedIdentity.fingerprintHash !== browserFingerprintHash) {
+      try {
+        const existingBrowserAlias = await prisma.identityGraph.findFirst({
+          where: {
+            accountId,
+            userKey: matchedIdentity.userKey,
+            fingerprintHash: browserFingerprintHash,
+          }
+        });
+
+        if (!existingBrowserAlias) {
+          const aliasData = {
+            accountId,
+            userKey: matchedIdentity.userKey,
+            customerId: matchedIdentity.customerId || payload.customer_id || null,
+            emailHash: matchedIdentity.emailHash || emailHash,
+            phoneHash: matchedIdentity.phoneHash || phoneHash,
+            ipHash: matchedIdentity.ipHash || ipHash,
+            fbp: matchedIdentity.fbp || payload.fbp || null,
+            fbc: matchedIdentity.fbc || payload.fbc || null,
+            fbclid: matchedIdentity.fbclid || payload.fbclid || null,
+            gclid: matchedIdentity.gclid || payload.gclid || null,
+            ttclid: matchedIdentity.ttclid || payload.ttclid || null,
+            fingerprintHash: browserFingerprintHash,
+            confidenceScore: Math.max(finalConfidence || 0, 0.98),
+          };
+
+          try {
+            await prisma.identityGraph.create({ data: aliasData });
+          } catch (aliasCreateError) {
+            if (!isSchemaDriftError(aliasCreateError)) throw aliasCreateError;
+
+            await prisma.identityGraph.create({
+              data: {
+                ...aliasData,
+                ipHash: undefined,
+                emailHash: undefined,
+                phoneHash: undefined,
+              }
+            });
+          }
+        }
+      } catch (aliasError) {
+        if (!isSchemaDriftError(aliasError)) throw aliasError;
+      }
+    }
   }
 
-  // 6. Always set cookie
+  // 7. Always set cookie
   // 63072000000 = 2 years in ms
   if (res && typeof res.cookie === 'function') {
     res.cookie('_adray_uid', matchedIdentity.userKey, {

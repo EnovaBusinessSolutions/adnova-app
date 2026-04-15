@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
 import { DashboardLayout } from "@/components/DashboardLayout";
+import { PixelSetupWizard } from "@/components/PixelSetupWizard";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import {
@@ -510,6 +511,7 @@ export default function Index() {
   const [status, setStatus] = useState<OnboardingStatus | null>(null);
   const [asmUiLoading, setAsmUiLoading] = useState(false);
   const [asmUiError, setAsmUiError] = useState<string | null>(null);
+  const [pixelWizardOpen, setPixelWizardOpen] = useState(false);
 
   const refreshConnections = async () => {
     setLoadingConnections(true);
@@ -1044,6 +1046,33 @@ export default function Index() {
                     </div>
                   </div>
 
+                  <div className="mt-5 overflow-hidden rounded-[24px] border border-white/[0.08] bg-[linear-gradient(180deg,rgba(18,14,28,0.72)_0%,rgba(10,10,14,0.88)_100%)] p-4 backdrop-blur-md sm:mt-6 sm:rounded-[28px] sm:p-5">
+                    <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+                      <div className="min-w-0">
+                        <div className="inline-flex items-center gap-2 rounded-full border border-[#B55CFF]/18 bg-[#B55CFF]/10 px-3 py-1 text-[11px] uppercase tracking-[0.22em] text-[#E6D2FF]">
+                          <Search className="h-3.5 w-3.5" />
+                          Guided Pixel Setup
+                        </div>
+
+                        <h2 className="mt-3 text-[1.1rem] font-semibold tracking-[-0.03em] text-white sm:text-[1.28rem]">
+                          Connect your website pixel
+                        </h2>
+                        <p className="mt-2 max-w-2xl text-sm leading-6 text-white/56">
+                          Detect your store type and get a guided install flow for the Adray pixel
+                          without leaving this page.
+                        </p>
+                      </div>
+
+                      <Button
+                        onClick={() => setPixelWizardOpen(true)}
+                        className="h-11 rounded-2xl bg-[#B55CFF] px-5 text-white shadow-[0_0_24px_rgba(181,92,255,0.22)] transition-all hover:bg-[#A664FF] md:w-auto"
+                      >
+                        <span>Connect Pixel</span>
+                        <ArrowRight className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </div>
+
                   {asmUiLoading ? (
                     <div className="mt-4 rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-3 text-sm text-white/60">
                       Opening selector...
@@ -1117,6 +1146,7 @@ export default function Index() {
           </Card>
         </div>
       </div>
+      <PixelSetupWizard open={pixelWizardOpen} onOpenChange={setPixelWizardOpen} />
     </DashboardLayout>
   );
 }

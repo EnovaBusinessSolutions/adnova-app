@@ -1,6 +1,6 @@
 # Inicialización del repositorio adnova-app
 
-Guía para clonar e iniciar el proyecto sin submódulos.
+Guía para clonar e inicializar el proyecto desde cero.
 
 ## 1. Clonar el repositorio
 
@@ -12,56 +12,69 @@ cd adnova-app
 ## 2. Instalar dependencias
 
 ```bash
+# Backend (raíz)
 npm install
-npm --prefix dashboard-src install
-npm --prefix landing-adray install
-```
 
-Instala dependencias adicionales solo si vas a trabajar en esas apps:
+# Dashboard
+cd dashboard-src && npm install && cd ..
 
-```bash
-npm --prefix bookcall-src install
-npm --prefix support-src install
+# Landing
+cd landing-adray && npm install && cd ..
 ```
 
 ## 3. Configurar variables de entorno
 
 ```bash
 cp .env.example .env
+# Llenar los valores en .env
 ```
 
-Completa los valores necesarios antes de correr el backend.
-
-## 4. Generar Prisma Client
+## 4. Generar Prisma client
 
 ```bash
 npm run prisma:generate
 ```
 
-## 5. Ejecutar builds locales
+## 5. Correr en desarrollo
 
 ```bash
-npm run build:landing
-npm run build:dashboard
+npm run dev
 ```
 
-## 6. Estructura del proyecto
+Esto levanta:
+- Backend con hot reload (nodemon) en `localhost:3000`
+- Dashboard dev server en `localhost:5173`
+- Landing dev server
+
+## 6. Build para producción
+
+```bash
+npm run build
+```
+
+## Estructura del proyecto
 
 | Directorio | Descripción |
 |---|---|
-| `backend/` | API Express, servicios y jobs |
-| `dashboard-src/` | Dashboard React + Vite |
-| `landing-adray/` | Landing principal |
-| `bookcall-src/` | Página de booking |
-| `support-src/` | Página de soporte |
-| `login-src/` | Login Vite + TS |
+| `backend/` | API Express + servicios + jobs |
+| `dashboard-src/` | Dashboard React+Vite (antes submodulo) |
+| `landing-adray/` | Landing page (antes submodulo) |
+| `bookcall-src/` | Página de booking (antes submodulo) |
+| `support-src/` | Página de soporte (antes submodulo) |
+| `saas-landing/` | Landing SaaS legacy (antes submodulo) |
+| `login-src/` | Login Vite+TS |
 | `frontend/` | Widget connector |
 | `public/` | Assets estáticos y builds compilados |
 
-## 7. Actualizar el repositorio
+## Branching
 
-```bash
-git pull
+```
+main              ← producción
+  └─ german/dev   ← staging
+       ├─ santiago/dev
+       ├─ jose/dev
+       └─ german/feature
 ```
 
-No se requiere `git submodule update`.
+- PR de branch personal → `german/dev` (staging)
+- PR de `german/dev` → `main` (producción)

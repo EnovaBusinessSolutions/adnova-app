@@ -55,8 +55,19 @@ const integrationIcons = [
     {
         label: "xAI Grok",
         svg: (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img src={pub("/images/svg/grok.svg")} alt="xAI Grok" className="h-9 w-9 object-contain" />
+            <div
+                className="h-9 w-9 bg-white"
+                style={{
+                    maskImage: `url('${pub("/images/svg/grok.svg")}')`,
+                    WebkitMaskImage: `url('${pub("/images/svg/grok.svg")}')`,
+                    maskRepeat: "no-repeat",
+                    WebkitMaskRepeat: "no-repeat",
+                    maskPosition: "center",
+                    WebkitMaskPosition: "center",
+                    maskSize: "contain",
+                    WebkitMaskSize: "contain",
+                }}
+            />
         ),
     },
     {

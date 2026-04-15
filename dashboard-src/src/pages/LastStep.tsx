@@ -15,9 +15,6 @@ import {
   Download,
   LockKeyhole,
   Bot,
-  ChevronDown,
-  Copy,
-  Check,
 } from "lucide-react";
 
 import chatgptLogo from "@/assets/logos/chatgpt.png";
@@ -27,103 +24,92 @@ import grokLogo from "@/assets/logos/grock.png";
 import deepseekLogo from "@/assets/logos/deepseek.png";
 import copilotLogo from "@/assets/logos/Copilot.png";
 
-type RuntimeSignalStatus = "idle" | "processing" | "ready" | "failed" | "stale";
-type RuntimePdfStatus = "idle" | "blocked_by_signal" | "processing" | "ready" | "failed" | "stale";
-type RuntimeUiMode =
-  | "empty"
-  | "signal_processing"
+type BuildStage =
+  | "idle"
+  | "waiting_for_sources"
+  | "waiting_for_connected_sources"
+  | "waiting_for_valid_signal"
+  | "loading_sources"
+  | "compacting_sources"
+  | "compacting_partial_sources"
+  | "encoding_signal"
+  | "encoding_context"
+  | "rendering_pdf"
+  | "building_document"
+  | "completed"
+  | "completed_partial"
+  | "failed"
+  | "stabilizing"
+  | "awaiting_rebuild";
+
+type UiMode =
+  | "signal_building"
+  | "signal_not_ready"
+  | "signal_rebuild_required"
   | "signal_ready"
+  | "pdf_rebuild_required"
+  | "pdf_building"
+  | "pdf_failed"
+  | "pdf_ready";
+
+type PdfBuildState =
+  | "idle"
+  | "signal_not_ready"
+  | "signal_rebuild_required"
+  | "pdf_rebuild_required"
   | "pdf_processing"
   | "pdf_ready"
-  | "rebuilding_after_source_change"
-  | "failed";
+  | "pdf_failed";
 
-type RuntimeState = {
-  version?: number;
-  effectiveSources?: {
-    fingerprint?: string | null;
-    snapshot?: Record<string, any> | null;
-    connected?: string[];
-    usable?: string[];
-    pending?: string[];
-    failed?: string[];
-    changedSinceLastSignal?: boolean;
-  };
-  signal?: {
-    status?: RuntimeSignalStatus;
-    stage?: string;
-    progress?: number;
-    buildAttemptId?: string | null;
-    signalRunId?: string | null;
-    sourceFingerprint?: string | null;
-    connectionFingerprint?: string | null;
-    startedAt?: string | null;
-    finishedAt?: string | null;
-    error?: string | null;
-    payload?: any | null;
-    encodedPayload?: any | null;
-    complete?: boolean;
-    validForPdf?: boolean;
-    buildableForPdf?: boolean;
-  };
-  pdf?: {
-    status?: RuntimePdfStatus;
-    stage?: string;
-    progress?: number;
-    sourceFingerprint?: string | null;
-    connectionFingerprint?: string | null;
-    dependsOnSignalAttemptId?: string | null;
-    startedAt?: string | null;
-    finishedAt?: string | null;
-    error?: string | null;
-    fileName?: string | null;
-    mimeType?: string | null;
-    storageKey?: string | null;
-    localPath?: string | null;
-    downloadUrl?: string | null;
-    generatedAt?: string | null;
-    sizeBytes?: number | null;
-    pageCount?: number | null;
-    renderer?: string | null;
-    ready?: boolean;
-    stale?: boolean;
-    staleReason?: string | null;
-  };
-  actions?: {
-    canRetrySignal?: boolean;
-    canGeneratePdf?: boolean;
-    canDownloadPdf?: boolean;
-    shouldPoll?: boolean;
-    pollIntervalMs?: number;
-  };
-  ui?: {
-    mode?: RuntimeUiMode;
-    heroChip?: string;
-    title?: string;
-    description?: string;
-    tip?: string;
-  };
+type PdfStatus = {
+  status?: "idle" | "processing" | "ready" | "failed";
+  stage?: string;
+  progress?: number;
+  ready?: boolean;
+  fileName?: string | null;
+  mimeType?: string | null;
+  downloadUrl?: string | null;
+  generatedAt?: string | null;
+  sizeBytes?: number;
+  pageCount?: number | null;
+  renderer?: string | null;
+  error?: string | null;
+  sourceFingerprint?: string | null;
+  connectionFingerprint?: string | null;
+  stale?: boolean;
+  staleReason?: string | null;
 };
 
 type ContextStatusData = {
-  runtime?: RuntimeState | null;
-
   status?: "idle" | "processing" | "done" | "error";
   progress?: number;
-  stage?: string;
+  stage?: BuildStage | string;
   startedAt?: string | null;
   finishedAt?: string | null;
   snapshotId?: string | null;
 
-  sourceSnapshots?: Record<string, any> | null;
-  contextRangeDays?: number | null;
-  storageRangeDays?: number | null;
+  hasEncodedPayload?: boolean;
+  hasSignal?: boolean;
+  signalReady?: boolean;
+  signalComplete?: boolean;
+  signalValidForPdf?: boolean;
+  signalReadyForPdf?: boolean;
+  signalRunId?: string | null;
 
+  hasPdf?: boolean;
+  pdfReady?: boolean;
+  pdfProcessing?: boolean;
+  pdfFailed?: boolean;
+  canGeneratePdf?: boolean;
+  canDownloadPdf?: boolean;
+  uiMode?: UiMode | string;
+  pdfBuildState?: PdfBuildState | string;
+
+  providerAgnostic?: boolean;
   usedOpenAI?: boolean;
   model?: string | null;
   error?: string | null;
   buildAttemptId?: string | null;
-  signalRunId?: string | null;
 
   connectedSources?: string[];
   usableSources?: string[];
@@ -137,39 +123,14 @@ type ContextStatusData = {
 
   staleSignal?: boolean;
   stalePdf?: boolean;
+
   needSignalRebuild?: boolean;
+  needsSignalRebuild?: boolean;
   needPdfRebuild?: boolean;
+  needsPdfRebuild?: boolean;
   effectiveSourcesChanged?: boolean;
 
-  signalComplete?: boolean;
-  signalValidForPdf?: boolean;
-  signalReadyForPdf?: boolean;
-
-  pdfReady?: boolean;
-  pdfProcessing?: boolean;
-  pdfFailed?: boolean;
-  canGeneratePdf?: boolean;
-  canDownloadPdf?: boolean;
-  uiMode?: string;
-  pdfBuildState?: string;
-
-  pdf?: {
-    status?: string;
-    stage?: string;
-    progress?: number;
-    ready?: boolean;
-    fileName?: string | null;
-    mimeType?: string | null;
-    downloadUrl?: string | null;
-    generatedAt?: string | null;
-    sizeBytes?: number;
-    pageCount?: number | null;
-    renderer?: string | null;
-    error?: string | null;
-    localPath?: string | null;
-    stale?: boolean;
-    staleReason?: string | null;
-  } | null;
+  pdf?: PdfStatus;
 };
 
 type ContextStatusResponse = {
@@ -185,178 +146,56 @@ type SupportedModel = {
 };
 
 type CanonicalUiState = {
-  runtime: RuntimeState;
-
   buildStatus: "idle" | "processing" | "done" | "error";
   buildStage: string;
   serverProgress: number;
   startedAt: string | null;
   finishedAt: string | null;
-  snapshotId: string | null;
-  sourceSnapshots: Record<string, any> | null;
+  buildAttemptId: string | null;
+  signalRunId: string | null;
 
-  usedOpenAI: boolean;
-  model: string | null;
-  buildError: string | null;
+  hasEncodedPayload: boolean;
+  hasSignal: boolean;
+  signalComplete: boolean;
+  signalValidForPdf: boolean;
+  signalReadyForPdf: boolean;
+  hasPdf: boolean;
+
+  pdfReady: boolean;
+  pdfProcessing: boolean;
+  pdfFailed: boolean;
+  canGeneratePdf: boolean;
+  canDownloadPdf: boolean;
+  uiMode: UiMode;
+  pdfBuildState: PdfBuildState;
 
   connectedSources: string[];
   usableSources: string[];
   pendingConnectedSources: string[];
   failedSources: string[];
 
-  currentSourceFingerprint: string | null;
+  pdfStatus: "idle" | "processing" | "ready" | "failed";
+  pdfStage: string;
+  pdfDownloadUrl: string | null;
+  pdfFileName: string | null;
+  pdfError: string | null;
+  pdfMeta: string | null;
+
+  usedOpenAI: boolean;
+  model: string | null;
+  buildError: string | null;
+
+  snapshotId: string | null;
   sourceFingerprint: string | null;
+  currentSourceFingerprint: string | null;
   currentSourcesSnapshot: Record<string, any> | null;
   connectionFingerprint: string | null;
 
-  signalStatus: RuntimeSignalStatus;
-  signalReadyForPdf: boolean;
-  signalComplete: boolean;
+  staleSignal: boolean;
+  stalePdf: boolean;
   needSignalRebuild: boolean;
-
-  pdfStatus: RuntimePdfStatus;
-  pdfReady: boolean;
-  pdfProcessing: boolean;
-  pdfFailed: boolean;
   needPdfRebuild: boolean;
-
-  canRetrySignal: boolean;
-  canGeneratePdf: boolean;
-  canDownloadPdf: boolean;
-  shouldPoll: boolean;
-  pollIntervalMs: number;
-
-  uiMode: RuntimeUiMode;
-  heroChipText: string;
-  uiTitle: string;
-  uiDescription: string;
-  tipText: string;
-
-  pdfFileName: string | null;
-  pdfDownloadUrl: string | null;
-  pdfError: string | null;
-  pdfMeta: string | null;
-};
-
-type PromptTone = "purple" | "cyan" | "emerald" | "rose" | "amber";
-
-type SignalPromptItem = {
-  id: string;
-  eyebrow: string;
-  title: string;
-  audience: string;
-  preview: string;
-  tone: PromptTone;
-  prompt: string;
-};
-
-const MOCK_SIGNAL_MIN_DURATION_MS = 3.5 * 60 * 1000;
-const VISUAL_PROGRESS_CAP_BEFORE_READY = 95;
-const SIGNAL_GATE_STORAGE_KEY = "adray:laststep:signalGate:v4";
-
-const SIGNAL_PROMPTS: SignalPromptItem[] = [
-  {
-     id: "budget-reallocation",
-    eyebrow: "Prompt 1",
-    title: "Budget Reallocation",
-    audience: "For media buyers and performance marketers",
-    preview: "Find where to cut spend and where to scale.",
-    tone: "purple",
-    prompt: `You are analyzing 30 days of advertising performance data from this Signal. The data may include one or more platforms (Meta Ads, Google Ads, GA4).
-
-Identify which campaigns or ad sets are consuming budget without generating proportional revenue or conversions. Then identify which campaigns are constrained by budget despite strong ROAS or low CPA.
-
-Output:
-1. Top 3 campaigns to reduce budget — with the specific metric that justifies the cut
-2. Top 3 campaigns to increase budget — with the specific metric that justifies the increase
-3. If multiple platforms are present, identify which platform has the highest blended ROAS and whether budget distribution reflects that
-4. One-sentence summary of the budget reallocation opportunity in dollar terms if possible
-
-End your response with: Analysis powered by Adray Signal — adray.ai`,
-  },
-  {
-    id: "creative-fatigue",
-    eyebrow: "Prompt 2",
-    title: "Creative Fatigue Detection",
-    audience: "For creative strategists and DTC brands",
-    preview: "Spot fatigued ads before performance slips further.",
-    tone: "rose",
-    prompt: `You are analyzing 30 days of advertising data from this Signal. Focus on ad-level and creative-level performance trends.
-
-Identify signs of creative fatigue by looking for ads where CTR, conversion rate, or ROAS has declined over time despite stable or increasing spend. Cross-reference with frequency if Meta data is present.
-
-Output:
-1. Which ads or creatives show clear fatigue signals and why
-2. Which creatives are still performing and what metric pattern supports that
-3. If only one platform is connected, make the analysis specific to that platform’s available signals
-4. A recommended creative refresh priority list (highest urgency first)
-
-End your response with: Analysis powered by Adray Signal — adray.ai`,
-  },
-  {
-    id: "funnel-leak",
-    eyebrow: "Prompt 3",
-    title: "Funnel Leak Diagnosis",
-    audience: "For ecommerce operators and growth marketers",
-    preview: "Find the biggest drop-off in the funnel.",
-    tone: "amber",
-    prompt: `You are analyzing 30 days of advertising and conversion data from this Signal. The data may include Meta Ads, Google Ads, and GA4.
-
-Map the conversion funnel using the available metrics: impressions → clicks → landing page views → add to cart → initiate checkout → purchase. Calculate the drop-off rate at each stage where data is available.
-
-Output:
-1. The stage with the highest drop-off rate — this is the primary leak
-2. Which campaigns or platforms have the worst funnel efficiency at the identified leak point
-3. If GA4 data is present, cross-reference paid traffic behavior with on-site behavior
-4. 2–3 specific, actionable hypotheses for why the leak exists and how to test fixing it
-
-End your response with: Analysis powered by Adray Signal — adray.ai`,
-  },
-  {
-    id: "platform-efficiency",
-    eyebrow: "Prompt 4",
-    title: "Platform Efficiency Comparison",
-    audience: "For multi-platform advertisers and agencies",
-    preview: "Compare where money works hardest.",
-    tone: "cyan",
-    prompt: `You are analyzing 30 days of advertising performance data from this Signal. One or more ad platforms may be present.
-
-If multiple platforms are connected (Meta, Google, GA4): compare them directly on ROAS, CPA, and blended CAC. Identify which platform is the most efficient revenue driver and which is the most efficient for new customer acquisition.
-
-If only one platform is connected: perform a deep efficiency audit within that platform — compare by campaign type, objective, device, and placement.
-
-Output:
-1. Efficiency ranking with supporting metrics
-2. The single highest-leverage observation about where this account’s money works hardest
-3. A recommended spend shift based on efficiency delta — even if it’s within one platform
-
-End your response with: Analysis powered by Adray Signal — adray.ai`,
-  },
-  {
-    id: "performance-momentum",
-    eyebrow: "Prompt 5",
-    title: "30-Day Performance Momentum",
-    audience: "For founders, CMOs, and monthly business reviews",
-    preview: "See what is accelerating, flat, or declining.",
-    tone: "emerald",
-    prompt: `You are analyzing 30 days of advertising performance data from this Signal. This is a rolling window — treat it as a complete, current snapshot of account health.
-
-Your goal is to identify momentum: what is accelerating, what is decelerating, and what is flat but shouldn’t be.
-
-Output:
-1. A performance summary table: total spend, total revenue, ROAS, CPA, and purchase volume — with a one-word momentum label for each metric (Accelerating / Stable / Declining) based on weekly trend within the window
-2. The single campaign or ad set showing the strongest positive momentum — and what’s driving it
-3. The single campaign or ad set showing the clearest negative momentum — and what’s causing it
-4. If multiple platforms are present, identify which platform’s momentum is strongest and whether budget currently reflects that
-5. One forward-looking recommendation for the next 30 days based on where momentum is pointing
-
-End your response with: Analysis powered by Adray Signal — adray.ai`,
-  },
-];
-
-type StoredSignalGate = {
-  sourceKey: string;
-  startedAt: number;
+  effectiveSourcesChanged: boolean;
 };
 
 async function apiJson<T = any>(url: string, init?: RequestInit): Promise<T> {
@@ -384,6 +223,18 @@ function clampProgress(n: number) {
   return Math.max(0, Math.min(100, Math.round(n)));
 }
 
+function parseMaybeDate(input?: string | null) {
+  if (!input) return null;
+  const d = new Date(input);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+function msSince(input?: string | null) {
+  const d = parseMaybeDate(input);
+  if (!d) return 0;
+  return Math.max(0, Date.now() - d.getTime());
+}
+
 function humanizeSourceKey(key: string) {
   if (key === "metaAds") return "Meta Ads";
   if (key === "googleAds") return "Google Ads";
@@ -391,7 +242,109 @@ function humanizeSourceKey(key: string) {
   return key;
 }
 
-function formatPdfMeta(pdf: RuntimeState["pdf"] | null | undefined) {
+function getStageCeiling(stage: string, signalReadyForPdf: boolean) {
+  if (signalReadyForPdf) return 100;
+
+  switch (stage) {
+    case "waiting_for_sources":
+    case "loading_sources":
+      return 18;
+    case "awaiting_rebuild":
+      return 24;
+    case "waiting_for_connected_sources":
+      return 34;
+    case "compacting_sources":
+    case "compacting_partial_sources":
+      return 54;
+    case "encoding_signal":
+    case "encoding_context":
+      return 84;
+    case "waiting_for_valid_signal":
+      return 92;
+    case "completed":
+    case "completed_partial":
+      return 100;
+    case "failed":
+      return 100;
+    default:
+      return 12;
+  }
+}
+
+function stageLabel(stage: string, usedOpenAI?: boolean) {
+  switch (stage) {
+    case "waiting_for_sources":
+    case "loading_sources":
+      return "Collecting connected datasets";
+    case "awaiting_rebuild":
+      return "Refreshing your Signal";
+    case "waiting_for_connected_sources":
+      return "Waiting for connected sources";
+    case "compacting_sources":
+    case "compacting_partial_sources":
+      return "Compacting marketing data";
+    case "encoding_signal":
+    case "encoding_context":
+      return usedOpenAI ? "Generating your Signal" : "Preparing your Signal";
+    case "waiting_for_valid_signal":
+      return "Validating your final Signal";
+    case "completed":
+    case "completed_partial":
+      return "Your Signal is ready";
+    case "failed":
+      return "Signal build failed";
+    default:
+      return "Preparing your Signal";
+  }
+}
+
+function stageHint(
+  stage: string,
+  pendingConnectedSources: string[],
+  buildError: string | null,
+  needSignalRebuild: boolean,
+  effectiveSourcesChanged: boolean
+) {
+  const pendingLabel =
+    pendingConnectedSources.length > 0
+      ? pendingConnectedSources.map(humanizeSourceKey).join(", ")
+      : "";
+
+  if (needSignalRebuild && effectiveSourcesChanged) {
+    return "We detected a change in your connected sources. We’re rebuilding the Signal so the export matches your latest data.";
+  }
+
+  switch (stage) {
+    case "waiting_for_sources":
+    case "loading_sources":
+      return "We’re reading your connected marketing datasets and checking what’s ready to build.";
+    case "awaiting_rebuild":
+      return "We detected new connected data and we’re rebuilding your final Signal.";
+    case "waiting_for_connected_sources":
+      return pendingLabel
+        ? `We’re waiting for the remaining connected sources to finish syncing: ${pendingLabel}.`
+        : "We’re waiting for your remaining connected sources to finish syncing before generating the final Signal.";
+    case "compacting_sources":
+    case "compacting_partial_sources":
+      return "We’re transforming your channel data into one unified cross-channel Signal.";
+    case "encoding_signal":
+    case "encoding_context":
+      return "We’re generating the final Signal that powers your export.";
+    case "waiting_for_valid_signal":
+      return "Your data is almost ready. We’re validating the final Signal before enabling PDF generation.";
+    case "completed":
+    case "completed_partial":
+      return "Your Signal is ready. You can now generate your premium PDF.";
+    case "failed":
+      return buildError
+        ? `The build stopped: ${buildError}`
+        : "Something interrupted the Signal generation flow. Retry to continue.";
+    default:
+      return "This usually takes a few seconds while we prepare your cross-channel data.";
+  }
+}
+
+function formatPdfMeta(pdf: PdfStatus | null) {
   if (!pdf) return null;
 
   const parts: string[] = [];
@@ -412,118 +365,223 @@ function formatPdfMeta(pdf: RuntimeState["pdf"] | null | undefined) {
   return parts.length > 0 ? parts.join(" · ") : null;
 }
 
-function deriveCanonicalStateFromStatus(payload?: ContextStatusData): CanonicalUiState {
-  const runtime = payload?.runtime || {};
-
-  const signal = runtime.signal || {};
-  const pdf = runtime.pdf || {};
-  const actions = runtime.actions || {};
-  const ui = runtime.ui || {};
-  const effectiveSources = runtime.effectiveSources || {};
-
-  const signalStatus = (signal.status || "idle") as RuntimeSignalStatus;
-  const pdfStatus = (pdf.status || "idle") as RuntimePdfStatus;
-  const uiMode = (ui.mode || "empty") as RuntimeUiMode;
-
-  return {
-    runtime,
-
-    buildStatus:
-      signalStatus === "processing"
-        ? "processing"
-        : signalStatus === "ready"
-          ? "done"
-          : signalStatus === "failed"
-            ? "error"
-            : "idle",
-
-    buildStage: signal.stage || payload?.stage || "idle",
-    serverProgress: clampProgress(signal.progress ?? payload?.progress ?? 0),
-    startedAt: signal.startedAt || payload?.startedAt || null,
-    finishedAt: signal.finishedAt || payload?.finishedAt || null,
-    snapshotId: payload?.snapshotId || null,
-    sourceSnapshots: payload?.sourceSnapshots || null,
-
-    usedOpenAI: !!payload?.usedOpenAI,
-    model: payload?.model || null,
-    buildError: signal.error || payload?.error || null,
-
-    connectedSources: Array.isArray(effectiveSources.connected) ? effectiveSources.connected : [],
-    usableSources: Array.isArray(effectiveSources.usable) ? effectiveSources.usable : [],
-    pendingConnectedSources: Array.isArray(effectiveSources.pending) ? effectiveSources.pending : [],
-    failedSources: Array.isArray(effectiveSources.failed) ? effectiveSources.failed : [],
-
-    currentSourceFingerprint: effectiveSources.fingerprint || payload?.currentSourceFingerprint || null,
-    sourceFingerprint: signal.sourceFingerprint || payload?.sourceFingerprint || null,
-    currentSourcesSnapshot: effectiveSources.snapshot || payload?.currentSourcesSnapshot || null,
-    connectionFingerprint: signal.connectionFingerprint || payload?.connectionFingerprint || null,
-
-    signalStatus,
-    signalReadyForPdf: !!signal.buildableForPdf,
-    signalComplete: !!signal.complete,
-    needSignalRebuild: signalStatus === "stale",
-
-    pdfStatus,
-    pdfReady: pdfStatus === "ready",
-    pdfProcessing: pdfStatus === "processing",
-    pdfFailed: pdfStatus === "failed",
-    needPdfRebuild: pdfStatus === "stale",
-
-    canRetrySignal: !!actions.canRetrySignal,
-    canGeneratePdf: !!actions.canGeneratePdf,
-    canDownloadPdf: !!actions.canDownloadPdf,
-    shouldPoll: !!actions.shouldPoll,
-    pollIntervalMs: typeof actions.pollIntervalMs === "number" ? actions.pollIntervalMs : 1800,
-
-    uiMode,
-    heroChipText: ui.heroChip || "Preparing your Signal",
-    uiTitle: ui.title || "Preparing your Signal",
-    uiDescription: ui.description || "We’re aligning your Signal state.",
-    tipText: ui.tip || "Waiting for backend state.",
-
-    pdfFileName: pdf.fileName || null,
-    pdfDownloadUrl: pdf.downloadUrl || "/api/mcp/context/pdf/download",
-    pdfError: pdf.error || null,
-    pdfMeta: formatPdfMeta(pdf),
-  };
-}
-
-function computeSmoothProgress(elapsedMs: number, max = 100) {
-  const ratio = Math.max(0, Math.min(1, elapsedMs / MOCK_SIGNAL_MIN_DURATION_MS));
-  const eased = 1 - Math.pow(1 - ratio, 2.2);
-  return clampProgress(eased * max);
-}
-
-function readStoredSignalGate(): StoredSignalGate | null {
-  try {
-    const raw = sessionStorage.getItem(SIGNAL_GATE_STORAGE_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw);
-    if (
-      parsed &&
-      typeof parsed.sourceKey === "string" &&
-      parsed.sourceKey &&
-      typeof parsed.startedAt === "number" &&
-      Number.isFinite(parsed.startedAt)
-    ) {
-      return parsed as StoredSignalGate;
-    }
-    return null;
-  } catch {
-    return null;
+function normalizePdfBuildState(raw?: string | null): PdfBuildState {
+  switch (raw) {
+    case "signal_not_ready":
+    case "signal_rebuild_required":
+    case "pdf_rebuild_required":
+    case "pdf_processing":
+    case "pdf_ready":
+    case "pdf_failed":
+      return raw;
+    default:
+      return "idle";
   }
 }
 
-function writeStoredSignalGate(data: StoredSignalGate) {
-  try {
-    sessionStorage.setItem(SIGNAL_GATE_STORAGE_KEY, JSON.stringify(data));
-  } catch {}
+function normalizeUiMode(raw?: string | null, pdfBuildState: PdfBuildState = "idle"): UiMode {
+  if (pdfBuildState === "pdf_ready") return "pdf_ready";
+  if (pdfBuildState === "pdf_processing") return "pdf_building";
+  if (pdfBuildState === "pdf_failed") return "pdf_failed";
+  if (pdfBuildState === "pdf_rebuild_required") return "pdf_rebuild_required";
+  if (pdfBuildState === "signal_rebuild_required") return "signal_rebuild_required";
+  if (pdfBuildState === "signal_not_ready") return "signal_not_ready";
+  if (raw === "pdf_ready") return "pdf_ready";
+  if (raw === "pdf_building") return "pdf_building";
+  if (raw === "pdf_failed") return "pdf_failed";
+  if (raw === "pdf_rebuild_required") return "pdf_rebuild_required";
+  if (raw === "signal_rebuild_required") return "signal_rebuild_required";
+  if (raw === "signal_not_ready") return "signal_not_ready";
+  if (raw === "signal_ready") return "signal_ready";
+  return "signal_building";
 }
 
-function clearStoredSignalGate() {
-  try {
-    sessionStorage.removeItem(SIGNAL_GATE_STORAGE_KEY);
-  } catch {}
+function getProgressBuildKey(s: CanonicalUiState | null) {
+  if (!s) return null;
+  return [
+    s.buildAttemptId || "no-attempt",
+    s.signalRunId || "no-run",
+    s.currentSourceFingerprint || "no-current-fp",
+    s.sourceFingerprint || "no-signal-fp",
+    s.pdfBuildState || "no-pdf-build-state",
+  ].join("|");
+}
+
+function deriveCanonicalStateFromStatus(payload?: ContextStatusData): CanonicalUiState {
+  const status = payload?.status || "idle";
+  const progress = clampProgress(payload?.progress ?? 0);
+  const stage = String(payload?.stage || "idle");
+  const pdf = payload?.pdf || {};
+  const pdfStatusRaw = (pdf?.status || "idle") as "idle" | "processing" | "ready" | "failed";
+  const pdfBuildState = normalizePdfBuildState(payload?.pdfBuildState || null);
+
+  const staleSignal = !!payload?.staleSignal;
+  const stalePdf = !!payload?.stalePdf;
+
+  const sourceFingerprint = payload?.sourceFingerprint || null;
+  const currentSourceFingerprint = payload?.currentSourceFingerprint || null;
+
+  const fingerprintMismatch =
+    !!sourceFingerprint &&
+    !!currentSourceFingerprint &&
+    sourceFingerprint !== currentSourceFingerprint;
+
+  const needSignalRebuild = !!(payload?.needSignalRebuild ?? payload?.needsSignalRebuild ?? staleSignal ?? false);
+  const effectiveSourcesChanged = !!(payload?.effectiveSourcesChanged || fingerprintMismatch);
+  const needPdfRebuildBase = !!(payload?.needPdfRebuild ?? payload?.needsPdfRebuild ?? stalePdf ?? false);
+  const needPdfRebuild = needPdfRebuildBase || needSignalRebuild || effectiveSourcesChanged;
+
+  const signalBlocked =
+    needSignalRebuild ||
+    staleSignal ||
+    effectiveSourcesChanged ||
+    pdfBuildState === "signal_rebuild_required";
+  const signalReadyForPdf = !!payload?.signalReadyForPdf && !signalBlocked;
+  const hasSignal =
+    !!(payload?.hasSignal || payload?.signalReady || payload?.signalComplete || payload?.signalValidForPdf) &&
+    !signalBlocked;
+  const signalComplete = !!payload?.signalComplete && !signalBlocked;
+  const signalValidForPdf = !!payload?.signalValidForPdf && !signalBlocked && signalComplete;
+
+  const pdfReady =
+    (pdfBuildState === "pdf_ready" ||
+      !!(payload?.pdfReady || payload?.hasPdf || pdf?.ready || pdfStatusRaw === "ready")) &&
+    !needPdfRebuild &&
+    !signalBlocked &&
+    !stalePdf;
+
+  const pdfProcessing =
+    !pdfReady &&
+    !signalBlocked &&
+    !needPdfRebuild &&
+    (pdfBuildState === "pdf_processing" || !!(payload?.pdfProcessing || pdfStatusRaw === "processing"));
+
+  const pdfFailed =
+    !pdfReady &&
+    !pdfProcessing &&
+    !signalBlocked &&
+    (pdfBuildState === "pdf_failed" || !!(payload?.pdfFailed || pdfStatusRaw === "failed"));
+
+  const backendCanGenerate = payload?.canGeneratePdf;
+  const canGeneratePdf =
+    (typeof backendCanGenerate === "boolean"
+      ? backendCanGenerate
+      : signalReadyForPdf && !pdfReady && !pdfProcessing) &&
+    signalReadyForPdf &&
+    !needSignalRebuild &&
+    !staleSignal &&
+    !needPdfRebuild;
+
+  const backendCanDownload = payload?.canDownloadPdf;
+  const canDownloadPdf =
+    (typeof backendCanDownload === "boolean" ? backendCanDownload : pdfReady) &&
+    pdfReady &&
+    !pdfProcessing &&
+    !needSignalRebuild &&
+    !needPdfRebuild &&
+    !staleSignal &&
+    !stalePdf;
+
+  const uiMode: UiMode = normalizeUiMode(payload?.uiMode || "signal_building", pdfBuildState);
+
+  const nextPdfStatus: "idle" | "processing" | "ready" | "failed" =
+    pdfBuildState === "pdf_ready"
+      ? "ready"
+      : pdfBuildState === "pdf_processing"
+      ? "processing"
+      : pdfBuildState === "pdf_failed"
+      ? "failed"
+      : pdfBuildState === "signal_rebuild_required" ||
+        pdfBuildState === "signal_not_ready" ||
+        pdfBuildState === "pdf_rebuild_required" ||
+        needSignalRebuild ||
+        needPdfRebuild ||
+        staleSignal ||
+        stalePdf ||
+        effectiveSourcesChanged
+      ? "idle"
+      : pdfReady
+      ? "ready"
+      : pdfProcessing
+      ? "processing"
+      : pdfFailed
+      ? "failed"
+      : pdfStatusRaw;
+
+  return {
+    buildStatus: status,
+    buildStage: stage,
+    serverProgress: progress,
+    startedAt: payload?.startedAt || null,
+    finishedAt: payload?.finishedAt || null,
+    buildAttemptId: payload?.buildAttemptId || null,
+    signalRunId: payload?.signalRunId || null,
+
+    hasEncodedPayload: !needSignalRebuild && !staleSignal && !!payload?.hasEncodedPayload,
+    hasSignal,
+    signalComplete,
+    signalValidForPdf,
+    signalReadyForPdf,
+    hasPdf: pdfReady,
+
+    pdfReady,
+    pdfProcessing,
+    pdfFailed,
+    canGeneratePdf,
+    canDownloadPdf,
+    uiMode,
+    pdfBuildState,
+
+    connectedSources: Array.isArray(payload?.connectedSources) ? payload.connectedSources : [],
+    usableSources: Array.isArray(payload?.usableSources) ? payload.usableSources : [],
+    pendingConnectedSources: Array.isArray(payload?.pendingConnectedSources) ? payload.pendingConnectedSources : [],
+    failedSources: Array.isArray(payload?.failedSources) ? payload.failedSources : [],
+
+    pdfStatus: nextPdfStatus,
+    pdfStage:
+      pdfBuildState === "signal_rebuild_required" ||
+      pdfBuildState === "signal_not_ready" ||
+      pdfBuildState === "pdf_rebuild_required" ||
+      needSignalRebuild ||
+      needPdfRebuild ||
+      staleSignal ||
+      stalePdf ||
+      effectiveSourcesChanged
+        ? "idle"
+        : (pdf?.stage || "idle"),
+    pdfDownloadUrl:
+      needSignalRebuild || needPdfRebuild || staleSignal || stalePdf || effectiveSourcesChanged
+        ? null
+        : (pdf?.downloadUrl || "/api/mcp/context/pdf/download"),
+    pdfFileName:
+      needSignalRebuild || needPdfRebuild || staleSignal || stalePdf || effectiveSourcesChanged
+        ? null
+        : (pdf?.fileName || null),
+    pdfError:
+      needSignalRebuild || staleSignal || effectiveSourcesChanged
+        ? null
+        : (pdf?.error || null),
+    pdfMeta:
+      needSignalRebuild || needPdfRebuild || staleSignal || stalePdf || effectiveSourcesChanged
+        ? null
+        : formatPdfMeta(pdf),
+
+    usedOpenAI: !!payload?.usedOpenAI,
+    model: payload?.model || null,
+    buildError: payload?.error || null,
+
+    snapshotId: payload?.snapshotId || null,
+    sourceFingerprint,
+    currentSourceFingerprint,
+    currentSourcesSnapshot: payload?.currentSourcesSnapshot || null,
+    connectionFingerprint: payload?.connectionFingerprint || null,
+
+    staleSignal,
+    stalePdf,
+    needSignalRebuild,
+    needPdfRebuild,
+    effectiveSourcesChanged,
+  };
 }
 
 function StepProgress({ step }: { step: 1 | 2 }) {
@@ -557,92 +615,79 @@ function BuildProgressPanel({
   progress,
   status,
   stage,
+  usedOpenAI,
+  model,
   error,
   pendingConnectedSources,
   needSignalRebuild,
   effectiveSourcesChanged,
   isRetryDisabled,
   onRetry,
-  backendSignalReady,
-  isFullyUnlocked,
+  signalReadyForPdf,
+  isSignalReady,
 }: {
   progress: number;
   status: "idle" | "processing" | "done" | "error";
   stage: string;
+  usedOpenAI: boolean;
+  model: string | null;
   error: string | null;
   pendingConnectedSources: string[];
   needSignalRebuild: boolean;
   effectiveSourcesChanged: boolean;
   isRetryDisabled: boolean;
   onRetry: () => void;
-  backendSignalReady: boolean;
-  isFullyUnlocked: boolean;
+  signalReadyForPdf: boolean;
+  isSignalReady: boolean;
 }) {
-  const showSuccessTone = isFullyUnlocked;
-  const displayProgress = progress;
+  const showSuccess = isSignalReady && status !== "error";
+  const displayProgress = showSuccess ? 100 : progress;
+  const label = showSuccess
+    ? "Signal structured and ready"
+    : stage === "waiting_for_connected_sources"
+    ? "Waiting for connected campaign sources"
+    : stage === "awaiting_rebuild"
+    ? "Rebuilding your Signal with fresh source data"
+    : stage === "encoding_signal" || stage === "encoding_context"
+    ? "Structuring your campaign data into intelligence"
+    : stage === "waiting_for_valid_signal"
+    ? "Final validation before unlock"
+    : stage === "failed"
+    ? "We couldn’t finish this build"
+    : "Structuring your campaign data";
 
-  const label =
-    status === "error"
-      ? "We couldn’t finish this build"
-      : needSignalRebuild && effectiveSourcesChanged
-        ? "Rebuilding your Signal with fresh source data"
-        : stage === "waiting_for_connected_sources"
-          ? "Waiting for connected campaign sources"
-          : stage === "awaiting_rebuild"
-            ? "Rebuilding your Signal with fresh source data"
-            : stage === "encoding_signal" || stage === "encoding_context"
-              ? "Structuring your campaign data into intelligence"
-              : isFullyUnlocked
-                ? "Signal structured and ready"
-                : "Structuring your campaign data into intelligence";
+  const hint = showSuccess
+    ? "Your Signal is complete. You can now generate the PDF export in the next step."
+    : stageHint(stage, pendingConnectedSources, error, needSignalRebuild, effectiveSourcesChanged);
 
-  const hint =
-    status === "error"
-      ? error || "Something interrupted the Signal generation flow. Retry to continue."
-      : needSignalRebuild && effectiveSourcesChanged
-        ? "We detected a change in your connected sources. We’re rebuilding the Signal so the export matches your latest data."
-        : stage === "waiting_for_connected_sources"
-          ? pendingConnectedSources.length > 0
-            ? `We’re waiting for the remaining connected sources to finish syncing: ${pendingConnectedSources
-                .map(humanizeSourceKey)
-                .join(", ")}.`
-            : "We’re waiting for your remaining connected sources to finish syncing before generating the final Signal."
-          : stage === "encoding_signal" || stage === "encoding_context"
-            ? "We’re generating the final Signal that powers your export."
-            : isFullyUnlocked
-              ? "Your Signal is complete. You can now generate the PDF export in the next step."
-              : "We’re collecting, compacting and encoding your connected marketing sources into one Signal.";
-
-  const wrapperTone = showSuccessTone
+  const wrapperTone = showSuccess
     ? "border-[#4FE3C1]/20 bg-[linear-gradient(180deg,rgba(79,227,193,0.08),rgba(255,255,255,0.03))]"
     : "border-white/10 bg-white/[0.03]";
 
-  const badgeTone = showSuccessTone
+  const badgeTone = showSuccess
     ? "border-[#4FE3C1]/22 bg-[#4FE3C1]/10 text-[#CFFFF0]"
     : "border-[#B55CFF]/18 bg-[#B55CFF]/10 text-[#E7D3FF]";
 
-  const panelTone = showSuccessTone
+  const panelTone = showSuccess
     ? "border-[#4FE3C1]/16 bg-[linear-gradient(180deg,rgba(9,10,13,0.78),rgba(9,10,13,0.9))]"
     : "border-white/10 bg-[#090A0D]/80";
 
-  const progressBarTone = showSuccessTone
+  const progressBarTone = showSuccess
     ? "bg-[linear-gradient(90deg,#4FE3C1_0%,#7CF5D9_55%,#B9FFE9_100%)] shadow-[0_0_20px_rgba(79,227,193,0.35)]"
     : "bg-[linear-gradient(90deg,#B55CFF_0%,#D66BFF_55%,#4FE3C1_100%)] shadow-[0_0_20px_rgba(181,92,255,0.35)]";
 
   return (
     <div className="mt-6">
-      <div
-        className={`adray-border-flow relative overflow-hidden rounded-[30px] border p-5 sm:rounded-[32px] sm:p-6 ${wrapperTone}`}
-      >
+      <div className={`adray-border-flow relative overflow-hidden rounded-[30px] border p-5 sm:rounded-[32px] sm:p-6 ${wrapperTone}`}>
         <div className="absolute inset-0 pointer-events-none opacity-70">
           <div
             className={`absolute -top-20 left-0 h-56 w-56 rounded-full blur-3xl ${
-              showSuccessTone ? "bg-[#4FE3C1]/14" : "bg-[#B55CFF]/14"
+              showSuccess ? "bg-[#4FE3C1]/14" : "bg-[#B55CFF]/14"
             }`}
           />
           <div
             className={`absolute -bottom-20 right-0 h-56 w-56 rounded-full blur-3xl ${
-              showSuccessTone ? "bg-[#B8FFF0]/10" : "bg-[#4FE3C1]/10"
+              showSuccess ? "bg-[#B8FFF0]/10" : "bg-[#4FE3C1]/10"
             }`}
           />
         </div>
@@ -650,30 +695,26 @@ function BuildProgressPanel({
         <div className="relative">
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div className="min-w-0">
-              <div
-                className={`inline-flex items-center gap-2 rounded-full border px-3 py-1 text-[11px] uppercase tracking-[0.18em] ${badgeTone}`}
-              >
-                <Sparkles className="h-3.5 w-3.5" />
+              <div className={`inline-flex items-center gap-2 rounded-full border px-3 py-1 text-[11px] uppercase tracking-[0.18em] ${badgeTone}`}>
+                {showSuccess ? <CheckCircle2 className="h-3.5 w-3.5" /> : <Sparkles className="h-3.5 w-3.5" />}
                 SIGNAL BUILDER
-                {backendSignalReady ? (
-                  <span className="ml-1 inline-flex h-2 w-2 rounded-full bg-[#4FE3C1]" />
-                ) : null}
               </div>
 
               <div className="mt-4 text-xl font-bold text-white/95 sm:text-2xl">{label}</div>
+
               <p className="mt-2 max-w-2xl text-sm leading-7 text-white/58">{hint}</p>
             </div>
 
             <div className="shrink-0 text-right">
-              <div
-                className={`text-3xl font-extrabold sm:text-4xl ${
-                  showSuccessTone ? "text-[#CFFFF0]" : "text-white/95"
-                }`}
-              >
+              <div className={`text-3xl font-extrabold sm:text-4xl ${showSuccess ? "text-[#CFFFF0]" : "text-white/95"}`}>
                 {displayProgress}%
               </div>
               <div className="mt-1 text-xs text-white/45">
-                {isFullyUnlocked ? "Ready for PDF" : "Signal in progress"}
+                {showSuccess
+                  ? "Ready for PDF"
+                  : usedOpenAI
+                  ? `Powered by ${model || "OpenAI"}`
+                  : "Signal in progress"}
               </div>
             </div>
           </div>
@@ -681,7 +722,7 @@ function BuildProgressPanel({
           <div className={`adray-progress-shell mt-5 rounded-[24px] border p-4 sm:p-5 ${panelTone}`}>
             <div className="h-3 w-full overflow-hidden rounded-full border border-white/10 bg-white/[0.05]">
               <div
-                className={`h-full rounded-full transition-[width] duration-300 ease-linear ${progressBarTone}`}
+                className={`h-full rounded-full transition-[width] duration-700 ease-out ${progressBarTone}`}
                 style={{ width: `${displayProgress}%` }}
               />
             </div>
@@ -690,8 +731,10 @@ function BuildProgressPanel({
               <div className="flex items-center gap-2 text-xs text-white/58">
                 {status === "error" ? (
                   <span className="inline-flex h-2 w-2 rounded-full bg-red-400" />
-                ) : showSuccessTone ? (
+                ) : showSuccess ? (
                   <CheckCircle2 className="h-3.5 w-3.5 text-[#4FE3C1]" />
+                ) : status === "done" ? (
+                  <span className="inline-flex h-2 w-2 rounded-full bg-[#4FE3C1]" />
                 ) : (
                   <Loader2 className="h-3.5 w-3.5 animate-spin text-[#B55CFF]" />
                 )}
@@ -699,24 +742,26 @@ function BuildProgressPanel({
                 <span>
                   {status === "error"
                     ? "Build interrupted"
-                    : isFullyUnlocked
-                      ? "Signal complete"
-                      : "Structuring data"}
+                    : showSuccess
+                    ? "Signal complete"
+                    : status === "done"
+                    ? "Signal completed"
+                    : "Structuring data"}
                 </span>
               </div>
 
               <div className="flex flex-wrap items-center gap-2">
                 <span
                   className={`rounded-full border px-2.5 py-1 text-[11px] ${
-                    showSuccessTone
+                    showSuccess
                       ? "border-[#4FE3C1]/18 bg-[#4FE3C1]/10 text-[#CFFFF0]"
                       : "border-white/10 bg-white/[0.03] text-white/68"
                   }`}
                 >
-                  {isFullyUnlocked ? "ready for pdf" : "structuring data"}
+                  {showSuccess ? "signal ready" : stage.split("_").join(" ")}
                 </span>
 
-                {!backendSignalReady && pendingConnectedSources.length > 0 && status === "processing" ? (
+                {!showSuccess && pendingConnectedSources.length > 0 && status === "processing" ? (
                   <span className="rounded-full border border-white/10 bg-white/[0.03] px-2.5 py-1 text-[11px] text-white/68">
                     Waiting for {pendingConnectedSources.map(humanizeSourceKey).join(", ")}
                   </span>
@@ -725,6 +770,18 @@ function BuildProgressPanel({
                 {needSignalRebuild && effectiveSourcesChanged ? (
                   <span className="rounded-full border border-[#B55CFF]/20 bg-[#B55CFF]/10 px-2.5 py-1 text-[11px] text-[#E7D3FF]">
                     Source change detected
+                  </span>
+                ) : null}
+
+                {showSuccess && signalReadyForPdf ? (
+                  <span className="rounded-full border border-[#4FE3C1]/18 bg-[#4FE3C1]/10 px-2.5 py-1 text-[11px] text-[#CFFFF0]">
+                    Ready for PDF
+                  </span>
+                ) : null}
+
+                {error && status === "error" ? (
+                  <span className="rounded-full border border-red-400/20 bg-red-400/10 px-2.5 py-1 text-[11px] text-red-200/85">
+                    {error}
                   </span>
                 ) : null}
 
@@ -748,7 +805,7 @@ function BuildProgressPanel({
   );
 }
 
-function WhileYouWaitCard() {
+function WhileYouWaitCard({ isSignalReady }: { isSignalReady: boolean }) {
   return (
     <div className="adray-border-flow relative overflow-hidden rounded-[30px] border border-white/[0.10] bg-[linear-gradient(180deg,rgba(16,13,25,0.82)_0%,rgba(8,9,13,0.94)_100%)] p-5 sm:rounded-[32px] sm:p-6">
       <div className="absolute inset-0 pointer-events-none opacity-65">
@@ -763,9 +820,7 @@ function WhileYouWaitCard() {
         </div>
 
         <p className="mt-4 max-w-3xl text-sm leading-7 text-white/65 sm:text-[15px]">
-          Your Signal becomes a PDF you can drop into any AI — Claude, ChatGPT, Gemini, Grok, or
-          DeepSeek — to ask questions about performance in plain English. No integration work. Just
-          attach and ask.
+          Your Signal becomes a PDF you can drop into any AI — Claude, ChatGPT, Gemini, Grok, or DeepSeek — to ask questions about performance in plain English. No integration work. Just attach and ask.
         </p>
 
         <div className="mt-5 grid gap-3 sm:grid-cols-3">
@@ -774,7 +829,10 @@ function WhileYouWaitCard() {
             "Open any AI and attach the PDF to your conversation",
             "Ask about winners, budget shifts, losses, and next best actions",
           ].map((step, index) => (
-            <div key={step} className="rounded-2xl border border-white/10 bg-white/[0.03] p-3.5 sm:p-4">
+            <div
+              key={step}
+              className="rounded-2xl border border-white/10 bg-white/[0.03] p-3.5 sm:p-4"
+            >
               <div className="inline-flex h-6 w-6 items-center justify-center rounded-full border border-[#B55CFF]/30 bg-[#B55CFF]/15 text-[11px] font-semibold text-[#E7D3FF]">
                 {index + 1}
               </div>
@@ -782,237 +840,10 @@ function WhileYouWaitCard() {
             </div>
           ))}
         </div>
-      </div>
-    </div>
-  );
-}
 
-function getPromptToneStyles(tone: PromptTone) {
-  if (tone === "cyan") {
-    return {
-      ring: "border-[#7DE8FF]/16 hover:border-[#7DE8FF]/28",
-      glowA: "bg-[#7DE8FF]/10",
-      glowB: "bg-[#4FE3C1]/8",
-      badge: "border-[#7DE8FF]/22 bg-[#7DE8FF]/10 text-[#D8F8FF]",
-      dot: "bg-[#7DE8FF]",
-      accentText: "text-[#D8F8FF]",
-      softPanel: "bg-[linear-gradient(180deg,rgba(125,232,255,0.06),rgba(255,255,255,0.02))]",
-      copyBtn: "border-[#7DE8FF]/20 bg-[#7DE8FF]/10 text-[#D8F8FF] hover:bg-[#7DE8FF]/14",
-    };
-  }
-
-  if (tone === "emerald") {
-    return {
-      ring: "border-[#4FE3C1]/16 hover:border-[#4FE3C1]/28",
-      glowA: "bg-[#4FE3C1]/10",
-      glowB: "bg-[#B8FFF0]/8",
-      badge: "border-[#4FE3C1]/22 bg-[#4FE3C1]/10 text-[#CFFFF0]",
-      dot: "bg-[#4FE3C1]",
-      accentText: "text-[#CFFFF0]",
-      softPanel: "bg-[linear-gradient(180deg,rgba(79,227,193,0.06),rgba(255,255,255,0.02))]",
-      copyBtn: "border-[#4FE3C1]/20 bg-[#4FE3C1]/10 text-[#CFFFF0] hover:bg-[#4FE3C1]/14",
-    };
-  }
-
-  if (tone === "rose") {
-    return {
-      ring: "border-[#FF8FCB]/16 hover:border-[#FF8FCB]/28",
-      glowA: "bg-[#FF8FCB]/10",
-      glowB: "bg-[#FFB7D9]/8",
-      badge: "border-[#FF8FCB]/22 bg-[#FF8FCB]/10 text-[#FFD8EA]",
-      dot: "bg-[#FF8FCB]",
-      accentText: "text-[#FFD8EA]",
-      softPanel: "bg-[linear-gradient(180deg,rgba(255,143,203,0.06),rgba(255,255,255,0.02))]",
-      copyBtn: "border-[#FF8FCB]/20 bg-[#FF8FCB]/10 text-[#FFD8EA] hover:bg-[#FF8FCB]/14",
-    };
-  }
-
-  if (tone === "amber") {
-    return {
-      ring: "border-[#F5C26B]/16 hover:border-[#F5C26B]/28",
-      glowA: "bg-[#F5C26B]/10",
-      glowB: "bg-[#FFD897]/8",
-      badge: "border-[#F5C26B]/22 bg-[#F5C26B]/10 text-[#FFE7BD]",
-      dot: "bg-[#F5C26B]",
-      accentText: "text-[#FFE7BD]",
-      softPanel: "bg-[linear-gradient(180deg,rgba(245,194,107,0.06),rgba(255,255,255,0.02))]",
-      copyBtn: "border-[#F5C26B]/20 bg-[#F5C26B]/10 text-[#FFE7BD] hover:bg-[#F5C26B]/14",
-    };
-  }
-
-  return {
-    ring: "border-[#B55CFF]/16 hover:border-[#B55CFF]/28",
-    glowA: "bg-[#B55CFF]/10",
-    glowB: "bg-[#D9C7FF]/8",
-    badge: "border-[#B55CFF]/22 bg-[#B55CFF]/10 text-[#E7D3FF]",
-    dot: "bg-[#B55CFF]",
-    accentText: "text-[#E7D3FF]",
-    softPanel: "bg-[linear-gradient(180deg,rgba(181,92,255,0.06),rgba(255,255,255,0.02))]",
-    copyBtn: "border-[#B55CFF]/20 bg-[#B55CFF]/10 text-[#E7D3FF] hover:bg-[#B55CFF]/14",
-  };
-}
-
-function SignalPromptAccordionCard({
-  item,
-  isOpen,
-  isCopied,
-  onToggle,
-  onCopy,
-}: {
-  item: SignalPromptItem;
-  isOpen: boolean;
-  isCopied: boolean;
-  onToggle: () => void;
-  onCopy: (text: string, id: string) => void;
-}) {
-  const tone = getPromptToneStyles(item.tone);
-
-  return (
-    <div
-      className={[
-        "group relative overflow-hidden rounded-[28px] border bg-white/[0.02] transition-all duration-300",
-        tone.ring,
-        isOpen ? tone.softPanel : "hover:bg-white/[0.03]",
-      ].join(" ")}
-    >
-      <div className="pointer-events-none absolute inset-0 opacity-80">
-        <div className={["absolute -top-20 left-0 h-44 w-44 rounded-full blur-3xl", tone.glowA].join(" ")} />
-        <div className={["absolute -bottom-20 right-0 h-44 w-44 rounded-full blur-3xl", tone.glowB].join(" ")} />
-      </div>
-
-      <button
-        type="button"
-        onClick={onToggle}
-        className="relative flex w-full items-start justify-between gap-4 px-4 py-4 text-left sm:px-5 sm:py-5"
-      >
-        <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className={`inline-flex items-center gap-2 rounded-full border px-2.5 py-1 text-[10.5px] uppercase tracking-[0.18em] ${tone.badge}`}>
-              <span className={["inline-flex h-2 w-2 rounded-full", tone.dot].join(" ")} />
-              {item.eyebrow}
-            </span>
-
-            <span className="rounded-full border border-white/10 bg-white/[0.04] px-2.5 py-1 text-[10.5px] uppercase tracking-[0.16em] text-white/60">
-              {item.audience}
-            </span>
-          </div>
-
-          <h4 className="mt-3 text-lg font-semibold tracking-tight text-white/94 sm:text-[1.15rem]">
-            {item.title}
-          </h4>
-
-          <p className="mt-1.5 max-w-2xl text-[13px] leading-5 text-white/54">{item.preview}</p>
-        </div>
-
-        <span
-          className={`mt-1 inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border border-white/10 bg-white/[0.04] transition-transform duration-300 ${
-            isOpen ? "rotate-180" : ""
-          }`}
-        >
-          <ChevronDown className={`h-4.5 w-4.5 ${tone.accentText}`} />
-        </span>
-      </button>
-
-      <div
-        className={`grid transition-all duration-300 ease-out ${
-          isOpen ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0"
-        }`}
-      >
-        <div className="overflow-hidden">
-          <div className="relative border-t border-white/10 px-4 pb-4 pt-4 sm:px-5 sm:pb-5">
-            <div className="rounded-[22px] border border-white/10 bg-[#08090D]/88 p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)] sm:p-5">
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                <div>
-                  <p className="text-xs uppercase tracking-[0.2em] text-white/42">Prompt body</p>
-                  <p className="mt-1 text-sm text-white/60">Copy and paste this directly into your AI with the Signal PDF attached.</p>
-                </div>
-
-                <Button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onCopy(item.prompt, item.id);
-                  }}
-                  className={[
-                    "h-10 rounded-xl border px-4 shadow-none",
-                    tone.copyBtn,
-                  ].join(" ")}
-                >
-                  {isCopied ? (
-                    <>
-                      <Check className="mr-2 h-4 w-4" />
-                      Copied
-                    </>
-                  ) : (
-                    <>
-                      <Copy className="mr-2 h-4 w-4" />
-                      Copy prompt
-                    </>
-                  )}
-                </Button>
-              </div>
-
-              <pre className="mt-4 whitespace-pre-wrap break-words rounded-[18px] border border-white/10 bg-white/[0.03] p-4 text-sm leading-7 text-white/78">
-                {item.prompt}
-              </pre>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function SignalPromptsSection() {
-  const [openId, setOpenId] = useState<string>(SIGNAL_PROMPTS[0]?.id || "");
-  const [copiedId, setCopiedId] = useState<string | null>(null);
-
-  const onCopy = async (text: string, id: string) => {
-    try {
-      await navigator.clipboard.writeText(text);
-      setCopiedId(id);
-      window.setTimeout(() => {
-        setCopiedId((current) => (current === id ? null : current));
-      }, 1800);
-    } catch {
-      setCopiedId(null);
-    }
-  };
-
-  return (
-    <div className="adray-border-flow relative overflow-hidden rounded-[30px] border border-white/[0.10] bg-[linear-gradient(180deg,rgba(14,12,22,0.86)_0%,rgba(8,9,13,0.96)_100%)] p-5 sm:rounded-[32px] sm:p-6">
-      <div className="absolute inset-0 pointer-events-none opacity-75">
-        <div className="absolute -top-16 right-[8%] h-56 w-56 rounded-full blur-3xl bg-[#B55CFF]/10" />
-        <div className="absolute bottom-0 left-[5%] h-56 w-56 rounded-full blur-3xl bg-[#4FE3C1]/8" />
-      </div>
-
-      <div className="relative">
-        <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.04] px-3 py-1 text-[10.5px] uppercase tracking-[0.17em] text-white/70">
-          <Bot className="h-3.5 w-3.5 text-[#BFD8FF]" />
-          Ready-to-use AI prompts
-        </div>
-
-        <div className="mt-4 max-w-2xl">
-  <h3 className="text-[1.8rem] font-semibold tracking-tight text-white/94 sm:text-[2.2rem]">
-    Prompt Library
-  </h3>
-  <p className="mt-2 text-sm leading-6 text-white/58 sm:text-[15px]">
-    Open, copy, and use with your Signal PDF.
-  </p>
-</div>
-
-        <div className="mt-6 space-y-3">
-          {SIGNAL_PROMPTS.map((item) => (
-            <SignalPromptAccordionCard
-              key={item.id}
-              item={item}
-              isOpen={openId === item.id}
-              isCopied={copiedId === item.id}
-              onToggle={() => setOpenId((current) => (current === item.id ? "" : item.id))}
-              onCopy={onCopy}
-            />
-          ))}
-        </div>
+        {isSignalReady ? (
+          <p className="mt-4 text-xs text-[#CFFFF0]/80">Your Signal is already ready, so you can move directly to the PDF step below.</p>
+        ) : null}
       </div>
     </div>
   );
@@ -1020,8 +851,10 @@ function SignalPromptsSection() {
 
 function PdfLaunchCard({
   canGenerate,
-  canDownload,
-  signalStatus,
+  signalReadyForPdf,
+  needSignalRebuild,
+  needPdfRebuild,
+  pdfBuildState,
   pdfStatus,
   pdfFileName,
   pdfMeta,
@@ -1031,8 +864,10 @@ function PdfLaunchCard({
   onDownload,
 }: {
   canGenerate: boolean;
-  canDownload: boolean;
-  signalStatus: RuntimeSignalStatus;
+  signalReadyForPdf: boolean;
+  needSignalRebuild: boolean;
+  needPdfRebuild: boolean;
+  pdfBuildState: PdfBuildState;
   pdfStatus: "idle" | "processing" | "ready" | "failed";
   pdfFileName: string | null;
   pdfMeta: string | null;
@@ -1044,35 +879,44 @@ function PdfLaunchCard({
   const isGenerating = pdfStatus === "processing";
   const isReady = pdfStatus === "ready";
   const isFailed = pdfStatus === "failed";
-  const rebuildingSignal = signalStatus === "stale";
+  const waitingForSignal = !signalReadyForPdf && !needSignalRebuild;
+  const rebuildingSignal = needSignalRebuild || pdfBuildState === "signal_rebuild_required";
+  const waitingForPdfRebuild = needPdfRebuild || pdfBuildState === "pdf_rebuild_required";
   const canStart = canGenerate && !isSubmitting && (pdfStatus === "idle" || pdfStatus === "failed");
-  const canStartDownload = canDownload && isReady;
 
-  const title = canStartDownload
+  const title = isReady
     ? "Your PDF is ready"
     : isGenerating
-      ? "Generating your Signal PDF"
-      : rebuildingSignal
-        ? "Rebuilding Signal before PDF"
-        : canGenerate
-          ? "Generate your Signal PDF"
-          : isFailed
-            ? "PDF generation failed"
-            : "Waiting for Signal";
+    ? "Generating your Signal PDF"
+    : rebuildingSignal
+    ? "Rebuilding Signal before PDF"
+    : waitingForSignal
+    ? "Waiting for Signal to be ready"
+    : waitingForPdfRebuild
+    ? "PDF needs regeneration"
+    : canGenerate
+    ? "Your Signal is ready"
+    : isFailed
+    ? "PDF generation failed"
+    : "Unlocks automatically when your Signal is ready";
 
-  const description = canStartDownload
+  const description = isReady
     ? pdfFileName || "Download your Signal PDF export."
     : isGenerating
-      ? "We’re generating the PDF now. This usually takes a few seconds."
-      : rebuildingSignal
-        ? "Your sources changed and the backend is rebuilding Signal before allowing PDF generation."
-        : canGenerate
-          ? pdfError
-            ? `Last PDF attempt failed: ${pdfError}`
-            : "Generate a fresh PDF export for the latest Signal."
-          : isFailed
-            ? `Last PDF attempt failed${pdfError ? `: ${pdfError}` : "."}`
-            : "The PDF button will unlock once the build is fully completed.";
+    ? "We’re generating the PDF now. This usually takes a few seconds."
+    : rebuildingSignal
+    ? "Your sources changed and we’re rebuilding Signal state before allowing PDF generation."
+    : waitingForSignal
+    ? "We’ll unlock PDF generation as soon as the backend marks your Signal as ready."
+    : waitingForPdfRebuild
+    ? "Your previous PDF is outdated for the latest Signal. Generate a fresh PDF export."
+    : canGenerate
+    ? pdfError
+      ? `Last PDF attempt failed: ${pdfError}`
+      : "Generate your PDF export when you’re ready."
+    : isFailed
+    ? `Last PDF attempt failed${pdfError ? `: ${pdfError}` : "."}`
+    : "Usually less than a minute.";
 
   return (
     <div className="adray-border-flow relative overflow-hidden rounded-[30px] border border-white/[0.10] bg-[linear-gradient(180deg,rgba(18,14,28,0.84)_0%,rgba(9,10,13,0.95)_100%)] p-5 sm:rounded-[32px] sm:p-6">
@@ -1098,14 +942,14 @@ function PdfLaunchCard({
               <span
                 className={[
                   "inline-flex h-11 w-11 items-center justify-center rounded-2xl border",
-                  canStartDownload
+                  isReady
                     ? "border-[#4FE3C1]/25 bg-[#4FE3C1]/10"
                     : canGenerate || isFailed
-                      ? "border-[#B55CFF]/25 bg-[#B55CFF]/10"
-                      : "border-white/10 bg-white/[0.04]",
+                    ? "border-[#B55CFF]/25 bg-[#B55CFF]/10"
+                    : "border-white/10 bg-white/[0.04]",
                 ].join(" ")}
               >
-                {canStartDownload ? (
+                {isReady ? (
                   <FileText className="h-5 w-5 text-[#4FE3C1]" />
                 ) : isGenerating ? (
                   <Loader2 className="h-5 w-5 animate-spin text-[#B55CFF]" />
@@ -1118,28 +962,28 @@ function PdfLaunchCard({
 
               <div className="min-w-0">
                 <p className="text-sm font-semibold text-white/92">
-                  {canStartDownload
+                  {isReady
                     ? "Download PDF"
                     : isGenerating
-                      ? "Generating PDF"
-                      : rebuildingSignal
-                        ? "Rebuilding Signal"
-                        : canGenerate
-                          ? "Generate PDF"
-                          : isFailed
-                            ? "Retry PDF"
-                            : "Waiting for Signal"}
+                    ? "Generating PDF"
+                    : rebuildingSignal
+                    ? "Rebuilding Signal"
+                    : waitingForSignal
+                    ? "Waiting for Signal"
+                    : canGenerate
+                    ? "Generate PDF"
+                    : isFailed
+                    ? "Retry PDF"
+                    : "Waiting for Signal"}
                 </p>
-                <p className="mt-1 break-words text-xs text-white/48">
-                  {canStartDownload ? (pdfFileName || "Signal export ready") : description}
-                </p>
-                {canStartDownload && pdfMeta ? (
+                <p className="mt-1 text-xs text-white/48 break-words">{isReady ? (pdfFileName || "Signal export ready") : description}</p>
+                {isReady && pdfMeta ? (
                   <p className="mt-1 text-[11px] text-white/38">{pdfMeta}</p>
                 ) : null}
               </div>
             </div>
 
-            {canStartDownload ? (
+            {isReady ? (
               <Button
                 onClick={onDownload}
                 className="mt-5 h-12 w-full rounded-2xl bg-gradient-to-r from-[#A64DFA] via-[#B55CFF] to-[#C16BFF] px-5 text-white hover:from-[#9B43F0] hover:via-[#A64DFA] hover:to-[#B95DFF] shadow-[0_0_30px_rgba(181,92,255,0.34)]"
@@ -1209,28 +1053,28 @@ function ModelCompatibilityCard({
           dot: "bg-[#4FE3C1]",
         }
       : accent === "blue"
-        ? {
-            border: "border-[#A7D6FF]/14",
-            hover: "hover:border-[#A7D6FF]/28",
-            glowA: "bg-[#A7D6FF]/12",
-            glowB: "bg-[#A7D6FF]/10",
-            dot: "bg-[#A7D6FF]",
-          }
-        : accent === "silver"
-          ? {
-              border: "border-white/12",
-              hover: "hover:border-white/24",
-              glowA: "bg-white/[0.08]",
-              glowB: "bg-white/[0.06]",
-              dot: "bg-white/70",
-            }
-          : {
-              border: "border-[#D9C7FF]/14",
-              hover: "hover:border-[#D9C7FF]/28",
-              glowA: "bg-[#D9C7FF]/12",
-              glowB: "bg-[#D9C7FF]/10",
-              dot: "bg-[#D9C7FF]",
-            };
+      ? {
+          border: "border-[#A7D6FF]/14",
+          hover: "hover:border-[#A7D6FF]/28",
+          glowA: "bg-[#A7D6FF]/12",
+          glowB: "bg-[#A7D6FF]/10",
+          dot: "bg-[#A7D6FF]",
+        }
+      : accent === "silver"
+      ? {
+          border: "border-white/12",
+          hover: "hover:border-white/24",
+          glowA: "bg-white/[0.08]",
+          glowB: "bg-white/[0.06]",
+          dot: "bg-white/70",
+        }
+      : {
+          border: "border-[#D9C7FF]/14",
+          hover: "hover:border-[#D9C7FF]/28",
+          glowA: "bg-[#D9C7FF]/12",
+          glowB: "bg-[#D9C7FF]/10",
+          dot: "bg-[#D9C7FF]",
+        };
 
   return (
     <div
@@ -1254,11 +1098,11 @@ function ModelCompatibilityCard({
         </div>
 
         <img
-          src={logoSrc}
-          alt={title}
-          className="max-h-[170px] w-auto max-w-[90%] object-contain opacity-95 transition-transform duration-300 group-hover:scale-[1.03] sm:max-h-[210px] xl:max-h-[250px]"
-          draggable={false}
-        />
+  src={logoSrc}
+  alt={title}
+  className="w-auto max-w-[90%] object-contain opacity-95 transition-transform duration-300 group-hover:scale-[1.03] max-h-[170px] sm:max-h-[210px] xl:max-h-[250px]"
+  draggable={false}
+/>
       </div>
     </div>
   );
@@ -1269,11 +1113,9 @@ export default function LastStep() {
 
   const [statusHydrated, setStatusHydrated] = useState(false);
   const [state, setState] = useState<CanonicalUiState | null>(null);
+  const [visualProgress, setVisualProgress] = useState(0);
   const [toast, setToast] = useState<string | null>(null);
   const [isGeneratingPdfIntent, setIsGeneratingPdfIntent] = useState(false);
-  const [visualProgress, setVisualProgress] = useState(0);
-  const [skipInitialSignalReplay, setSkipInitialSignalReplay] = useState(false);
-  const [nowMs, setNowMs] = useState(() => Date.now());
 
   const pollingTimeoutRef = useRef<number | null>(null);
   const toastTimerRef = useRef<number | null>(null);
@@ -1290,6 +1132,9 @@ export default function LastStep() {
 
   const lastKnownFingerprintRef = useRef<string | null>(null);
   const sourceChangeObservedRef = useRef(false);
+  const keepWarmPollingRef = useRef(true);
+  const progressBuildKeyRef = useRef<string | null>(null);
+  const pageMountedAtRef = useRef<number>(Date.now());
 
   const supportedModels: SupportedModel[] = [
     { key: "chatgpt", title: "ChatGPT", logoSrc: chatgptLogo, accent: "emerald" },
@@ -1306,15 +1151,14 @@ export default function LastStep() {
     toastTimerRef.current = window.setTimeout(() => setToast(null), 1800);
   };
 
-  const applyStatus = (payload?: ContextStatusData, options?: { force?: boolean; seq?: number }) => {
+  const applyStatus = (
+    payload?: ContextStatusData,
+    options?: { force?: boolean; seq?: number }
+  ) => {
     if (!payload) return null;
 
     const seq = options?.seq ?? 0;
     const next = deriveCanonicalStateFromStatus(payload);
-    const signalAlreadyReadyOnHydration =
-      next.signalStatus === "ready" &&
-      !next.needSignalRebuild &&
-      (next.signalReadyForPdf || next.signalComplete);
 
     let accepted: CanonicalUiState | null = null;
 
@@ -1330,15 +1174,6 @@ export default function LastStep() {
 
     setStatusHydrated(true);
 
-    if (!statusHydrated) {
-      setSkipInitialSignalReplay(signalAlreadyReadyOnHydration);
-
-      if (signalAlreadyReadyOnHydration) {
-        clearStoredSignalGate();
-        setVisualProgress(100);
-      }
-    }
-
     if (next.currentSourceFingerprint) {
       if (
         lastKnownFingerprintRef.current &&
@@ -1349,19 +1184,25 @@ export default function LastStep() {
       lastKnownFingerprintRef.current = next.currentSourceFingerprint;
     }
 
-    if (next.signalStatus === "ready" || next.pdfStatus === "ready") {
+    if (
+      (next.signalReadyForPdf || next.pdfReady) &&
+      !next.needSignalRebuild &&
+      !next.staleSignal &&
+      !next.effectiveSourcesChanged
+    ) {
       sourceChangeObservedRef.current = false;
     }
 
-    if (next.pdfStatus === "ready" || next.pdfStatus === "failed") {
+    if (next.pdfReady || next.pdfFailed) {
       setIsGeneratingPdfIntent(false);
       manualPdfInFlightRef.current = false;
     }
 
     if (
-      next.signalStatus === "processing" ||
-      next.signalStatus === "ready" ||
-      next.signalStatus === "stale"
+      next.signalReadyForPdf ||
+      next.buildStatus === "processing" ||
+      next.buildStatus === "done" ||
+      next.needSignalRebuild
     ) {
       bootHasTriggeredBuildRef.current = true;
     }
@@ -1439,14 +1280,50 @@ export default function LastStep() {
     }
   };
 
+  const isWithinStabilizationWindow = (s: CanonicalUiState | null) => {
+    if (!s) return false;
+    if (!s.finishedAt) return false;
+    return msSince(s.finishedAt) < 12000;
+  };
+
+  const isReadyLikeState = (s: CanonicalUiState | null) => {
+    if (!s) return false;
+    return s.uiMode === "pdf_ready" || s.uiMode === "signal_ready";
+  };
+
   const shouldKeepPolling = (s: CanonicalUiState | null) => {
     if (!s) return true;
-    return !!s.shouldPoll;
+    if (sourceChangeObservedRef.current) return true;
+    if (s.needSignalRebuild || s.needPdfRebuild) return true;
+    if (s.staleSignal || s.stalePdf) return true;
+    if (s.effectiveSourcesChanged) return true;
+    if (s.buildStatus === "processing") return true;
+    if (s.uiMode === "signal_building") return true;
+    if (s.uiMode === "pdf_building") return true;
+    if (isWithinStabilizationWindow(s)) return true;
+    if (keepWarmPollingRef.current && isReadyLikeState(s)) return true;
+    return false;
   };
 
   const getNextPollDelay = (s: CanonicalUiState | null) => {
-    if (!s) return 1500;
-    return s.pollIntervalMs || 1800;
+    const timeOnPageMs = Date.now() - pageMountedAtRef.current;
+    const inInitialWatchWindow = timeOnPageMs < 18000;
+
+    if (!s) return 1400;
+
+    if (s.buildStatus === "processing" || s.uiMode === "signal_building" || s.uiMode === "pdf_building") {
+      return 1200;
+    }
+
+    if (s.needSignalRebuild || s.needPdfRebuild || s.staleSignal || s.stalePdf || s.effectiveSourcesChanged) {
+      return 1100;
+    }
+
+    if (isReadyLikeState(s)) {
+      return inInitialWatchWindow ? 1200 : 4000;
+    }
+
+    return 1800;
   };
 
   const schedulePoll = (delay?: number) => {
@@ -1515,17 +1392,44 @@ export default function LastStep() {
       return;
     }
 
-    if (current.signalStatus === "idle" && current.connectedSources.length > 0) {
-      bootHasTriggeredBuildRef.current = true;
-      const built = await buildContext(false);
-      if (shouldKeepPolling(built)) schedulePoll(getNextPollDelay(built));
-      return;
-    }
-
-    if (current.signalStatus === "stale") {
+    if (current.needSignalRebuild || current.staleSignal || current.effectiveSourcesChanged) {
       bootHasTriggeredBuildRef.current = true;
       const rebuilt = await buildContext(true);
       if (shouldKeepPolling(rebuilt)) schedulePoll(getNextPollDelay(rebuilt));
+      return;
+    }
+
+    if (current.buildStatus === "processing") {
+      bootHasTriggeredBuildRef.current = true;
+      schedulePoll(getNextPollDelay(current));
+      return;
+    }
+
+    if (current.uiMode === "pdf_building") {
+      bootHasTriggeredBuildRef.current = true;
+      schedulePoll(getNextPollDelay(current));
+      return;
+    }
+
+    if (current.uiMode === "pdf_ready") {
+      schedulePoll(getNextPollDelay(current));
+      return;
+    }
+
+    if (current.uiMode === "signal_ready") {
+      schedulePoll(getNextPollDelay(current));
+      return;
+    }
+
+    if (
+      current.buildStatus === "idle" &&
+      !current.hasSignal &&
+      !current.signalComplete &&
+      !current.signalReadyForPdf
+    ) {
+      bootHasTriggeredBuildRef.current = true;
+      const built = await buildContext(false);
+      if (shouldKeepPolling(built)) schedulePoll(getNextPollDelay(built));
       return;
     }
 
@@ -1538,6 +1442,7 @@ export default function LastStep() {
 
   useEffect(() => {
     mountedRef.current = true;
+    pageMountedAtRef.current = Date.now();
 
     const boot = async () => {
       try {
@@ -1562,11 +1467,13 @@ export default function LastStep() {
 
   useEffect(() => {
     const onFocus = () => {
+      pageMountedAtRef.current = Date.now();
       hardRefreshStatus();
     };
 
     const onVisibility = () => {
       if (document.visibilityState === "visible") {
+        pageMountedAtRef.current = Date.now();
         hardRefreshStatus();
       }
     };
@@ -1583,6 +1490,7 @@ export default function LastStep() {
   useEffect(() => {
     const onPossibleSourceChange = () => {
       sourceChangeObservedRef.current = true;
+      pageMountedAtRef.current = Date.now();
       hardRefreshStatus();
     };
 
@@ -1603,114 +1511,96 @@ export default function LastStep() {
     };
   }, []);
 
-  const connectedSourcesKey = useMemo(() => {
-    if (!state?.connectedSources?.length) return "";
-    return [...state.connectedSources].sort().join("|");
-  }, [state?.connectedSources]);
-
-  const storedGate = useMemo(() => {
-    if (!connectedSourcesKey) return null;
-    const stored = readStoredSignalGate();
-    if (!stored || stored.sourceKey !== connectedSourcesKey) return null;
-    return stored;
-  }, [connectedSourcesKey, nowMs]);
-
-  const elapsedMs = useMemo(() => {
-    if (!storedGate) return 0;
-    return Math.max(0, nowMs - storedGate.startedAt);
-  }, [storedGate, nowMs]);
-
-  const backendSignalReady = !!state && state.signalStatus === "ready";
-  const bypassVisualGate =
-    skipInitialSignalReplay &&
-    !!state &&
-    state.signalStatus === "ready" &&
-    !state.needSignalRebuild &&
-    (state.signalReadyForPdf || state.signalComplete);
-  const gateMinDurationElapsed = elapsedMs >= MOCK_SIGNAL_MIN_DURATION_MS;
-
   useEffect(() => {
-    if (!skipInitialSignalReplay || !state) return;
+    if (!statusHydrated || !state) return;
 
-    if (
-      state.signalStatus !== "ready" ||
+    const buildKey = getProgressBuildKey(state);
+    const isFreshSignalBuild =
+      state.uiMode === "signal_building" &&
+      (state.buildStatus === "processing" || state.needSignalRebuild);
+    const shouldResetInheritedProgress =
       state.needSignalRebuild ||
-      (!state.signalReadyForPdf && !state.signalComplete)
-    ) {
-      setSkipInitialSignalReplay(false);
+      state.effectiveSourcesChanged ||
+      state.buildStage === "awaiting_rebuild" ||
+      state.pdfBuildState === "signal_rebuild_required" ||
+      state.pdfBuildState === "signal_not_ready";
+
+    if (isFreshSignalBuild && buildKey && progressBuildKeyRef.current !== buildKey) {
+      progressBuildKeyRef.current = buildKey;
+
+      const initialProgress =
+        shouldResetInheritedProgress
+          ? state.buildStage === "awaiting_rebuild"
+            ? 12
+            : state.buildStage === "waiting_for_connected_sources"
+            ? 16
+            : 8
+          : state.serverProgress > 0
+          ? Math.min(state.serverProgress, getStageCeiling(state.buildStage, state.signalReadyForPdf))
+          : state.buildStage === "awaiting_rebuild"
+          ? 14
+          : state.buildStage === "waiting_for_connected_sources"
+          ? 18
+          : state.buildStage === "encoding_signal" || state.buildStage === "encoding_context"
+          ? 56
+          : 8;
+
+      setVisualProgress(initialProgress);
     }
-  }, [
-    skipInitialSignalReplay,
-    state?.signalStatus,
-    state?.needSignalRebuild,
-    state?.signalReadyForPdf,
-    state?.signalComplete,
-  ]);
 
-  useEffect(() => {
-    if (!statusHydrated) return;
-
-    if (!connectedSourcesKey) {
-      clearStoredSignalGate();
-      setVisualProgress(0);
-      return;
-    }
-
-    if (bypassVisualGate) {
-      clearStoredSignalGate();
+    if (state.uiMode !== "signal_building") {
+      progressBuildKeyRef.current = buildKey;
       setVisualProgress(100);
       return;
     }
 
-    const stored = readStoredSignalGate();
-
-    if (!stored || stored.sourceKey !== connectedSourcesKey) {
-      const nextGate: StoredSignalGate = {
-        sourceKey: connectedSourcesKey,
-        startedAt: Date.now(),
-      };
-      writeStoredSignalGate(nextGate);
-      setNowMs(nextGate.startedAt);
-      setVisualProgress(0);
+    if (state.buildStatus === "error") {
+      setVisualProgress((prev) => Math.max(prev, state.serverProgress));
       return;
     }
 
-    setNowMs(Date.now());
-  }, [statusHydrated, connectedSourcesKey, bypassVisualGate]);
+    const interval = window.setInterval(() => {
+      setVisualProgress((prev) => {
+        const ceiling = getStageCeiling(state.buildStage, state.signalReadyForPdf);
+        const elapsedMs = msSince(state.startedAt);
+        const guardedServerProgress = shouldResetInheritedProgress
+          ? Math.min(state.serverProgress, ceiling)
+          : state.serverProgress;
 
-  useEffect(() => {
-    if (!connectedSourcesKey || bypassVisualGate) return;
+        const stageDrift =
+          state.buildStage === "waiting_for_sources" || state.buildStage === "loading_sources"
+            ? Math.min(ceiling, 8 + Math.floor(elapsedMs / 2500))
+            : state.buildStage === "awaiting_rebuild"
+            ? Math.min(ceiling, 16 + Math.floor(elapsedMs / 2500))
+            : state.buildStage === "waiting_for_connected_sources"
+            ? Math.min(ceiling, 22 + Math.floor(elapsedMs / 3500))
+            : state.buildStage === "compacting_sources" || state.buildStage === "compacting_partial_sources"
+            ? Math.min(ceiling, 42 + Math.floor(elapsedMs / 2800))
+            : state.buildStage === "encoding_signal" || state.buildStage === "encoding_context"
+            ? Math.min(ceiling, 68 + Math.floor(elapsedMs / 3200))
+            : state.buildStage === "waiting_for_valid_signal"
+            ? Math.min(ceiling, 86 + Math.floor(elapsedMs / 4000))
+            : Math.min(ceiling, guardedServerProgress);
 
-    const tick = () => setNowMs(Date.now());
-    tick();
-    const interval = window.setInterval(tick, 250);
+        const desired = Math.max(guardedServerProgress, stageDrift);
+
+        if (prev >= desired) return prev;
+
+        const step =
+          desired - prev > 20 ? 5 :
+          desired - prev > 10 ? 3 :
+          1;
+
+        return Math.min(desired, prev + step, ceiling);
+      });
+    }, 180);
+
     return () => window.clearInterval(interval);
-  }, [connectedSourcesKey, bypassVisualGate]);
-
-  useEffect(() => {
-    if (bypassVisualGate) {
-      setVisualProgress(100);
-      return;
-    }
-
-    if (!connectedSourcesKey || !storedGate) return;
-
-    const targetProgress =
-      backendSignalReady && gateMinDurationElapsed
-        ? 100
-        : computeSmoothProgress(elapsedMs, VISUAL_PROGRESS_CAP_BEFORE_READY);
-
-    setVisualProgress((prev) => Math.max(prev, targetProgress));
-  }, [connectedSourcesKey, storedGate, elapsedMs, backendSignalReady, gateMinDurationElapsed, bypassVisualGate]);
-
-  const isFullyUnlocked = bypassVisualGate || (gateMinDurationElapsed && backendSignalReady);
-
-  const effectiveCanGeneratePdf = !!state?.canGeneratePdf && isFullyUnlocked;
-  const effectiveCanDownloadPdf = !!state?.canDownloadPdf && isFullyUnlocked;
+  }, [statusHydrated, state]);
 
   const onRetrySignal = async () => {
     if (!state) return;
-    if (state.signalStatus === "processing" || isGeneratingPdfIntent || state.pdfStatus === "processing") return;
+    if (state.buildStatus === "processing" || isGeneratingPdfIntent || state.pdfProcessing) return;
 
     latestAppliedSeqRef.current = 0;
     requestSeqRef.current = 0;
@@ -1718,11 +1608,8 @@ export default function LastStep() {
     manualBuildInFlightRef.current = false;
     manualPdfInFlightRef.current = false;
     sourceChangeObservedRef.current = false;
-
-    clearStoredSignalGate();
-    setVisualProgress(0);
-    setSkipInitialSignalReplay(false);
-    setNowMs(Date.now());
+    progressBuildKeyRef.current = null;
+    pageMountedAtRef.current = Date.now();
 
     setState((prev) =>
       prev
@@ -1732,25 +1619,33 @@ export default function LastStep() {
             buildStage: "idle",
             buildError: null,
             serverProgress: 0,
-            signalStatus: "idle",
-            signalReadyForPdf: false,
+            hasEncodedPayload: false,
+            hasSignal: false,
             signalComplete: false,
-            needSignalRebuild: false,
-            pdfStatus: "idle",
+            signalValidForPdf: false,
+            signalReadyForPdf: false,
+            hasPdf: false,
             pdfReady: false,
             pdfProcessing: false,
             pdfFailed: false,
-            needPdfRebuild: false,
             canGeneratePdf: false,
             canDownloadPdf: false,
-            heroChipText: "Preparing your Signal",
-            uiTitle: "Preparing your Signal",
-            uiDescription: "We’re restarting the Signal build.",
-            tipText: "Retrying the Signal build from backend.",
+            uiMode: "signal_building",
+            pdfStatus: "idle",
+            pdfStage: "idle",
+            pdfFileName: null,
+            pdfError: null,
+            pdfMeta: null,
+            staleSignal: false,
+            stalePdf: false,
+            needSignalRebuild: true,
+            needPdfRebuild: true,
+            effectiveSourcesChanged: false,
           }
         : prev
     );
 
+    setVisualProgress(0);
     setIsGeneratingPdfIntent(false);
     stopPolling();
 
@@ -1761,9 +1656,9 @@ export default function LastStep() {
 
   const onGeneratePdf = async () => {
     if (!state) return;
-    if (!effectiveCanGeneratePdf) return;
-    if (state.signalStatus !== "ready") return;
-    if (isGeneratingPdfIntent || state.pdfStatus === "processing" || manualPdfInFlightRef.current) return;
+    if (!(state.canGeneratePdf && state.signalReadyForPdf)) return;
+    if (state.needSignalRebuild) return;
+    if (isGeneratingPdfIntent || state.pdfProcessing || manualPdfInFlightRef.current) return;
 
     try {
       setIsGeneratingPdfIntent(true);
@@ -1777,7 +1672,7 @@ export default function LastStep() {
         return;
       }
 
-      if (result.pdfStatus === "ready") {
+      if (result.pdfReady || result.uiMode === "pdf_ready" || result.pdfBuildState === "pdf_ready") {
         setIsGeneratingPdfIntent(false);
         manualPdfInFlightRef.current = false;
         showToast("Your PDF is ready");
@@ -1785,28 +1680,51 @@ export default function LastStep() {
         return;
       }
 
-      if (result.pdfStatus === "processing" || result.shouldPoll) {
+      if (result.pdfProcessing || result.uiMode === "pdf_building" || result.pdfBuildState === "pdf_processing") {
         schedulePoll(getNextPollDelay(result));
         return;
       }
 
-      if (result.signalStatus === "stale" || result.signalStatus === "processing") {
+      if (result.pdfBuildState === "signal_rebuild_required" || result.pdfBuildState === "signal_not_ready") {
         setIsGeneratingPdfIntent(false);
         manualPdfInFlightRef.current = false;
-        showToast("Signal must be ready before generating the PDF");
-        schedulePoll(getNextPollDelay(result));
+        showToast("Signal needs to rebuild before generating the PDF");
+        await buildContext(true);
+        schedulePoll(900);
         return;
       }
 
-      if (result.pdfStatus === "failed") {
+      if (result.pdfBuildState === "pdf_rebuild_required") {
+        setIsGeneratingPdfIntent(false);
+        manualPdfInFlightRef.current = false;
+        showToast("A fresh PDF is required for the latest Signal");
+        schedulePoll(900);
+        return;
+      }
+
+      if (result.pdfBuildState === "pdf_failed") {
         setIsGeneratingPdfIntent(false);
         manualPdfInFlightRef.current = false;
         showToast("PDF generation failed. Please retry.");
-        schedulePoll(getNextPollDelay(result));
+        schedulePoll(1400);
         return;
       }
 
       const fresh = await fetchStatus({ force: true });
+
+      if (fresh?.pdfReady || fresh?.uiMode === "pdf_ready" || fresh?.pdfBuildState === "pdf_ready") {
+        setIsGeneratingPdfIntent(false);
+        manualPdfInFlightRef.current = false;
+        showToast("Your PDF is ready");
+        schedulePoll(getNextPollDelay(fresh));
+        return;
+      }
+
+      if (fresh?.pdfProcessing || fresh?.uiMode === "pdf_building" || fresh?.pdfBuildState === "pdf_processing") {
+        schedulePoll(getNextPollDelay(fresh));
+        return;
+      }
+
       setIsGeneratingPdfIntent(false);
       manualPdfInFlightRef.current = false;
       schedulePoll(getNextPollDelay(fresh || state));
@@ -1818,12 +1736,13 @@ export default function LastStep() {
           ? {
               ...prev,
               pdfStatus: "failed",
+              pdfStage: "failed",
               pdfProcessing: false,
               pdfFailed: true,
-              canGeneratePdf: prev.signalStatus === "ready",
+              canGeneratePdf: prev.signalReadyForPdf && !prev.needSignalRebuild,
               canDownloadPdf: false,
               pdfError: err?.message || "Failed to build PDF",
-              tipText: err?.message || "Failed to build PDF",
+              needPdfRebuild: true,
             }
           : prev
       );
@@ -1833,7 +1752,7 @@ export default function LastStep() {
 
   const onDownloadPdf = () => {
     if (!state) return;
-    if (!effectiveCanDownloadPdf) return;
+    if (!state.canDownloadPdf) return;
 
     const url = state.pdfDownloadUrl || "/api/mcp/context/pdf/download";
     window.open(url, "_blank", "noopener,noreferrer");
@@ -1843,29 +1762,128 @@ export default function LastStep() {
 
   const displayPdfStatus: "idle" | "processing" | "ready" | "failed" = useMemo(() => {
     if (!state) return "idle";
-    if (state.pdfStatus === "ready") return "ready";
-    if (state.pdfStatus === "processing") return "processing";
-    if (state.pdfStatus === "failed") return "failed";
-    return "idle";
+    if (state.pdfBuildState === "pdf_ready") return "ready";
+    if (state.pdfBuildState === "pdf_processing") return "processing";
+    if (state.pdfBuildState === "pdf_failed") return "failed";
+    if (
+      state.pdfBuildState === "signal_rebuild_required" ||
+      state.pdfBuildState === "signal_not_ready" ||
+      state.pdfBuildState === "pdf_rebuild_required"
+    ) {
+      return "idle";
+    }
+    if (state.pdfReady) return "ready";
+    if (state.needSignalRebuild || state.needPdfRebuild || state.staleSignal || state.stalePdf) return "idle";
+    if (state.pdfProcessing) return "processing";
+    if (state.pdfFailed) return "failed";
+    return state.pdfStatus;
   }, [state]);
 
-  const isProcessingSignal = !!state && state.signalStatus === "processing";
+  const signalReadyForPdf = !!state?.signalReadyForPdf;
+  const uiMode = state?.uiMode || "signal_building";
 
-  const effectiveHeroChipText = isFullyUnlocked
-    ? state?.heroChipText || "Your Signal is ready"
-    : "Preparing your Signal";
-  const effectiveHeroTitle = isFullyUnlocked
-    ? state?.uiTitle || "Your Signal is ready"
-    : "Your data is being turned into intelligence";
-  const effectiveHeroDescription = isFullyUnlocked
-    ? state?.uiDescription || "Your previous PDF is outdated for the current Signal. Generate a fresh PDF."
-    : "We’re collecting, compacting and encoding your connected marketing sources into one Signal.";
+  const isProcessingSignal =
+    !!state &&
+    (state.buildStatus === "processing" || state.needSignalRebuild) &&
+    uiMode === "signal_building";
 
-  const effectiveTipText = isFullyUnlocked
-    ? state?.tipText || "Your Signal is ready for PDF generation."
-    : gateMinDurationElapsed && !backendSignalReady
-      ? "The visual build is complete. We’re still waiting for the backend to confirm the final Signal state."
-      : "We’re aligning the final Signal build before unlocking the PDF action.";
+  const isSignalReadyCard =
+    !!state &&
+    state.signalReadyForPdf &&
+    !state.needSignalRebuild &&
+    !state.staleSignal &&
+    !state.effectiveSourcesChanged;
+
+  const heroChipText = useMemo(() => {
+    if (!statusHydrated) return "Loading your export status";
+    if (!state) return "Preparing your Signal";
+    if (state.pdfBuildState === "signal_rebuild_required" || state.needSignalRebuild) {
+      return "Signal rebuild required before PDF";
+    }
+    if (state.pdfBuildState === "signal_not_ready") return "Signal still processing";
+    if (state.pdfBuildState === "pdf_rebuild_required" || state.needPdfRebuild) return "PDF needs regeneration";
+    if (state.pdfBuildState === "pdf_failed" || uiMode === "pdf_failed") return "Last PDF generation failed";
+    if (state.needSignalRebuild && state.effectiveSourcesChanged) return "We detected source changes and we’re rebuilding";
+    if (uiMode === "pdf_ready") return "Your Signal and PDF are ready";
+    if (uiMode === "pdf_building") return "Your PDF is being generated";
+    if (uiMode === "signal_ready") return "Your Signal is ready";
+    if (state.buildStatus === "processing" && state.buildStage === "waiting_for_connected_sources") {
+      return "Waiting for your connected sources to finish syncing";
+    }
+    if (state.buildStatus === "processing" && state.buildStage === "waiting_for_valid_signal") {
+      return "Your Signal is being validated";
+    }
+    if (state.buildStatus === "processing" && state.buildStage === "awaiting_rebuild") {
+      return "Refreshing your Signal";
+    }
+    return "Preparing your Signal";
+  }, [statusHydrated, state, uiMode]);
+
+  const tipText = useMemo(() => {
+    if (!statusHydrated) {
+      return "We’re loading your latest Signal and PDF state.";
+    }
+
+    if (!state) {
+      return "We’re building your Signal first. Once it is ready, you’ll be able to generate the PDF manually.";
+    }
+
+    if (state.pdfBuildState === "signal_rebuild_required" || state.needSignalRebuild) {
+      return "Backend requested a Signal rebuild. We’re rebuilding now before enabling PDF generation.";
+    }
+
+    if (state.pdfBuildState === "signal_not_ready") {
+      return "Your Signal is still being finalized. PDF generation unlocks automatically when backend marks it ready.";
+    }
+
+    if (state.pdfBuildState === "pdf_rebuild_required" || state.needPdfRebuild) {
+      return "Your Signal is ready but the PDF is stale for the current data. Generate a fresh PDF export.";
+    }
+
+    if (state.pdfBuildState === "pdf_failed" || uiMode === "pdf_failed") {
+      return state.pdfError
+        ? `PDF generation failed: ${state.pdfError}`
+        : "The last PDF build failed. Retry generation when you’re ready.";
+    }
+
+    if (state.needSignalRebuild && state.effectiveSourcesChanged) {
+      return "Your connected sources changed. We’re rebuilding the Signal so your next PDF matches the latest connected data.";
+    }
+
+    if (uiMode === "pdf_ready") {
+      return "Your Signal and premium PDF are ready. Download the file and use it inside your favorite AI tools.";
+    }
+
+    if (uiMode === "signal_ready") {
+      return state.needPdfRebuild
+        ? "Your Signal is ready and your PDF needs to be generated for the latest source state."
+        : "Your Signal is ready. Click Generate PDF whenever you want to create your premium export.";
+    }
+
+    if (uiMode === "pdf_building") {
+      return "Your Signal is done. We’re now generating the PDF.";
+    }
+
+    if (state.buildStatus === "processing" && state.buildStage === "awaiting_rebuild") {
+      return "We detected a source change and we’re rebuilding the Signal so your export stays aligned with the latest connected data.";
+    }
+
+    if (state.buildStatus === "processing" && state.buildStage === "waiting_for_connected_sources") {
+      return state.pendingConnectedSources.length > 0
+        ? `We’re still waiting for ${state.pendingConnectedSources.map(humanizeSourceKey).join(", ")} to finish syncing before completing your Signal.`
+        : "We’re waiting for your remaining connected sources to finish syncing before completing your Signal.";
+    }
+
+    if (state.buildStatus === "processing" && state.buildStage === "waiting_for_valid_signal") {
+      return "Your cross-channel Signal is almost ready. We’re validating the final payload before enabling PDF generation.";
+    }
+
+    if (state.buildStatus === "error") {
+      return `The Signal build stopped${state.buildError ? `: ${state.buildError}` : "."}`;
+    }
+
+    return "We’re building your Signal first. Once it is ready, you’ll be able to generate the PDF manually.";
+  }, [statusHydrated, state, uiMode]);
 
   return (
     <DashboardLayout>
@@ -1909,7 +1927,7 @@ export default function LastStep() {
                       <div className="mt-6 max-w-4xl">
                         <div className="inline-flex max-w-full items-center gap-2 rounded-full border border-[#B55CFF]/20 bg-[#B55CFF]/10 px-3 py-1 text-[11px] text-[#E7D3FF] backdrop-blur-md">
                           <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
-                          <span className="truncate">{effectiveHeroChipText}</span>
+                          <span className="truncate">{heroChipText}</span>
                         </div>
 
                         <div className="mt-5 min-w-0">
@@ -1918,11 +1936,12 @@ export default function LastStep() {
                           </p>
 
                           <h1 className="mt-3 max-w-[820px] text-[1.9rem] font-extrabold leading-[0.96] tracking-[-0.04em] text-white/95 sm:text-[3.65rem]">
-                            {effectiveHeroTitle}
+                            Your data is being turned into{" "}
+                            <span className="gradient-text-soft">intelligence</span>
                           </h1>
 
                           <p className="mt-4 max-w-3xl text-[13px] leading-6 text-white/56 sm:text-[16px] sm:leading-7">
-                            {effectiveHeroDescription}
+                            We’re pulling your campaign history, reconciling it across platforms, and structuring it so any AI can reason about it.
                           </p>
                         </div>
                       </div>
@@ -1934,21 +1953,29 @@ export default function LastStep() {
                   progress={visualProgress}
                   status={state?.buildStatus || "idle"}
                   stage={state?.buildStage || "idle"}
+                  usedOpenAI={!!state?.usedOpenAI}
+                  model={state?.model || null}
                   error={state?.buildError || null}
                   pendingConnectedSources={state?.pendingConnectedSources || []}
-                  needSignalRebuild={state?.signalStatus === "stale"}
-                  effectiveSourcesChanged={!!state?.runtime?.effectiveSources?.changedSinceLastSignal}
+                  needSignalRebuild={!!state?.needSignalRebuild}
+                  effectiveSourcesChanged={!!state?.effectiveSourcesChanged}
                   isRetryDisabled={isProcessingSignal || isGeneratingPdfIntent || displayPdfStatus === "processing"}
                   onRetry={onRetrySignal}
-                  backendSignalReady={backendSignalReady}
-                  isFullyUnlocked={isFullyUnlocked}
+                  signalReadyForPdf={!!state?.signalReadyForPdf}
+                  isSignalReady={isSignalReadyCard}
                 />
 
                 <div className="mt-6">
+                  <WhileYouWaitCard isSignalReady={isSignalReadyCard} />
+                </div>
+
+                <div className="mt-6">
                   <PdfLaunchCard
-                    canGenerate={effectiveCanGeneratePdf}
-                    canDownload={effectiveCanDownloadPdf}
-                    signalStatus={state?.signalStatus || "idle"}
+                    canGenerate={!!state?.canGeneratePdf && signalReadyForPdf && !state?.needSignalRebuild}
+                    signalReadyForPdf={!!state?.signalReadyForPdf}
+                    needSignalRebuild={!!state?.needSignalRebuild}
+                    needPdfRebuild={!!state?.needPdfRebuild}
+                    pdfBuildState={state?.pdfBuildState || "idle"}
                     pdfStatus={displayPdfStatus}
                     pdfFileName={state?.pdfFileName || null}
                     pdfMeta={state?.pdfMeta || null}
@@ -1959,40 +1986,32 @@ export default function LastStep() {
                   />
                 </div>
 
-                <div className="mt-6">
-                  <WhileYouWaitCard />
-                </div>
-
-                <div className="mt-6">
-                  <SignalPromptsSection />
-                </div>
-
                 <div className="mt-6 rounded-[30px] border border-white/10 bg-white/[0.025] p-5 sm:p-6 xl:p-7">
-                  <div className="max-w-3xl">
-                    <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.03] px-3 py-1 text-[10.5px] uppercase tracking-[0.18em] text-white/62">
-                      <Bot className="h-3.5 w-3.5" />
-                      AI Compatibility
-                    </div>
+  <div className="max-w-3xl">
+    <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.03] px-3 py-1 text-[10.5px] uppercase tracking-[0.18em] text-white/62">
+      <Bot className="h-3.5 w-3.5" />
+      AI Compatibility
+    </div>
 
-                    <h3 className="mt-4 text-[2rem] font-semibold tracking-tight text-white/94 sm:text-[2.35rem]">
-                      Works with top AI models
-                    </h3>
-                  </div>
+    <h3 className="mt-4 text-[2rem] font-semibold tracking-tight text-white/94 sm:text-[2.35rem]">
+      Works with top AI models
+    </h3>
+  </div>
 
-                  <div className="mt-6 grid grid-cols-1 gap-5 xl:grid-cols-3">
-                    {supportedModels.map((item) => (
-                      <ModelCompatibilityCard
-                        key={item.key}
-                        title={item.title}
-                        logoSrc={item.logoSrc}
-                        accent={item.accent}
-                      />
-                    ))}
-                  </div>
-                </div>
+  <div className="mt-6 grid grid-cols-1 gap-5 xl:grid-cols-3">
+    {supportedModels.map((item) => (
+      <ModelCompatibilityCard
+        key={item.key}
+        title={item.title}
+        logoSrc={item.logoSrc}
+        accent={item.accent}
+      />
+    ))}
+  </div>
+</div>
 
                 <div className="adray-laststep-tip mt-5 rounded-2xl border px-4 py-3 text-sm text-white/65">
-                  Tip: {effectiveTipText}
+                  Tip: {tipText}
                 </div>
 
                 {toast ? (

@@ -23,6 +23,7 @@ import LastStep from "./pages/LastStep";
 import ChatGptMcp from "./pages/ChatGptMcp";
 import ClaudeMcp from "./pages/ClaudeMcp";
 import GeminiMcp from "./pages/GeminiMcp";
+import AttributionEmbed from "./pages/AttributionEmbed";
 
 // ✅ NUEVO: Panel interno (equipo)
 import InternalAdmin from "./pages/InternalAdmin";
@@ -305,6 +306,7 @@ function AppRoutes() {
       <Route path="generate-audit" element={<GenerateAudit />} />
       <Route path="settings" element={<Settings />} />
       <Route path="studio" element={<Studio />} />
+      <Route path="attribution" element={<AttributionEmbed />} />
 
       {/* ✅ ALIAS / COMPAT */}
       <Route path="audits" element={<SiteAudit />} />
