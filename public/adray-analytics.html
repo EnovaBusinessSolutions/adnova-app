@@ -5738,6 +5738,7 @@
                         <span class="journey-chip" data-tooltip="Initial landing page captured for this stitched journey."><i class="fa-solid fa-door-open"></i>${escapeHtml(journeyData.summary?.landing || 'No landing captured')}</span>
                         <span class="journey-chip" data-tooltip="How many stitched sessions currently support this purchase path."><i class="fa-solid fa-layer-group"></i>${sessionCount} sessions</span>
                     </div>
+                    ${renderBehavioralSignalsBadge(purchase.behavioralSignals, purchase.recordingStatus, purchase.recordingDurationMs)}
                     <div>
                         <p class="font-medium text-gray-900 mb-1">UTM URL history for this journey</p>
                         ${renderTrackedUtmHistory(purchaseUtmHistory, { emptyMessage: 'No UTM URLs have been captured yet for this selected journey.' })}
@@ -5750,7 +5751,7 @@
                             <i class="fa-solid fa-circle-play"></i>
                             Ver grabación
                         </button>` :
-                        purchase.clarityPlaybackUrl ? `
+                        (typeof purchase.clarityPlaybackUrl === 'string' && purchase.clarityPlaybackUrl.startsWith('http')) ? `
                         <button type="button" class="journey-export-btn"
                            style="background:#5c2d91;color:#fff;display:inline-flex;align-items:center;gap:6px;"
                            onclick="adrayOpenClarityModal('${escapeInlineSingleQuotedJs(purchase.clarityPlaybackUrl)}')">
@@ -5766,6 +5767,52 @@
                     ${renderJourneyVerticalTimeline(journeyData.timelineEvents)}
                 </div>
             `;
+        }
+
+        function renderBehavioralSignalsBadge(signals, recordingStatus, durationMs) {
+            if (!signals || typeof signals !== 'object') {
+                // No rrweb recording yet — nothing to show
+                return '';
+            }
+            const riskScore    = signals.riskScore ?? null;
+            const rageClicks   = signals.rageClickCount || 0;
+            const exitIntents  = signals.exitIntentCount || 0;
+            const formAbandon  = signals.formAbandonCount || 0;
+            const pattern      = signals.abandonmentPattern || null;
+            const hesitationMs = signals.totalHesitationMs || 0;
+
+            // Risk color
+            const riskColor = riskScore === null ? '#9ca3af'
+                : riskScore >= 70 ? '#f87171'
+                : riskScore >= 40 ? '#fbbf24'
+                : '#4ade80';
+
+            const patternLabel = {
+                shipping_shock:        '🚢 Shipping shock',
+                form_friction:         '📝 Form friction',
+                rage_exit:             '😤 Rage exit',
+                passive_browse:        '👀 Passive browse',
+                high_value_hesitation: '💭 High-value hesitation',
+                exit_intent:           '🚪 Exit intent',
+                unknown:               null,
+            }[pattern] || null;
+
+            const dur = durationMs ? `${Math.round(durationMs / 1000)}s` : null;
+
+            const chips = [];
+            if (riskScore !== null) chips.push(`<span style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:12px;font-size:11px;font-weight:600;background:${riskColor}22;color:${riskColor};border:1px solid ${riskColor}44;" data-tooltip="Abandonment risk score extracted from session recording."><i class="fa-solid fa-gauge-high" style="font-size:10px;"></i> Risk ${riskScore}/100</span>`);
+            if (patternLabel) chips.push(`<span style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:12px;font-size:11px;background:#312e81;color:#c4b5fd;border:1px solid #4c1d9544;" data-tooltip="Detected behavioral pattern from the session recording.">${escapeHtml(patternLabel)}</span>`);
+            if (rageClicks > 0) chips.push(`<span style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:12px;font-size:11px;background:#4c1d1d;color:#fca5a5;border:1px solid #7f1d1d44;" data-tooltip="Number of rage-click clusters detected."><i class="fa-solid fa-hand-fist" style="font-size:10px;"></i> ${rageClicks} rage click${rageClicks > 1 ? 's' : ''}</span>`);
+            if (exitIntents > 0) chips.push(`<span style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:12px;font-size:11px;background:#1c2e1c;color:#86efac;border:1px solid #14532d44;" data-tooltip="Exit-intent movements detected (cursor moving toward browser chrome)."><i class="fa-solid fa-arrow-right-from-bracket" style="font-size:10px;"></i> ${exitIntents} exit intent${exitIntents > 1 ? 's' : ''}</span>`);
+            if (formAbandon > 0) chips.push(`<span style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:12px;font-size:11px;background:#1c1c2e;color:#a5b4fc;border:1px solid #312e8144;" data-tooltip="Form fields that were touched but left empty."><i class="fa-solid fa-file-pen" style="font-size:10px;"></i> ${formAbandon} form abandon</span>`);
+            if (hesitationMs > 5000) chips.push(`<span style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:12px;font-size:11px;background:#1c1c1c;color:#d1d5db;border:1px solid #37415144;" data-tooltip="Total time spent hesitating (cursor idle) during checkout."><i class="fa-solid fa-clock" style="font-size:10px;"></i> ${Math.round(hesitationMs / 1000)}s hesitation</span>`);
+            if (dur) chips.push(`<span style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:12px;font-size:11px;background:#111827;color:#6b7280;border:1px solid #37415144;" data-tooltip="Total recorded session duration."><i class="fa-solid fa-video" style="font-size:10px;"></i> ${dur}</span>`);
+
+            if (!chips.length) return '';
+
+            return `<div style="display:flex;flex-wrap:wrap;gap:6px;padding:8px 0 4px;">
+                ${chips.join('')}
+            </div>`;
         }
 
         function renderJourneyVerticalTimeline(events = []) {
@@ -6510,11 +6557,22 @@
             _adrayShowModal('Grabación de sesión · Microsoft Clarity');
             const content = document.getElementById('adray-modal-content');
             content.style.cssText = 'flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:40px;background:#111827;border-radius:0 0 12px 12px;';
+
+            const isValidUrl = typeof url === 'string' && url.startsWith('http');
+            if (!isValidUrl) {
+                content.innerHTML = `
+                    <i class="fa-solid fa-link-slash" style="font-size:36px;color:#6b7280;margin-bottom:16px;"></i>
+                    <p style="color:#e5e7eb;font-size:14px;font-weight:600;margin-bottom:6px;">Grabación no disponible</p>
+                    <p style="color:#9ca3af;font-size:12px;text-align:center;max-width:300px;">El enlace de esta grabación no es válido o expiró.</p>`;
+                return;
+            }
+
+            const safeUrl = url.replace(/"/g, '&quot;');
             content.innerHTML = `
                 <i class="fa-solid fa-circle-play" style="font-size:40px;color:#7c3aed;margin-bottom:16px;"></i>
                 <p style="color:#e5e7eb;font-size:14px;font-weight:600;margin-bottom:6px;">Grabación en Microsoft Clarity</p>
                 <p style="color:#9ca3af;font-size:12px;margin-bottom:24px;text-align:center;max-width:320px;">Esta grabación está almacenada en Clarity y no puede reproducirse aquí.<br>Ábrela en una nueva pestaña.</p>
-                <a href="${url.replace(/"/g,'&quot;')}" target="_blank" rel="noopener noreferrer"
+                <a href="${safeUrl}" target="_blank" rel="noopener noreferrer"
                    onclick="adrayCloseModal()"
                    style="display:inline-flex;align-items:center;gap:8px;padding:10px 22px;background:#5c2d91;color:#fff;border-radius:8px;text-decoration:none;font-size:13px;font-weight:600;">
                     <i class="fa-solid fa-arrow-up-right-from-square"></i> Abrir en Clarity
@@ -7597,7 +7655,7 @@
                 <p><strong>GA4 Session Source:</strong> ${session.ga4SessionSource || '-'}</p>
                 <p><strong>Referrer:</strong> ${session.referrer || '-'}</p>
                 <p><strong>IP Hash:</strong> ${session.ipHash ? `${String(session.ipHash).slice(0, 10)}...` : '-'}</p>
-                ${session.clarityPlaybackUrl ? `
+                ${(typeof session.clarityPlaybackUrl === 'string' && session.clarityPlaybackUrl.startsWith('http')) ? `
                 <div class="mt-3">
                     <button type="button"
                        class="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium"

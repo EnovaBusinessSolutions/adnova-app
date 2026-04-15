@@ -70,6 +70,7 @@ type OnboardingStatus = {
       maxSelect: number;
     };
     shopify?: { connected: boolean };
+    pixel?: { connected: boolean; shop: string | null };
     pixels?: {
       meta?: {
         selected: boolean;
@@ -536,6 +537,14 @@ export default function Index() {
   const metaConnected = !!st?.meta?.connected;
   const googleAdsConnected = !!st?.googleAds?.connected;
   const ga4Connected = !!st?.ga4?.connected;
+
+  // Pixel setup: true when wizard was completed (user.shop set on backend)
+  // Also check localStorage as instant fallback before first API response
+  const pixelConnected = !!(
+    st?.pixel?.connected ||
+    (typeof window !== "undefined" && !!localStorage.getItem("adray_analytics_shop"))
+  );
+  const pixelShop = st?.pixel?.shop || (typeof window !== "undefined" ? localStorage.getItem("adray_analytics_shop") : null);
 
   const hasMetaSelection = (st?.meta?.selectedCount || 0) > 0 || !!st?.meta?.defaultAccountId;
   const hasAdsSelection = (st?.googleAds?.selectedCount || 0) > 0 || !!st?.googleAds?.defaultCustomerId;
@@ -1055,21 +1064,38 @@ export default function Index() {
                         </div>
 
                         <h2 className="mt-3 text-[1.1rem] font-semibold tracking-[-0.03em] text-white sm:text-[1.28rem]">
-                          Connect your website pixel
+                          {pixelConnected ? "Pixel connected" : "Connect your website pixel"}
                         </h2>
                         <p className="mt-2 max-w-2xl text-sm leading-6 text-white/56">
-                          Detect your store type and get a guided install flow for the Adray pixel
-                          without leaving this page.
+                          {pixelConnected && pixelShop
+                            ? `Tracking active on ${pixelShop}. Run the wizard again to update your setup.`
+                            : "Detect your store type and get a guided install flow for the Adray pixel without leaving this page."}
                         </p>
                       </div>
 
-                      <Button
-                        onClick={() => setPixelWizardOpen(true)}
-                        className="h-11 rounded-2xl bg-[#B55CFF] px-5 text-white shadow-[0_0_24px_rgba(181,92,255,0.22)] transition-all hover:bg-[#A664FF] md:w-auto"
-                      >
-                        <span>Connect Pixel</span>
-                        <ArrowRight className="h-4 w-4" />
-                      </Button>
+                      {pixelConnected ? (
+                        <div className="flex items-center gap-3">
+                          <div className="flex items-center gap-2 rounded-2xl border border-[#4FE3C1]/30 bg-[#4FE3C1]/10 px-4 py-2.5 text-sm font-semibold text-[#4FE3C1]">
+                            <CheckCircle2 className="h-4 w-4" />
+                            Connected
+                          </div>
+                          <Button
+                            onClick={() => setPixelWizardOpen(true)}
+                            variant="outline"
+                            className="h-10 rounded-2xl border-white/10 bg-white/[0.04] px-4 text-sm text-white/70 hover:bg-white/[0.08] hover:text-white md:w-auto"
+                          >
+                            Reconfigure
+                          </Button>
+                        </div>
+                      ) : (
+                        <Button
+                          onClick={() => setPixelWizardOpen(true)}
+                          className="h-11 rounded-2xl bg-[#B55CFF] px-5 text-white shadow-[0_0_24px_rgba(181,92,255,0.22)] transition-all hover:bg-[#A664FF] md:w-auto"
+                        >
+                          <span>Connect Pixel</span>
+                          <ArrowRight className="h-4 w-4" />
+                        </Button>
+                      )}
                     </div>
                   </div>
 

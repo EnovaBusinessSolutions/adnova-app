@@ -250,7 +250,7 @@ router.get('/', requireAuth, async (req, res) => {
         .lean(),
 
       User.findById(uid)
-        .select('_id metaConnected googleConnected shopifyConnected metaAccessToken selectedMetaAccounts selectedGoogleAccounts selectedGAProperties')
+        .select('_id metaConnected googleConnected shopifyConnected metaAccessToken selectedMetaAccounts selectedGoogleAccounts selectedGAProperties shop')
         .lean(),
 
       PixelSelection
@@ -333,6 +333,14 @@ router.get('/', requireAuth, async (req, res) => {
       user?.shopifyConnected
     );
 
+    // ===== ADRAY PIXEL SETUP =====
+    // Connected = user ran the PixelSetupWizard (confirm-shop sets user.shop + ShopConnections)
+    const pixelSetupShop = (shopDoc?.accessToken === 'pixel-setup' && shopDoc?.shop)
+      ? shopDoc.shop
+      : null;
+    const pixelConnectedShop = user?.shop || pixelSetupShop || null;
+    const pixelConnected = !!pixelConnectedShop;
+
     // ===== OPTIONAL FLAGS =====
     // Pixel / conversion ya no bloquean el onboarding.
     const metaPixelOptional = true;
@@ -377,6 +385,11 @@ router.get('/', requireAuth, async (req, res) => {
 
       shopify: {
         connected: shopifyConnected,
+      },
+
+      pixel: {
+        connected: pixelConnected,
+        shop: pixelConnectedShop,
       },
 
       pixels: {
