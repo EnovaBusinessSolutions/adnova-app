@@ -1725,6 +1725,8 @@
           }
         },
         maskAllInputs: true,
+        inlineStylesheet: true,
+        inlineImages: false,
         blockSelector: '[data-adray-block]',
         sampling: {
           mousemove: 100,
