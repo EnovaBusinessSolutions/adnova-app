@@ -6428,21 +6428,32 @@
                 const eventsResp = await fetch(data.presignedUrl);
                 const events = await eventsResp.json();
 
-                if (!Array.isArray(events) || events.length === 0) {
-                    container.innerHTML = '<p style="font-size:12px;color:#f87171;padding:8px;">Sin eventos de grabación.</p>';
+                console.log('[adrayOpenPlayer] events fetched, count:', Array.isArray(events) ? events.length : 'not array', typeof events);
+
+                // Events may be wrapped in an object if S3 returns JSON differently
+                const eventsArr = Array.isArray(events) ? events : (events?.events || []);
+
+                if (!eventsArr.length) {
+                    container.innerHTML = '<p style="font-size:12px;color:#f87171;padding:8px;">Sin eventos de grabación (0 eventos).</p>';
                     return;
                 }
 
                 // 4. Render rrweb player
                 container.innerHTML = '';
-                container.style.height = '420px';
-                container.style.background = '#111';
-                container.style.borderRadius = '8px';
-                container.style.overflow = 'hidden';
-                new window.rrwebPlayer({
-                    target: container,
-                    props: { events, width: container.clientWidth || 640, height: 420, autoPlay: false }
-                });
+                const playerWidth = Math.max(container.clientWidth || 0, 600);
+                const playerHeight = 500;
+                container.style.cssText = `height:${playerHeight}px;border-radius:8px;overflow:hidden;background:#1a1a2e;`;
+                try {
+                    new window.rrwebPlayer({
+                        target: container,
+                        props: { events: eventsArr, width: playerWidth, height: playerHeight, autoPlay: false, showController: true }
+                    });
+                    console.log('[adrayOpenPlayer] player rendered,', eventsArr.length, 'events,', playerWidth, 'x', playerHeight);
+                } catch (playerErr) {
+                    console.error('[adrayOpenPlayer] player init error:', playerErr);
+                    container.innerHTML = `<p style="font-size:12px;color:#f87171;padding:8px;">Error al inicializar player: ${playerErr.message}</p>`;
+                    return;
+                }
 
                 // Show behavioral signals if available
                 if (data.recording?.behavioralSignals) {
