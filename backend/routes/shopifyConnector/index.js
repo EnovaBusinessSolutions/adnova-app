@@ -283,15 +283,16 @@ function topLevelRedirect(res, url, label = 'Continuar con Shopify') {
 router.use((req, res, next) => {
   if (!['GET', 'HEAD'].includes(req.method)) return next();
 
-  const url = req.originalUrl || '';
+  // req.path es relativo al mount point (/connector), sin query string
+  const p = req.path || '/';
   const allow =
-    url === '/connector' ||
-    url === '/connector/' ||
-    url.startsWith('/connector/auth') ||
-    url.startsWith('/connector/webhooks') ||
-    url.startsWith('/connector/interface') ||
-    url.startsWith('/connector/healthz') ||
-    url.startsWith('/connector/ping');
+    p === '/' ||
+    p === '' ||
+    p.startsWith('/auth') ||
+    p.startsWith('/webhooks') ||
+    p.startsWith('/interface') ||
+    p.startsWith('/healthz') ||
+    p.startsWith('/ping');
 
   if (allow) return next();
 
@@ -307,7 +308,7 @@ router.use((req, res, next) => {
   const state = pushState(req, { shop, host });
   const authorizeUrl = buildAuthorizeUrl(shop, state);
 
-  console.log('[SHOPIFY_CONNECTOR][OAUTH_REDIRECT][GUARD]', { shop, path: req.originalUrl });
+  console.log('[SHOPIFY_CONNECTOR][OAUTH_REDIRECT][GUARD]', { shop, path: req.path });
 
   if (isIframeRequest(req)) return topLevelRedirect(res, authorizeUrl, 'Continuar con Shopify');
   return res.redirect(302, authorizeUrl);
