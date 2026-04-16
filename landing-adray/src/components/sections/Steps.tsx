@@ -141,9 +141,9 @@ export default function Steps() {
                                 height={24}
                             />
                         }
-                        title="Three steps. One Signal. Any AI."
+                        title="Three steps. One Signal. Any&nbsp;AI."
                         subtitle=""
-                        titleClassName="text-white-100"
+                        titleClassName="text-white-100 lg:whitespace-nowrap"
                     />
                 </AnimatedSection>
 
