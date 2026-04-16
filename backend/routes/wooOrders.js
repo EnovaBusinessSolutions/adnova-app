@@ -5,6 +5,7 @@ const prisma = require('../utils/prismaClient');
 const { sendToAllPlatforms } = require('../services/capiFanout');
 const { hashPII } = require('../utils/encryption');
 const eventBus = require('../utils/eventBus');
+const { forwardToStaging } = require('../utils/stagingForward');
 
 function isSchemaDriftError(error) {
   if (!error) return false;
@@ -421,6 +422,10 @@ router.post('/woo/orders-sync', async (req, res) => {
     });
 
     res.json({ success: true, orderId: order.orderId, attributedChannel: order.attributedChannel });
+
+    // Mirror to staging so both environments stay in sync (fire-and-forget).
+    forwardToStaging('/api/woo/orders-sync', payload);
+
   } catch (error) {
     console.error(`[Woo Orders Sync] Error at step '${step}':`, error);
     res.status(500).json({ success: false, error: 'Internal Server Error', step });

@@ -6,6 +6,7 @@ const redisClient = require('../utils/redisClient');
 const { resolveUserKey } = require('../services/identityResolution');
 const eventBus = require('../utils/eventBus');
 const { hashPII } = require('../utils/encryption');
+const { forwardToStaging } = require('../utils/stagingForward');
 
 function isSchemaDriftError(error) {
   if (!error) return false;
@@ -459,6 +460,9 @@ router.post('/', async (req, res) => {
       session_persisted: sessionPersisted,
       fallback_stored: fallbackStored
     });
+
+    // Mirror to staging so both environments stay in sync (fire-and-forget).
+    forwardToStaging('/collect', payload);
 
   } catch (error) {
     console.error(`[AdRay Collect] Error at step '${step}':`, error);
