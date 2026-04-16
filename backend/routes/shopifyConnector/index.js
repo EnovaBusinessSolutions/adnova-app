@@ -290,7 +290,8 @@ router.use((req, res, next) => {
     url.startsWith('/connector/auth') ||
     url.startsWith('/connector/webhooks') ||
     url.startsWith('/connector/interface') ||
-    url.startsWith('/connector/healthz');
+    url.startsWith('/connector/healthz') ||
+    url.startsWith('/connector/ping');
 
   if (allow) return next();
 
@@ -494,6 +495,19 @@ router.get('/interface', async (req, res) => {
 // Healthcheck simple
 router.get('/healthz', (_req, res) => {
   res.status(200).json({ ok: true, service: 'connector', ts: Date.now() });
+});
+
+// ✅ Ping ligero: verifica si la tienda tiene accessToken en BD (no requiere JWT)
+router.get('/ping', async (req, res) => {
+  const shop = extractShop(req);
+  if (!shop) return res.status(400).json({ ok: false, error: 'missing shop' });
+  try {
+    const conn = await ShopConnections.findOne({ shop }, { accessToken: 1 }).lean();
+    if (conn?.accessToken) return res.json({ ok: true, shop, connected: true });
+    return res.status(401).json({ ok: false, shop, connected: false });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: 'db error' });
+  }
 });
 
 module.exports = router;
