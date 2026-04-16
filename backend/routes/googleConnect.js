@@ -5,6 +5,7 @@ const express = require('express');
 const { OAuth2Client } = require('google-auth-library');
 const { google } = require('googleapis');
 const mongoose = require('mongoose');
+const axios = require('axios');
 
 const { discoverAndEnrich, selfTest } = require('../services/googleAdsService');
 const { collectGoogle } = require('../jobs/collect/googleCollector');
@@ -113,12 +114,18 @@ const {
   GOOGLE_GA4_CLIENT_SECRET,
   GOOGLE_GA4_REDIRECT_URI,
   GOOGLE_GA4_CALLBACK_URL,
+
+  GOOGLE_MERCHANT_CLIENT_ID,
+  GOOGLE_MERCHANT_CLIENT_SECRET,
+  GOOGLE_MERCHANT_REDIRECT_URI,
+  GOOGLE_MERCHANT_CALLBACK_URL,
 } = process.env;
 
 const DEFAULT_GOOGLE_OBJECTIVE = 'ventas';
 
 const PRODUCT_ADS = 'ads';
 const PRODUCT_GA4 = 'ga4';
+const PRODUCT_MERCHANT = 'merchant';
 
 /* =========================
  * Helpers
@@ -137,6 +144,10 @@ function oauthForProduct(product) {
     clientId = GOOGLE_GA4_CLIENT_ID || clientId;
     clientSecret = GOOGLE_GA4_CLIENT_SECRET || clientSecret;
     redirectUri = GOOGLE_GA4_REDIRECT_URI || GOOGLE_GA4_CALLBACK_URL || redirectUri;
+  } else if (product === PRODUCT_MERCHANT) {
+    clientId     = GOOGLE_MERCHANT_CLIENT_ID     || clientId;
+    clientSecret = GOOGLE_MERCHANT_CLIENT_SECRET || clientSecret;
+    redirectUri  = GOOGLE_MERCHANT_REDIRECT_URI  || GOOGLE_MERCHANT_CALLBACK_URL || redirectUri;
   }
 
   if (!clientId || !clientSecret || !redirectUri) {
@@ -228,6 +239,9 @@ const normPropertyId = (val = '') => {
   return digits ? `properties/${digits}` : '';
 };
 
+const normMerchantId = (val = '') =>
+  String(val || '').trim().replace(/^accounts\//, '').replace(/[^\d]/g, '');
+
 const uniq = (arr = []) => [...new Set((arr || []).filter(Boolean))];
 
 const normalizeScopes = (raw) =>
@@ -241,12 +255,16 @@ const normalizeScopes = (raw) =>
 
 const ADS_SCOPE = 'https://www.googleapis.com/auth/adwords';
 const GA_SCOPE = 'https://www.googleapis.com/auth/analytics.readonly';
+const MERCHANT_SCOPE = 'https://www.googleapis.com/auth/content';
 
 const hasAdwordsScope = (scopes = []) =>
   Array.isArray(scopes) && scopes.some((s) => String(s).includes('/auth/adwords'));
 
 const hasGaScope = (scopes = []) =>
   Array.isArray(scopes) && scopes.some((s) => String(s).includes('/auth/analytics.readonly'));
+
+const hasMerchantScope = (scopes = []) =>
+  Array.isArray(scopes) && scopes.some((s) => String(s).includes('/auth/content'));
 
 function getAdsTokenBundle(ga) {
   return {
@@ -268,8 +286,23 @@ function getGa4TokenBundle(ga) {
   };
 }
 
+function getMerchantTokenBundle(ga) {
+  return {
+    accessToken:  ga?.merchantAccessToken  || null,
+    refreshToken: ga?.merchantRefreshToken || null,
+    expiresAt:    ga?.merchantExpiresAt    || null,
+    scopes: Array.isArray(ga?.merchantScope) && ga.merchantScope.length
+      ? ga.merchantScope
+      : (Array.isArray(ga?.scope) ? ga.scope : []),
+  };
+}
+
 async function getFreshAccessTokenForProduct(gaDoc, product) {
-  const bundle = product === PRODUCT_GA4 ? getGa4TokenBundle(gaDoc) : getAdsTokenBundle(gaDoc);
+  const bundle = product === PRODUCT_GA4
+    ? getGa4TokenBundle(gaDoc)
+    : product === PRODUCT_MERCHANT
+      ? getMerchantTokenBundle(gaDoc)
+      : getAdsTokenBundle(gaDoc);
 
   if (bundle?.accessToken && bundle?.expiresAt) {
     const ms = new Date(bundle.expiresAt).getTime() - Date.now();
@@ -300,6 +333,9 @@ async function getFreshAccessTokenForProduct(gaDoc, product) {
       if (product === PRODUCT_GA4) {
         $set.ga4AccessToken = freshAccess;
         $set.ga4ExpiresAt = freshExpiry;
+      } else if (product === PRODUCT_MERCHANT) {
+        $set.merchantAccessToken = freshAccess;
+        $set.merchantExpiresAt   = freshExpiry;
       } else {
         $set.accessToken = freshAccess;
         $set.expiresAt = freshExpiry;
@@ -339,10 +375,12 @@ function getProductFromReq(req) {
   const path = String(req.path || '').toLowerCase();
   const full = String(req.originalUrl || '').toLowerCase();
 
+  if (path.includes('/merchant') || full.includes('/merchant')) return PRODUCT_MERCHANT;
   if (path.includes('/ga') || full.includes('/ga/connect') || full.includes('/connect/ga4')) return PRODUCT_GA4;
   if (path.includes('/ads') || full.includes('/ads/connect') || full.includes('/connect/ads')) return PRODUCT_ADS;
 
   const rt = String(req.query.returnTo || '').toLowerCase();
+  if (rt.includes('product=merchant') || rt.includes('merchant')) return PRODUCT_MERCHANT;
   if (rt.includes('product=ga4') || rt.includes('ga4')) return PRODUCT_GA4;
   if (rt.includes('product=ads') || rt.includes('google-ads') || rt.includes('gads')) return PRODUCT_ADS;
 
@@ -358,6 +396,7 @@ function scopesForProduct(product) {
 
   if (product === PRODUCT_ADS) return [...base, ADS_SCOPE];
   if (product === PRODUCT_GA4) return [...base, GA_SCOPE];
+  if (product === PRODUCT_MERCHANT) return [...base, MERCHANT_SCOPE];
 
   return [...base, GA_SCOPE, ADS_SCOPE];
 }
@@ -370,6 +409,11 @@ function filterSelectedByAvailable(selectedIds, availableSet) {
 function filterSelectedPropsByAvailable(selectedPropIds, availableSet) {
   const sel = Array.isArray(selectedPropIds) ? selectedPropIds : [];
   return sel.map(normPropertyId).filter(Boolean).filter((pid) => availableSet.has(pid));
+}
+
+function filterSelectedMerchantsByAvailable(selectedMerchantIds, availableSet) {
+  return (Array.isArray(selectedMerchantIds) ? selectedMerchantIds : [])
+    .map(normMerchantId).filter(Boolean).filter((id) => availableSet.has(id));
 }
 
 function emitEventBestEffort(req, name, props = {}, opts = {}) {
@@ -537,6 +581,45 @@ async function fetchGA4Properties(oauthClient) {
   return out;
 }
 
+async function fetchMerchantAccounts(oauthClient) {
+  const accessToken = oauthClient?.credentials?.access_token;
+  if (!accessToken) throw new Error('MERCHANT_ACCESS_TOKEN_MISSING');
+
+  const out = [];
+  let pageToken = null;
+
+  do {
+    const { data } = await axios.get(
+      'https://merchantapi.googleapis.com/accounts/v1beta/accounts',
+      {
+        headers: { Authorization: `Bearer ${accessToken}` },
+        params: { pageSize: 250, ...(pageToken ? { pageToken } : {}) },
+        timeout: 30000,
+      }
+    );
+
+    for (const account of Array.isArray(data?.accounts) ? data.accounts : []) {
+      const merchantId = normMerchantId(account?.accountId || account?.name || '');
+      if (!merchantId) continue;
+      out.push({
+        merchantId,
+        displayName:   account?.accountName || account?.displayName || `Merchant ${merchantId}`,
+        websiteUrl:    account?.homepage || account?.homepageUri || null,
+        accountStatus: account?.accountStatus || account?.state || null,
+        aggregatorId:  normMerchantId(account?.aggregatorId || ''),
+        source: 'merchant',
+      });
+    }
+    pageToken = data?.nextPageToken || null;
+  } while (pageToken);
+
+  const map = new Map();
+  for (const a of out) map.set(a.merchantId, a);
+  return Array.from(map.values()).sort((a, b) =>
+    String(a.displayName || a.merchantId).localeCompare(String(b.displayName || b.merchantId))
+  );
+}
+
 function buildAuthUrl(req, returnTo, product) {
   const client = oauthForProduct(product);
   const safeReturnTo = sanitizeReturnTo(returnTo) || '/dashboard/';
@@ -615,6 +698,19 @@ router.get('/connect/ga4', requireSession, (req, res) => {
   return startConnect(req, res);
 });
 
+router.get('/merchant', requireSession, (req, res) => {
+  req.query.product = PRODUCT_MERCHANT;
+  return startConnect(req, res);
+});
+router.get('/merchant/connect', requireSession, (req, res) => {
+  req.query.product = PRODUCT_MERCHANT;
+  return startConnect(req, res);
+});
+router.get('/connect/merchant', requireSession, (req, res) => {
+  req.query.product = PRODUCT_MERCHANT;
+  return startConnect(req, res);
+});
+
 async function googleCallbackHandler(req, res) {
   try {
     if (req.query.error) {
@@ -643,7 +739,7 @@ async function googleCallbackHandler(req, res) {
         }
         if (s && typeof s.product === 'string') {
           const p = String(s.product).toLowerCase();
-          if (p === PRODUCT_ADS || p === PRODUCT_GA4) productFromState = p;
+          if (p === PRODUCT_ADS || p === PRODUCT_GA4 || p === PRODUCT_MERCHANT) productFromState = p;
         }
       } catch {
         // ignore
@@ -677,6 +773,9 @@ async function googleCallbackHandler(req, res) {
         '+ga4RefreshToken',
         '+ga4AccessToken',
         '+ga4Scope',
+        '+merchantRefreshToken',
+        '+merchantAccessToken',
+        '+merchantScope',
         'selectedCustomerIds',
         'selectedPropertyIds',
         'selectedGaPropertyId',
@@ -685,8 +784,12 @@ async function googleCallbackHandler(req, res) {
         'customers',
         'ad_accounts',
         'gaProperties',
+        'merchantAccounts',
+        'selectedMerchantIds',
+        'defaultMerchantId',
         'connectedAds',
         'connectedGa4',
+        'connectedMerchant',
       ].join(' ')
     );
 
@@ -707,6 +810,14 @@ async function googleCallbackHandler(req, res) {
       ga.ga4Scope = normalizeScopes([...existing, ...grantedScopes]);
 
       ga.connectedGa4 = true;
+    } else if (productFromState === PRODUCT_MERCHANT) {
+      if (refreshToken) ga.merchantRefreshToken = refreshToken;
+      ga.merchantAccessToken  = accessToken;
+      ga.merchantExpiresAt    = expiresAt;
+      ga.merchantConnectedAt  = new Date();
+      const existing = Array.isArray(ga.merchantScope) ? ga.merchantScope : [];
+      ga.merchantScope = normalizeScopes([...existing, ...grantedScopes]);
+      ga.connectedMerchant = true;
     } else {
       if (refreshToken) ga.refreshToken = refreshToken;
       else if (!ga.refreshToken && tokens.refresh_token) ga.refreshToken = tokens.refresh_token;
@@ -740,8 +851,9 @@ async function googleCallbackHandler(req, res) {
       connectedGa4: !!ga.connectedGa4,
     });
 
-    const shouldDoAds = productFromState === PRODUCT_ADS || (!productFromState);
-    const shouldDoGa4 = productFromState === PRODUCT_GA4 || (!productFromState);
+    const shouldDoAds      = productFromState === PRODUCT_ADS || (!productFromState);
+    const shouldDoGa4      = productFromState === PRODUCT_GA4 || (!productFromState);
+    const shouldDoMerchant = productFromState === PRODUCT_MERCHANT;
 
     // ============================
     // 1) Descubrir cuentas de Ads (solo si aplica)
@@ -1029,6 +1141,42 @@ async function googleCallbackHandler(req, res) {
       }
     }
 
+    // ============================
+    // 3) Descubrir cuentas Merchant (solo si aplica)
+    // ============================
+    const merchantHasScope   = hasMerchantScope(ga.merchantScope || []);
+    const merchantHasRefresh = !!(ga.merchantRefreshToken || ga.merchantAccessToken);
+
+    if (shouldDoMerchant && merchantHasScope && merchantHasRefresh) {
+      try {
+        const merchantClient   = await buildOAuthClientForProductFromDoc(ga, PRODUCT_MERCHANT);
+        const merchantAccounts = await fetchMerchantAccounts(merchantClient);
+
+        ga.merchantAccounts = merchantAccounts;
+        const availableIds  = new Set(merchantAccounts.map((a) => normMerchantId(a.merchantId)).filter(Boolean));
+        const kept          = filterSelectedMerchantsByAvailable(ga.selectedMerchantIds, availableIds);
+
+        if (merchantAccounts.length === 1) {
+          const onlyId = normMerchantId(merchantAccounts[0].merchantId);
+          ga.selectedMerchantIds = onlyId ? [onlyId] : [];
+          ga.defaultMerchantId   = onlyId || null;
+        } else {
+          ga.selectedMerchantIds = kept;
+          ga.defaultMerchantId   = kept.length ? kept[0] : null;
+        }
+
+        ga.lastMerchantDiscoveryError = null;
+        ga.lastMerchantDiscoveryLog   = { discoveredAt: new Date().toISOString(), count: merchantAccounts.length };
+        ga.updatedAt = new Date();
+        await ga.save();
+      } catch (e) {
+        const reason = e?.response?.data || e?.message || 'MERCHANT_DISCOVERY_FAILED';
+        ga.lastMerchantDiscoveryError = String(typeof reason === 'string' ? reason : JSON.stringify(reason)).slice(0, 4000);
+        ga.updatedAt = new Date();
+        await ga.save();
+      }
+    }
+
     await User.findByIdAndUpdate(req.user._id, {
       $set: { googleConnected: true },
     });
@@ -1052,7 +1200,7 @@ async function googleCallbackHandler(req, res) {
     }
 
     const freshGa = await GoogleAccount.findOne(q)
-      .select('customers gaProperties selectedCustomerIds selectedPropertyIds selectedGaPropertyId')
+      .select('customers gaProperties merchantAccounts selectedCustomerIds selectedPropertyIds selectedGaPropertyId selectedMerchantIds')
       .lean();
 
     const customers = Array.isArray(freshGa?.customers) ? freshGa.customers : [];
@@ -1071,9 +1219,14 @@ async function googleCallbackHandler(req, res) {
     const legacyGa = freshGa?.selectedGaPropertyId ? normPropertyId(freshGa.selectedGaPropertyId) : null;
     const gaEffectiveSel = selGa.length ? selGa : legacyGa ? [legacyGa] : [];
 
+    const selMerchant   = Array.isArray(freshGa?.selectedMerchantIds)
+      ? freshGa.selectedMerchantIds.map(normMerchantId).filter(Boolean) : [];
+    const merchantCount = Array.isArray(freshGa?.merchantAccounts) ? freshGa.merchantAccounts.length : 0;
+
     const needsSelector =
       (shouldDoAds && adsCount > 1 && selAds.length === 0) ||
-      (shouldDoGa4 && gaCount > 1 && gaEffectiveSel.length === 0);
+      (shouldDoGa4 && gaCount > 1 && gaEffectiveSel.length === 0) ||
+      (shouldDoMerchant && merchantCount > 1 && selMerchant.length === 0);
 
     returnTo = appendQuery(returnTo, 'google', 'ok');
 
@@ -1113,6 +1266,7 @@ router.get('/connect/callback', requireSession, googleCallbackHandler);
 router.get('/ads/callback', requireSession, googleCallbackHandler);
 router.get('/ga/callback', requireSession, googleCallbackHandler);
 router.get('/ga4/callback', requireSession, googleCallbackHandler);
+router.get('/merchant/callback', requireSession, googleCallbackHandler);
 
 /* =========================
  * Preview disconnect
@@ -1175,6 +1329,14 @@ router.get('/ga/disconnect/preview', requireSession, async (req, res) => {
   }
 });
 
+router.get('/merchant/disconnect/preview', requireSession, async (req, res) => {
+  try {
+    return res.json({ ok: true, auditsToDelete: 0, breakdown: { merchant: 0 } });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: 'PREVIEW_ERROR' });
+  }
+});
+
 router.get('/status', requireSession, async (req, res) => {
   try {
     const u = await User.findById(req.user._id).lean();
@@ -1184,11 +1346,14 @@ router.get('/status', requireSession, async (req, res) => {
     })
       .select(
         '+refreshToken +accessToken +ga4RefreshToken +ga4AccessToken ' +
+        '+merchantRefreshToken +merchantAccessToken +merchantScope ' +
         'objective defaultCustomerId ' +
         'customers ad_accounts scope ga4Scope gaProperties defaultPropertyId ' +
         'lastAdsDiscoveryError lastAdsDiscoveryLog expiresAt ga4ExpiresAt ' +
         'selectedCustomerIds selectedGaPropertyId selectedPropertyIds ' +
-        'connectedAds connectedGa4'
+        'merchantAccounts selectedMerchantIds defaultMerchantId ' +
+        'merchantExpiresAt lastMerchantDiscoveryError ' +
+        'connectedAds connectedGa4 connectedMerchant'
       )
       .lean();
 
@@ -1209,6 +1374,22 @@ router.get('/status', requireSession, async (req, res) => {
 
     const connectedAds = typeof ga?.connectedAds === 'boolean' ? ga.connectedAds : !!adsScopeOk;
     const connectedGa4 = typeof ga?.connectedGa4 === 'boolean' ? ga.connectedGa4 : !!gaScopeOk;
+
+    const merchantScopesArr = Array.isArray(ga?.merchantScope) ? ga.merchantScope : [];
+    const merchantScopeOk   = hasMerchantScope(merchantScopesArr);
+    const connectedMerchant = typeof ga?.connectedMerchant === 'boolean' ? ga.connectedMerchant : !!merchantScopeOk;
+
+    const merchantAccounts      = Array.isArray(ga?.merchantAccounts) ? ga.merchantAccounts : [];
+    const rawSelectedMerchants  = Array.isArray(ga?.selectedMerchantIds) ? ga.selectedMerchantIds : [];
+    const merchantAvailableSet  = new Set(merchantAccounts.map((a) => normMerchantId(a?.merchantId || '')).filter(Boolean));
+    const selectedMerchantIds   = rawSelectedMerchants.map(normMerchantId).filter((id) => merchantAvailableSet.has(id));
+
+    const rawDefaultMerchant    = ga?.defaultMerchantId ? normMerchantId(ga.defaultMerchantId) : null;
+    const defaultMerchantIdSafe = rawDefaultMerchant && merchantAvailableSet.has(rawDefaultMerchant)
+      ? rawDefaultMerchant
+      : (merchantAccounts[0]?.merchantId ? normMerchantId(merchantAccounts[0].merchantId) : null);
+
+    const requiredSelectionMerchant = merchantAccounts.length > 1 && selectedMerchantIds.length === 0;
 
     const selectedCustomerIds = Array.isArray(ga?.selectedCustomerIds)
       ? ga.selectedCustomerIds.map(normId).filter(Boolean)
@@ -1243,6 +1424,7 @@ router.get('/status', requireSession, async (req, res) => {
       connected: !!u?.googleConnected && hasTokens,
       connectedAds,
       connectedGa4,
+      connectedMerchant,
       hasCustomers: customers.length > 0,
       defaultCustomerId,
       customers,
@@ -1251,6 +1433,7 @@ router.get('/status', requireSession, async (req, res) => {
       scopes: scopesArr,
       adsScopeOk,
       gaScopeOk,
+      merchantScopeOk,
       objective: u?.googleObjective || ga?.objective || null,
       gaProperties,
       defaultPropertyId: defaultPropertyIdSafe,
@@ -1258,6 +1441,12 @@ router.get('/status', requireSession, async (req, res) => {
       selectedGaPropertyId: legacySelectedGaPropertyId,
       requiredSelectionAds,
       requiredSelectionGa4,
+      merchantAccounts,
+      defaultMerchantId:          defaultMerchantIdSafe,
+      selectedMerchantIds,
+      requiredSelectionMerchant,
+      merchantExpiresAt:          ga?.merchantExpiresAt || null,
+      lastMerchantDiscoveryError: ga?.lastMerchantDiscoveryError || null,
       expiresAt: ga?.expiresAt || null,
       lastAdsDiscoveryError: ga?.lastAdsDiscoveryError || null,
       lastAdsDiscoveryLog: ga?.lastAdsDiscoveryLog || null,
@@ -1265,6 +1454,53 @@ router.get('/status', requireSession, async (req, res) => {
   } catch (err) {
     console.error('[googleConnect] status error:', err);
     res.status(500).json({ ok: false, error: 'STATUS_ERROR' });
+  }
+});
+
+router.get('/merchant/accounts', requireSession, async (req, res) => {
+  try {
+    const q  = { $or: [{ user: req.user._id }, { userId: req.user._id }] };
+    const ga = await GoogleAccount.findOne(q)
+      .select('+merchantRefreshToken +merchantAccessToken +merchantScope merchantAccounts selectedMerchantIds defaultMerchantId lastMerchantDiscoveryError')
+      .lean();
+
+    if (!ga || (!ga.merchantRefreshToken && !ga.merchantAccessToken)) {
+      return res.json({ ok: true, merchantAccounts: [], selectedMerchantIds: [], defaultMerchantId: null });
+    }
+
+    if (!hasMerchantScope(ga.merchantScope || [])) {
+      return res.status(428).json({ ok: false, error: 'MERCHANT_SCOPE_MISSING' });
+    }
+
+    let merchantAccounts = Array.isArray(ga.merchantAccounts) ? ga.merchantAccounts : [];
+    const forceRefresh   = req.query.refresh === '1';
+
+    if (forceRefresh || !merchantAccounts.length) {
+      try {
+        const fullGa       = await GoogleAccount.findOne(q);
+        const client       = await buildOAuthClientForProductFromDoc(fullGa, PRODUCT_MERCHANT);
+        merchantAccounts   = await fetchMerchantAccounts(client);
+        const availableIds = new Set(merchantAccounts.map((a) => normMerchantId(a.merchantId)).filter(Boolean));
+        const kept         = filterSelectedMerchantsByAvailable(fullGa.selectedMerchantIds, availableIds);
+
+        fullGa.merchantAccounts          = merchantAccounts;
+        fullGa.selectedMerchantIds       = kept;
+        fullGa.lastMerchantDiscoveryError = null;
+        fullGa.updatedAt                 = new Date();
+        await fullGa.save();
+      } catch (e) {
+        console.warn('[googleConnect] merchant/accounts lazy refresh failed:', e?.message);
+      }
+    }
+
+    const availableIds      = new Set(merchantAccounts.map((a) => normMerchantId(a.merchantId)).filter(Boolean));
+    const selectedMerchantIds = (ga.selectedMerchantIds || []).map(normMerchantId).filter((id) => availableIds.has(id));
+    const defaultMerchantId   = ga.defaultMerchantId ? normMerchantId(ga.defaultMerchantId) : (merchantAccounts[0]?.merchantId || null);
+
+    return res.json({ ok: true, merchantAccounts, selectedMerchantIds, defaultMerchantId });
+  } catch (err) {
+    console.error('[googleConnect] merchant/accounts error:', err);
+    return res.status(500).json({ ok: false, error: 'MERCHANT_ACCOUNTS_ERROR' });
   }
 });
 
@@ -1529,6 +1765,38 @@ router.post('/default-property', requireSession, express.json(), async (req, res
   } catch (err) {
     console.error('[googleConnect] default-property error:', err);
     res.status(500).json({ ok: false, error: 'SAVE_DEFAULT_PROPERTY_ERROR' });
+  }
+});
+
+router.post('/merchant/selection', requireSession, express.json(), async (req, res) => {
+  try {
+    const ids = req.body?.merchantIds;
+    if (!Array.isArray(ids) || !ids.length) {
+      return res.status(400).json({ ok: false, error: 'merchantIds[] requerido' });
+    }
+
+    const q   = { $or: [{ user: req.user._id }, { userId: req.user._id }] };
+    const doc = await GoogleAccount.findOne(q).select('_id merchantAccounts defaultMerchantId selectedMerchantIds');
+    if (!doc) return res.status(404).json({ ok: false, error: 'NO_GOOGLEACCOUNT' });
+
+    const available = new Set((doc.merchantAccounts || []).map((a) => normMerchantId(a.merchantId)).filter(Boolean));
+    const selected  = ids.map(normMerchantId).filter(Boolean).filter((id) => available.has(id));
+    if (!selected.length) return res.status(400).json({ ok: false, error: 'NO_VALID_MERCHANT_IDS' });
+
+    const nextDefault = selected.includes(normMerchantId(doc.defaultMerchantId || '')) ? normMerchantId(doc.defaultMerchantId) : selected[0];
+
+    await GoogleAccount.updateOne({ _id: doc._id }, {
+      $set: { selectedMerchantIds: selected, defaultMerchantId: nextDefault, updatedAt: new Date() },
+    });
+
+    await User.updateOne({ _id: req.user._id }, {
+      $set: { selectedMerchantIds: selected, 'preferences.googleMerchant.selectedMerchantIds': selected },
+    });
+
+    return res.json({ ok: true, selectedMerchantIds: selected, defaultMerchantId: nextDefault });
+  } catch (e) {
+    console.error('[googleConnect] merchant/selection error:', e);
+    return res.status(500).json({ ok: false, error: 'MERCHANT_SELECTION_ERROR' });
   }
 });
 
@@ -1823,6 +2091,42 @@ function buildUnsetForGa4Only() {
     connectedGa4: false,
   };
 }
+
+router.post('/merchant/disconnect', requireSession, async (req, res) => {
+  try {
+    const q  = { $or: [{ user: req.user._id }, { userId: req.user._id }] };
+    const ga = await GoogleAccount.findOne(q).select('+merchantRefreshToken +merchantAccessToken connectedAds connectedGa4');
+    if (!ga) return res.status(404).json({ ok: false, error: 'NO_GOOGLEACCOUNT' });
+
+    await revokeGoogleTokenBestEffort({ refreshToken: ga.merchantRefreshToken, accessToken: ga.merchantAccessToken });
+
+    await GoogleAccount.updateOne({ _id: ga._id }, {
+      $set: {
+        merchantAccessToken:        null,
+        merchantRefreshToken:       null,
+        merchantScope:              [],
+        merchantExpiresAt:          null,
+        merchantConnectedAt:        null,
+        merchantAccounts:           [],
+        selectedMerchantIds:        [],
+        defaultMerchantId:          null,
+        connectedMerchant:          false,
+        lastMerchantDiscoveryError: null,
+        updatedAt:                  new Date(),
+      },
+    });
+
+    const stillConnected = !!(ga.connectedAds || ga.connectedGa4);
+    if (!stillConnected) {
+      await User.updateOne({ _id: req.user._id }, { $set: { googleConnected: false } });
+    }
+
+    return res.json({ ok: true });
+  } catch (err) {
+    console.error('[googleConnect] merchant/disconnect error:', err);
+    return res.status(500).json({ ok: false, error: 'MERCHANT_DISCONNECT_ERROR' });
+  }
+});
 
 router.post('/disconnect', requireSession, express.json(), async (req, res) => {
   try {

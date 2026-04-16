@@ -43,6 +43,13 @@ try {
   OpenAI = null;
 }
 
+let prisma = null;
+try {
+  prisma = require('../utils/prismaClient');
+} catch (_) {
+  // Prisma no disponible — campos Tier 3/4 quedarán null
+}
+
 const DEFAULT_CONTEXT_RANGE_DAYS = clampInt(process.env.MCP_CONTEXT_RANGE_DAYS || 60, 7, 365);
 const BUILD_WAIT_TIMEOUT_MS = clampInt(process.env.MCP_CONTEXT_BUILD_WAIT_TIMEOUT_MS || 120000, 5000, 300000);
 const BUILD_WAIT_POLL_MS = clampInt(process.env.MCP_CONTEXT_BUILD_WAIT_POLL_MS || 1500, 300, 5000);
@@ -1743,7 +1750,118 @@ function extractHistoryTotals(chunks, datasetPrefix) {
   return allRows;
 }
 
-function buildMetaDailyRows(metaPack) {
+async function fetchDailyPixelStats(accountId, since, until) {
+  // Retorna Map<date_string, { sessions, new_users, add_to_cart, checkout_starts, purchases_pixel }>
+  // since y until son strings 'YYYY-MM-DD'
+  if (!prisma || !accountId) return new Map();
+
+  try {
+    const from = new Date(since + 'T00:00:00Z');
+    const to = new Date(until + 'T23:59:59Z');
+
+    // Agrupar eventos por tipo y día usando findMany + reduce
+    // (groupBy de Prisma no soporta truncar por día directamente)
+    const events = await prisma.event.findMany({
+      where: {
+        accountId,
+        createdAt: { gte: from, lte: to },
+        eventName: {
+          in: ['page_view', 'add_to_cart', 'begin_checkout', 'purchase', 'session_start'],
+        },
+      },
+      select: {
+        eventName: true,
+        sessionId: true,
+        createdAt: true,
+      },
+    });
+
+    // Agrupar por día
+    const byDay = new Map();
+    for (const ev of events) {
+      const day = ev.createdAt.toISOString().slice(0, 10);
+      if (!byDay.has(day)) {
+        byDay.set(day, {
+          sessions: new Set(),
+          add_to_cart: 0,
+          checkout_starts: 0,
+          purchases_pixel: 0,
+        });
+      }
+      const d = byDay.get(day);
+      if (ev.eventName === 'page_view' || ev.eventName === 'session_start') {
+        d.sessions.add(ev.sessionId);
+      }
+      if (ev.eventName === 'add_to_cart') d.add_to_cart++;
+      if (ev.eventName === 'begin_checkout') d.checkout_starts++;
+      if (ev.eventName === 'purchase') d.purchases_pixel++;
+    }
+
+    // Convertir Sets a counts
+    const result = new Map();
+    for (const [day, d] of byDay.entries()) {
+      const sessions = d.sessions.size;
+      result.set(day, {
+        sessions,
+        add_to_cart_count: d.add_to_cart,
+        checkout_starts: d.checkout_starts,
+        purchases_pixel: d.purchases_pixel,
+        landing_page_cvr: sessions > 0 && d.checkout_starts > 0
+          ? round2((d.checkout_starts / sessions) * 100) : null,
+        cart_abandonment_rate: d.add_to_cart > 0 && d.checkout_starts >= 0
+          ? round2(((d.add_to_cart - d.checkout_starts) / d.add_to_cart) * 100) : null,
+      });
+    }
+
+    return result;
+  } catch (e) {
+    return new Map();
+  }
+}
+
+async function fetchDailyOrderStats(accountId, since, until) {
+  // Retorna Map<'YYYY-MM-DD', { orders, revenue }>
+  if (!prisma || !accountId) return new Map();
+
+  try {
+    const from = new Date(since + 'T00:00:00Z');
+    const to = new Date(until + 'T23:59:59Z');
+
+    const orders = await prisma.order.findMany({
+      where: {
+        accountId,
+        platformCreatedAt: { gte: from, lte: to },
+      },
+      select: {
+        revenue: true,
+        platformCreatedAt: true,
+      },
+    });
+
+    const byDay = new Map();
+    for (const order of orders) {
+      const day = order.platformCreatedAt.toISOString().slice(0, 10);
+      if (!byDay.has(day)) byDay.set(day, { orders: 0, revenue: 0 });
+      const d = byDay.get(day);
+      d.orders++;
+      d.revenue += toNum(order.revenue);
+    }
+
+    const result = new Map();
+    for (const [day, d] of byDay.entries()) {
+      result.set(day, {
+        orders: d.orders,
+        revenue: round2(d.revenue),
+      });
+    }
+
+    return result;
+  } catch (e) {
+    return new Map();
+  }
+}
+
+function buildMetaDailyRows(metaPack, pixelStatsByDay = new Map(), orderStatsByDay = new Map()) {
   const activeTotals = Array.isArray(metaPack?.dailyDataset?.data?.totals_by_day)
     ? metaPack.dailyDataset.data.totals_by_day
     : [];
@@ -1774,6 +1892,8 @@ function buildMetaDailyRows(metaPack) {
       const clicks = toNum(row?.kpis?.clicks, null);
       const purchases = toNum(row?.kpis?.purchases, null);
       const purchaseValue = toNum(row?.kpis?.purchase_value, null);
+      const pixel = pixelStatsByDay.get(row.date) || null;
+      const orderData = orderStatsByDay.get(row.date) || null;
 
       return {
         date: row.date,
@@ -1787,7 +1907,7 @@ function buildMetaDailyRows(metaPack) {
         conversions: purchases == null ? null : round2(purchases),
         conversion_value: purchaseValue == null ? null : round2(purchaseValue),
         roas_platform: spend > 0 ? round2(purchaseValue / spend) : null,
-        sessions: null,
+        sessions: pixel?.sessions ?? null,
         users: null,
         engagement_rate: null,
         ga4_revenue: null,
@@ -1795,11 +1915,25 @@ function buildMetaDailyRows(metaPack) {
         blended_ctr: null,
         blended_cpc: null,
         platform_spend_share: null,
+
+        // Tier 3
+        add_to_cart_count: pixel?.add_to_cart_count ?? null,
+        checkout_starts: pixel?.checkout_starts ?? null,
+        landing_page_cvr: pixel?.landing_page_cvr ?? null,
+        cart_abandonment_rate: pixel?.cart_abandonment_rate ?? null,
+
+        // Tier 4
+        orders: orderData?.orders ?? null,
+        revenue: orderData?.revenue ?? null,
+        roas_reconciled: spend > 0 && orderData?.revenue != null
+          ? round2(orderData.revenue / spend) : null,
+        ncac: null,
+        mer: null,
       };
     });
 }
 
-function buildGoogleDailyRows(googlePack) {
+function buildGoogleDailyRows(googlePack, pixelStatsByDay = new Map(), orderStatsByDay = new Map()) {
   const activeTotals = Array.isArray(googlePack?.dailyDataset?.data?.totals_by_day)
     ? googlePack.dailyDataset.data.totals_by_day
     : [];
@@ -1830,6 +1964,8 @@ function buildGoogleDailyRows(googlePack) {
       const clicks = toNum(row?.kpis?.clicks, null);
       const conversions = toNum(row?.kpis?.conversions, null);
       const conversionValue = toNum(row?.kpis?.conversion_value, null);
+      const pixel = pixelStatsByDay.get(row.date) || null;
+      const orderData = orderStatsByDay.get(row.date) || null;
 
       return {
         date: row.date,
@@ -1843,7 +1979,7 @@ function buildGoogleDailyRows(googlePack) {
         conversions: conversions == null ? null : round2(conversions),
         conversion_value: conversionValue == null ? null : round2(conversionValue),
         roas_platform: spend > 0 ? round2(conversionValue / spend) : null,
-        sessions: null,
+        sessions: pixel?.sessions ?? null,
         users: null,
         engagement_rate: null,
         ga4_revenue: null,
@@ -1851,11 +1987,25 @@ function buildGoogleDailyRows(googlePack) {
         blended_ctr: null,
         blended_cpc: null,
         platform_spend_share: null,
+
+        // Tier 3
+        add_to_cart_count: pixel?.add_to_cart_count ?? null,
+        checkout_starts: pixel?.checkout_starts ?? null,
+        landing_page_cvr: pixel?.landing_page_cvr ?? null,
+        cart_abandonment_rate: pixel?.cart_abandonment_rate ?? null,
+
+        // Tier 4
+        orders: orderData?.orders ?? null,
+        revenue: orderData?.revenue ?? null,
+        roas_reconciled: spend > 0 && orderData?.revenue != null
+          ? round2(orderData.revenue / spend) : null,
+        ncac: null,
+        mer: null,
       };
     });
 }
 
-function buildGa4DailyRows(ga4Pack) {
+function buildGa4DailyRows(ga4Pack, pixelStatsByDay = new Map(), orderStatsByDay = new Map()) {
   const totals = Array.isArray(ga4Pack?.dailyDataset?.data?.totals_by_day)
     ? ga4Pack.dailyDataset.data.totals_by_day
     : [];
@@ -1866,8 +2016,10 @@ function buildGa4DailyRows(ga4Pack) {
       const sessions = toNum(row?.kpis?.sessions, null);
       const users = toNum(row?.kpis?.users, null);
       const conversions = toNum(row?.kpis?.conversions, null);
-      const revenue = toNum(row?.kpis?.revenue, null);
+      const ga4Rev = toNum(row?.kpis?.revenue, null);
       const engagementRate = toNum(row?.kpis?.engagementRate, null);
+      const pixel = pixelStatsByDay.get(row.date) || null;
+      const orderData = orderStatsByDay.get(row.date) || null;
 
       return {
         date: row.date,
@@ -1884,11 +2036,24 @@ function buildGa4DailyRows(ga4Pack) {
         sessions: sessions == null ? null : round2(sessions),
         users: users == null ? null : round2(users),
         engagement_rate: engagementRate == null ? null : round2(engagementRate),
-        ga4_revenue: revenue == null ? null : round2(revenue),
+        ga4_revenue: ga4Rev == null ? null : round2(ga4Rev),
         blended_spend: null,
         blended_ctr: null,
         blended_cpc: null,
         platform_spend_share: null,
+
+        // Tier 3
+        add_to_cart_count: pixel?.add_to_cart_count ?? null,
+        checkout_starts: pixel?.checkout_starts ?? null,
+        landing_page_cvr: pixel?.landing_page_cvr ?? null,
+        cart_abandonment_rate: pixel?.cart_abandonment_rate ?? null,
+
+        // Tier 4
+        orders: orderData?.orders ?? null,
+        revenue: orderData?.revenue ?? null,
+        roas_reconciled: null,
+        ncac: null,
+        mer: null,
       };
     });
 }
@@ -3022,7 +3187,7 @@ function applyCampaignAnomalyFlags(campaigns, anomalies) {
   }));
 }
 
-function buildStructuredSignalSchema({
+async function buildStructuredSignalSchema({
   signalPayload,
   unifiedBase,
   root,
@@ -3040,10 +3205,30 @@ function buildStructuredSignalSchema({
     .filter(([, state]) => !!state?.usable)
     .map(([platform]) => platform);
 
+  // Determinar rango para queries Prisma
+  const accountId = safeStr(
+    unifiedBase?.accountId || unifiedBase?.account_id || ''
+  ).trim() || null;
+
+  const cutoff = new Date();
+  cutoff.setDate(cutoff.getDate() - 60);
+  const since = cutoff.toISOString().slice(0, 10);
+  const until = new Date().toISOString().slice(0, 10);
+
+  const [pixelStatsByDay, orderStatsByDay] = accountId
+    ? await Promise.all([
+        fetchDailyPixelStats(accountId, since, until),
+        fetchDailyOrderStats(accountId, since, until),
+      ])
+    : [new Map(), new Map()];
+
   const dailyRows = [
-    ...(sourceFlags.meta.usable ? buildMetaDailyRows(metaPack) : []),
-    ...(sourceFlags.google.usable ? buildGoogleDailyRows(googlePack) : []),
-    ...(sourceFlags.ga4.usable ? buildGa4DailyRows(ga4Pack) : []),
+    ...(sourceFlags.meta.usable
+      ? buildMetaDailyRows(metaPack, pixelStatsByDay, orderStatsByDay) : []),
+    ...(sourceFlags.google.usable
+      ? buildGoogleDailyRows(googlePack, pixelStatsByDay, orderStatsByDay) : []),
+    ...(sourceFlags.ga4.usable
+      ? buildGa4DailyRows(ga4Pack, pixelStatsByDay, orderStatsByDay) : []),
   ];
 
   const blendedRows = buildBlendedDailyRows(dailyRows, usablePlatforms);
@@ -3163,7 +3348,7 @@ function buildStructuredSignalSchema({
   };
 }
 
-function appendStructuredSignalSchema({
+async function appendStructuredSignalSchema({
   signalPayload,
   unifiedBase,
   root,
@@ -3177,7 +3362,7 @@ function appendStructuredSignalSchema({
     ? JSON.parse(JSON.stringify(signalPayload))
     : {};
 
-  const structured = buildStructuredSignalSchema({
+  const structured = await buildStructuredSignalSchema({
     signalPayload: basePayload,
     unifiedBase,
     root,
@@ -5345,7 +5530,7 @@ const finalConnectionFingerprint = buildConnectionFingerprint(latestRootForBase)
   }
 
   const encoded = await enrichWithOpenAI(unifiedBase);
-  const signalPayload = appendStructuredSignalSchema({
+  const signalPayload = await appendStructuredSignalSchema({
     signalPayload: encoded.payload,
     unifiedBase,
     root: encodingResult?.root || latestRootForBase || initialRoot || null,

@@ -41,6 +41,17 @@ const normPropertyArr = (arr) =>
     new Set((Array.isArray(arr) ? arr : []).map(normPropertyId).filter(Boolean))
   );
 
+const normMerchantId = (val = '') =>
+  String(val || '')
+    .trim()
+    .replace(/^accounts\//, '')
+    .replace(/[^\d]/g, '');
+
+const normMerchantArr = (arr) =>
+  Array.from(
+    new Set((Array.isArray(arr) ? arr : []).map(normMerchantId).filter(Boolean))
+  );
+
 /* Scopes que nos interesan */
 const ADS_SCOPE = 'https://www.googleapis.com/auth/adwords';
 const GA_READ = 'https://www.googleapis.com/auth/analytics.readonly';
@@ -79,6 +90,18 @@ const GaPropertySchema = new Schema(
   { _id: false }
 );
 
+const MerchantAccountSchema = new Schema(
+  {
+    merchantId:    { type: String, index: true, set: normMerchantId },
+    displayName:   String,
+    websiteUrl:    String,
+    accountStatus: String,
+    aggregatorId:  { type: String, set: normMerchantId, default: null },
+    source:        { type: String, default: 'merchant' },
+  },
+  { _id: false }
+);
+
 /* ----------------- main schema ----------------- */
 const GoogleAccountSchema = new Schema(
   {
@@ -107,10 +130,20 @@ const GoogleAccountSchema = new Schema(
     ga4ConnectedAt: { type: Date, default: null },
 
     /* =========================
+     * Tokens Merchant (separados de Ads y GA4)
+     * ========================= */
+    merchantAccessToken:  { type: String, select: false, default: null },
+    merchantRefreshToken: { type: String, select: false, default: null },
+    merchantScope:        { type: [String], default: [], set: normScopes },
+    merchantExpiresAt:    { type: Date, default: null },
+    merchantConnectedAt:  { type: Date, default: null },
+
+    /* =========================
      * Flags explícitos por producto (CRÍTICO para E2E)
      * ========================= */
     connectedAds: { type: Boolean, default: false },
     connectedGa4: { type: Boolean, default: false },
+    connectedMerchant: { type: Boolean, default: false },
 
     /* =========================
      * Google Ads
@@ -143,6 +176,13 @@ const GoogleAccountSchema = new Schema(
     selectedGaPropertyId: { type: String, set: normPropertyId, default: null },
 
     /* =========================
+     * Google Merchant Center
+     * ========================= */
+    merchantAccounts:    { type: [MerchantAccountSchema], default: [] },
+    defaultMerchantId:   { type: String, set: normMerchantId, default: null },
+    selectedMerchantIds: { type: [String], default: [], set: normMerchantArr },
+
+    /* =========================
      * Preferencias / logs
      * ========================= */
     objective: {
@@ -153,6 +193,9 @@ const GoogleAccountSchema = new Schema(
 
     lastAdsDiscoveryError: { type: String, default: null },
     lastAdsDiscoveryLog: { type: Schema.Types.Mixed, default: null, select: false },
+
+    lastMerchantDiscoveryError: { type: String, default: null },
+    lastMerchantDiscoveryLog:   { type: Schema.Types.Mixed, default: null, select: false },
 
     createdAt: { type: Date, default: Date.now },
     updatedAt: { type: Date, default: Date.now },
@@ -165,6 +208,8 @@ const GoogleAccountSchema = new Schema(
         delete ret.refreshToken;
         delete ret.ga4AccessToken;
         delete ret.ga4RefreshToken;
+        delete ret.merchantAccessToken;
+        delete ret.merchantRefreshToken;
         return ret;
       },
     },
@@ -174,6 +219,8 @@ const GoogleAccountSchema = new Schema(
         delete ret.refreshToken;
         delete ret.ga4AccessToken;
         delete ret.ga4RefreshToken;
+        delete ret.merchantAccessToken;
+        delete ret.merchantRefreshToken;
         return ret;
       },
     },
@@ -186,6 +233,8 @@ GoogleAccountSchema.index({ userId: 1 }, { unique: true, sparse: true });
 GoogleAccountSchema.index({ 'gaProperties.propertyId': 1 });
 GoogleAccountSchema.index({ user: 1, selectedCustomerIds: 1 });
 GoogleAccountSchema.index({ user: 1, selectedPropertyIds: 1 });
+GoogleAccountSchema.index({ 'merchantAccounts.merchantId': 1 });
+GoogleAccountSchema.index({ user: 1, selectedMerchantIds: 1 });
 
 /* ----------------- virtuals / instance methods ----------------- */
 GoogleAccountSchema.virtual('hasRefresh').get(function () {
@@ -201,6 +250,13 @@ GoogleAccountSchema.virtual('hasGaScope').get(function () {
   const s1 = Array.isArray(this.scope) ? this.scope : [];
   const s2 = Array.isArray(this.ga4Scope) ? this.ga4Scope : [];
   return s1.includes(GA_READ) || s2.includes(GA_READ);
+});
+
+GoogleAccountSchema.virtual('hasMerchantScope').get(function () {
+  const s1 = Array.isArray(this.scope) ? this.scope : [];
+  const s2 = Array.isArray(this.merchantScope) ? this.merchantScope : [];
+  const MERCHANT_SCOPE = 'https://www.googleapis.com/auth/content';
+  return s1.includes(MERCHANT_SCOPE) || s2.includes(MERCHANT_SCOPE);
 });
 
 GoogleAccountSchema.methods.needsReauth = function () {
@@ -248,6 +304,45 @@ GoogleAccountSchema.methods.setGa4Tokens = function ({
     this.ga4ExpiresAt = expires_at instanceof Date ? expires_at : new Date(expires_at);
   if (scope !== undefined) this.ga4Scope = normScopes(scope);
   if (refresh_token || access_token) this.ga4ConnectedAt = new Date();
+  return this;
+};
+
+/**
+ * Tokens Merchant (separado)
+ */
+GoogleAccountSchema.methods.setMerchantTokens = function ({
+  access_token,
+  refresh_token,
+  expires_at,
+  scope,
+} = {}) {
+  if (access_token !== undefined)  this.merchantAccessToken  = access_token;
+  if (refresh_token !== undefined) this.merchantRefreshToken = refresh_token;
+  if (expires_at !== undefined)
+    this.merchantExpiresAt = expires_at instanceof Date ? expires_at : new Date(expires_at);
+  if (scope !== undefined) this.merchantScope = normScopes(scope);
+  if (refresh_token || access_token) this.merchantConnectedAt = new Date();
+  return this;
+};
+
+GoogleAccountSchema.methods.setMerchantAccounts = function (arr = []) {
+  const list = Array.isArray(arr) ? arr : [];
+  const map = new Map();
+  for (const a of list) {
+    const merchantId = normMerchantId(a?.merchantId || a?.id || a?.name);
+    if (!merchantId) continue;
+    map.set(merchantId, {
+      merchantId,
+      displayName:   a?.displayName || a?.accountName || `Merchant ${merchantId}`,
+      websiteUrl:    a?.websiteUrl || null,
+      accountStatus: a?.accountStatus || null,
+      aggregatorId:  normMerchantId(a?.aggregatorId || ''),
+      source:        'merchant',
+    });
+  }
+  this.merchantAccounts = Array.from(map.values()).sort((a, b) =>
+    String(a.displayName || a.merchantId).localeCompare(String(b.displayName || b.merchantId))
+  );
   return this;
 };
 
