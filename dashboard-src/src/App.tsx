@@ -23,10 +23,10 @@ import LastStep from "./pages/LastStep";
 import ChatGptMcp from "./pages/ChatGptMcp";
 import ClaudeMcp from "./pages/ClaudeMcp";
 import GeminiMcp from "./pages/GeminiMcp";
-import AttributionEmbed from "./pages/AttributionEmbed";
 
 // ✅ NUEVO: Panel interno (equipo)
 import InternalAdmin from "./pages/InternalAdmin";
+import AttributionEmbed from "./pages/AttributionEmbed";
 
 const queryClient = new QueryClient();
 
@@ -304,9 +304,9 @@ function AppRoutes() {
       <Route path="meta-ads" element={<MetaAds />} />
       <Route path="creative-intelligence" element={<CreativeIntelligence />} />
       <Route path="generate-audit" element={<GenerateAudit />} />
+      <Route path="attribution" element={<AttributionEmbed />} />
       <Route path="settings" element={<Settings />} />
       <Route path="studio" element={<Studio />} />
-      <Route path="attribution" element={<AttributionEmbed />} />
 
       {/* ✅ ALIAS / COMPAT */}
       <Route path="audits" element={<SiteAudit />} />
