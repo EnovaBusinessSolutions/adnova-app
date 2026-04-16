@@ -251,8 +251,8 @@ function topLevelRedirect(res, url, label = 'Continuar con Shopify') {
       font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,Arial}
     .card{width:min(560px,92vw);background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);
       border-radius:16px;padding:22px;box-shadow:0 18px 45px rgba(0,0,0,.55)}
-    .btn{width:100%;border:0;border-radius:14px;padding:14px 16px;font-weight:800;cursor:pointer;
-      background:linear-gradient(90deg,#7c3aed,#3b82f6);color:#fff;font-size:15px}
+    .btn{display:block;width:100%;box-sizing:border-box;border:0;border-radius:14px;padding:14px 16px;font-weight:800;cursor:pointer;
+      background:linear-gradient(90deg,#7c3aed,#3b82f6);color:#fff;font-size:15px;text-decoration:none;text-align:center}
     .muted{opacity:.78;font-size:12.5px;line-height:1.5;margin-top:10px}
     a{color:#9ecbff}
     code{font-size:12px;opacity:.9}
@@ -268,21 +268,11 @@ function topLevelRedirect(res, url, label = 'Continuar con Shopify') {
         ''
       )}</code> en esta prueba.
     </div>
-    <button class="btn" id="go">Continuar</button>
+    <a class="btn" href="${url}" target="_top" rel="noopener noreferrer">Continuar</a>
     <div class="muted" style="margin-top:10px;">
       <a href="${url}" target="_top" rel="noopener noreferrer">Abrir manualmente</a>
     </div>
   </div>
-
-  <script>
-    (function(){
-      var url = ${JSON.stringify(url)};
-      document.getElementById('go').addEventListener('click', function(){
-        try { window.top.location.href = url; }
-        catch(e){ window.location.href = url; }
-      });
-    })();
-  </script>
 </body>
 </html>`);
 }
@@ -488,10 +478,10 @@ router.get('/interface', async (req, res) => {
     // Inyecciones base
     html = html.replace(/\{\{SHOPIFY_API_KEY\}\}/g, SHOPIFY_API_KEY || '');
     html = html.replace(/\{\{APP_URL\}\}/g, BASE_URL || '');
-
-    // ✅ NUEVO: inyectar shop/host para App Bridge bootstrap (lo que acabamos de agregar en interface.html)
     html = html.replace(/\{\{SHOP\}\}/g, shop);
     html = html.replace(/\{\{HOST\}\}/g, host || '');
+    // ✅ Flag para que el conector no bloquee el CTA si ya hay token OAuth válido en BD
+    html = html.replace(/\{\{CONNECTED\}\}/g, conn?.accessToken ? 'true' : 'false');
 
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
     return res.send(html);

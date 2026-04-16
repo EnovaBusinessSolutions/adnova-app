@@ -129,6 +129,22 @@
     if (kvHost) kvHost.textContent = host || "—";
   }
 
+  function enableCTA(shop, host, appUrl) {
+    setStatus("Listo ✅");
+    hideError();
+    if (btnGo) {
+      btnGo.disabled = false;
+      btnGo.onclick = () => {
+        const base = (appUrl || window.location.origin).replace(/\/$/, "");
+        const url =
+          `${base}/onboarding?from=shopify` +
+          `&shop=${encodeURIComponent(shop)}` +
+          `&host=${encodeURIComponent(host)}`;
+        topNavigate(url);
+      };
+    }
+  }
+
   async function boot() {
     hideError();
     setStatus("Preparando…");
@@ -138,8 +154,27 @@
     const host = String(cfg.host || "").trim();
     const apiKey = String(cfg.apiKey || getMeta("shopify-api-key") || "").trim();
     const appUrl = String(cfg.appUrl || getMeta("app-url") || "").trim();
+    const alreadyConnected = getMeta("shopify-connected") === "true";
 
     setKV(shop, host);
+
+    // ✅ Si el backend ya confirmó que hay token OAuth, habilitamos el CTA de inmediato.
+    // Seguimos intentando obtener el session token en segundo plano para actualizar sessionStorage.
+    if (alreadyConnected && shop) {
+      enableCTA(shop, host, appUrl);
+      // Refresco silencioso de session token (no bloquea UI)
+      (async () => {
+        try {
+          const { createApp, getSessionToken } = await waitForUmdGlobals(9000);
+          if (createApp && getSessionToken && apiKey && host) {
+            const app = createApp({ apiKey, host, forceRedirect: false });
+            const token = await getSessionToken(app);
+            if (token) saveSession({ token, shop, host });
+          }
+        } catch { /* silent */ }
+      })();
+      return;
+    }
 
     if (!apiKey || apiKey.includes("{") || apiKey.includes("}")) {
       setStatus("API key inválida");
@@ -221,21 +256,7 @@
 
     // ✅ Si backend aceptó, guardamos token y habilitamos CTA
     saveSession({ token, shop, host });
-
-    setStatus("Listo ✅");
-    hideError();
-
-    if (btnGo) {
-      btnGo.disabled = false;
-      btnGo.onclick = () => {
-        const base = (appUrl || window.location.origin).replace(/\/$/, "");
-        const url =
-          `${base}/onboarding?from=shopify` +
-          `&shop=${encodeURIComponent(shop)}` +
-          `&host=${encodeURIComponent(host)}`;
-        topNavigate(url);
-      };
-    }
+    enableCTA(shop, host, appUrl);
   }
 
   if (btnReload) btnReload.onclick = () => window.location.reload();
