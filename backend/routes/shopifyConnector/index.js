@@ -419,23 +419,16 @@ router.get('/auth/callback', async (req, res) => {
       { upsert: true, new: true }
     );
 
-    const appUrl =
-      `${BASE_URL}/connector/interface` +
-      `?shop=${encodeURIComponent(normalizedShop)}` +
-      `&host=${encodeURIComponent(host)}`;
+    // ✅ Redirigir al Shopify admin para que re-embeds la app en el iframe.
+    // Patrón correcto: https://{shop}/admin/apps/{API_KEY}
+    // Shopify admin carga nuestra app embebida automáticamente.
+    const embeddedUrl = `https://${normalizedShop}/admin/apps/${SHOPIFY_API_KEY}`;
 
-    console.log('[SHOPIFY_CONNECTOR] 🚀 [REDIRECT_START] Auth completada. Redirigiendo...');
+    console.log('[SHOPIFY_CONNECTOR] 🚀 Auth completada → redirigiendo a Shopify admin embedded');
     console.log(`[SHOPIFY_CONNECTOR] ℹ️  Shop: ${normalizedShop}`);
-    console.log(`[SHOPIFY_CONNECTOR] ℹ️  Host: ${host ? host : '(MISSING! - App Bridge might fail)'}`);
-    console.log(`[SHOPIFY_CONNECTOR] 🎯 [TARGET_URL]: ${appUrl}`);
+    console.log(`[SHOPIFY_CONNECTOR] 🎯 [TARGET_URL]: ${embeddedUrl}`);
 
-    if (!host) {
-      console.warn(
-        '[SHOPIFY_CONNECTOR] ⚠️ ADVERTENCIA CRÍTICA: El parámetro "host" está vacío. App Bridge puede fallar.'
-      );
-    }
-
-    return res.redirect(appUrl);
+    return res.redirect(embeddedUrl);
   } catch (err) {
     console.error('[SHOPIFY_CONNECTOR] ❌ Error token exchange:', err?.message || err);
     if (err?.response) {

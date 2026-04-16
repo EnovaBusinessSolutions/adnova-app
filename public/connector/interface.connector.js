@@ -162,19 +162,23 @@
 
     // ✅ Ruta rápida: backend ya confirmó conexión al servir el HTML
     if (alreadyConnected) {
-      // Intentar inicializar App Bridge para navegación embedded correcta (no bloquea)
-      var appInst = null;
-      try {
-        var globs = await waitForUmdGlobals(4000);
-        if (globs.createApp && apiKey && host) {
-          appInst = globs.createApp({ apiKey: apiKey, host: host, forceRedirect: false });
-          if (globs.getSessionToken) {
-            var tok = await globs.getSessionToken(appInst);
-            if (tok) saveSession({ token: tok, shop: shop, host: host });
+      // Habilitar CTA INMEDIATAMENTE, sin esperar App Bridge
+      enableCTA(shop, host, appUrl, null);
+      // Inicializar App Bridge en background para mejorar navegación (no bloquea)
+      (async function () {
+        try {
+          var globs = await waitForUmdGlobals(4000);
+          if (globs.createApp && apiKey && host) {
+            var appInst = globs.createApp({ apiKey: apiKey, host: host, forceRedirect: false });
+            if (globs.getSessionToken) {
+              var tok = await globs.getSessionToken(appInst);
+              if (tok) saveSession({ token: tok, shop: shop, host: host });
+            }
+            // Actualizar el onclick con instancia real de App Bridge
+            enableCTA(shop, host, appUrl, appInst);
           }
-        }
-      } catch (e) { /* silent — no bloqueamos el CTA por esto */ }
-      enableCTA(shop, host, appUrl, appInst);
+        } catch (e) { /* silent */ }
+      })();
       return;
     }
 
