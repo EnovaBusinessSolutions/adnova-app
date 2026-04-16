@@ -290,7 +290,8 @@ router.use((req, res, next) => {
     url.startsWith('/connector/auth') ||
     url.startsWith('/connector/webhooks') ||
     url.startsWith('/connector/interface') ||
-    url.startsWith('/connector/healthz');
+    url.startsWith('/connector/healthz') ||
+    url.startsWith('/connector/ping');
 
   if (allow) return next();
 
@@ -418,23 +419,16 @@ router.get('/auth/callback', async (req, res) => {
       { upsert: true, new: true }
     );
 
-    const appUrl =
-      `${BASE_URL}/connector/interface` +
-      `?shop=${encodeURIComponent(normalizedShop)}` +
-      `&host=${encodeURIComponent(host)}`;
+    // ✅ Redirigir al Shopify admin para que re-embeds la app en el iframe.
+    // Patrón correcto: https://{shop}/admin/apps/{API_KEY}
+    // Shopify admin carga nuestra app embebida automáticamente.
+    const embeddedUrl = `https://${normalizedShop}/admin/apps/${SHOPIFY_API_KEY}`;
 
-    console.log('[SHOPIFY_CONNECTOR] 🚀 [REDIRECT_START] Auth completada. Redirigiendo...');
+    console.log('[SHOPIFY_CONNECTOR] 🚀 Auth completada → redirigiendo a Shopify admin embedded');
     console.log(`[SHOPIFY_CONNECTOR] ℹ️  Shop: ${normalizedShop}`);
-    console.log(`[SHOPIFY_CONNECTOR] ℹ️  Host: ${host ? host : '(MISSING! - App Bridge might fail)'}`);
-    console.log(`[SHOPIFY_CONNECTOR] 🎯 [TARGET_URL]: ${appUrl}`);
+    console.log(`[SHOPIFY_CONNECTOR] 🎯 [TARGET_URL]: ${embeddedUrl}`);
 
-    if (!host) {
-      console.warn(
-        '[SHOPIFY_CONNECTOR] ⚠️ ADVERTENCIA CRÍTICA: El parámetro "host" está vacío. App Bridge puede fallar.'
-      );
-    }
-
-    return res.redirect(appUrl);
+    return res.redirect(embeddedUrl);
   } catch (err) {
     console.error('[SHOPIFY_CONNECTOR] ❌ Error token exchange:', err?.message || err);
     if (err?.response) {
@@ -494,6 +488,19 @@ router.get('/interface', async (req, res) => {
 // Healthcheck simple
 router.get('/healthz', (_req, res) => {
   res.status(200).json({ ok: true, service: 'connector', ts: Date.now() });
+});
+
+// ✅ Ping ligero: verifica si la tienda tiene accessToken en BD (no requiere JWT)
+router.get('/ping', async (req, res) => {
+  const shop = extractShop(req);
+  if (!shop) return res.status(400).json({ ok: false, error: 'missing shop' });
+  try {
+    const conn = await ShopConnections.findOne({ shop }, { accessToken: 1 }).lean();
+    if (conn?.accessToken) return res.json({ ok: true, shop, connected: true });
+    return res.status(401).json({ ok: false, shop, connected: false });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: 'db error' });
+  }
 });
 
 module.exports = router;
