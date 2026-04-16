@@ -1481,6 +1481,7 @@ function buildMetaContext(chunks, contextRangeDays) {
   return {
     dailyDataset: chunks.find((chunk) => chunk?.dataset === 'meta.daily_trends_ai') || null,
     rankedDataset: chunks.find((chunk) => chunk?.dataset === 'meta.campaigns_ranked') || null,
+    chunks,
     full: formatMetaForLlm({
       datasets: chunks,
       contextRangeDays,
@@ -1502,6 +1503,7 @@ function buildGoogleAdsContext(chunks, contextRangeDays) {
   return {
     dailyDataset: chunks.find((chunk) => chunk?.dataset === 'google.daily_trends_ai') || null,
     rankedDataset: chunks.find((chunk) => chunk?.dataset === 'google.campaigns_ranked') || null,
+    chunks,
     full: formatGoogleAdsForLlm({
       datasets: chunks,
       contextRangeDays,
@@ -1722,10 +1724,45 @@ function deriveCapabilityTier(usablePlatforms = []) {
   return null;
 }
 
+function extractHistoryTotals(chunks, datasetPrefix) {
+  // Lee todos los chunks cuyo dataset empieza con datasetPrefix
+  // Ej: 'meta.history.daily_account_totals'
+  // Retorna array plano de rows { date, kpis: {...} }
+  const historyChunks = (Array.isArray(chunks) ? chunks : [])
+    .filter((c) => safeStr(c?.dataset).startsWith(datasetPrefix));
+
+  const allRows = [];
+  for (const chunk of historyChunks) {
+    const rows = Array.isArray(chunk?.data?.totals_by_day) ? chunk.data.totals_by_day : [];
+    for (const row of rows) {
+      if (isIsoDay(row?.date)) allRows.push(row);
+    }
+  }
+  return allRows;
+}
+
 function buildMetaDailyRows(metaPack) {
-  const totals = Array.isArray(metaPack?.dailyDataset?.data?.totals_by_day)
+  const activeTotals = Array.isArray(metaPack?.dailyDataset?.data?.totals_by_day)
     ? metaPack.dailyDataset.data.totals_by_day
     : [];
+
+  const historyTotals = extractHistoryTotals(
+    metaPack?.chunks,
+    'meta.history.daily_account_totals'
+  );
+
+  // Merge: activo tiene prioridad. Deduplicar por fecha.
+  const byDate = new Map();
+  for (const row of [...historyTotals, ...activeTotals]) {
+    if (isIsoDay(row?.date)) byDate.set(row.date, row);
+  }
+
+  // Filtrar últimos 60 días
+  const cutoff = new Date();
+  cutoff.setDate(cutoff.getDate() - 60);
+  const cutoffStr = cutoff.toISOString().slice(0, 10);
+
+  const totals = [...byDate.values()].filter((r) => r.date >= cutoffStr);
 
   return totals
     .filter((row) => isIsoDay(row?.date))
@@ -1761,9 +1798,27 @@ function buildMetaDailyRows(metaPack) {
 }
 
 function buildGoogleDailyRows(googlePack) {
-  const totals = Array.isArray(googlePack?.dailyDataset?.data?.totals_by_day)
+  const activeTotals = Array.isArray(googlePack?.dailyDataset?.data?.totals_by_day)
     ? googlePack.dailyDataset.data.totals_by_day
     : [];
+
+  const historyTotals = extractHistoryTotals(
+    googlePack?.chunks,
+    'google.history.daily_account_totals'
+  );
+
+  // Merge: activo tiene prioridad. Deduplicar por fecha.
+  const byDate = new Map();
+  for (const row of [...historyTotals, ...activeTotals]) {
+    if (isIsoDay(row?.date)) byDate.set(row.date, row);
+  }
+
+  // Filtrar últimos 60 días
+  const cutoff = new Date();
+  cutoff.setDate(cutoff.getDate() - 60);
+  const cutoffStr = cutoff.toISOString().slice(0, 10);
+
+  const totals = [...byDate.values()].filter((r) => r.date >= cutoffStr);
 
   return totals
     .filter((row) => isIsoDay(row?.date))
@@ -2416,10 +2471,12 @@ function buildStructuredCrossChannel({ metaPack, googlePack, ga4Pack, usablePlat
 }
 
 function buildStructuredAdSets() {
+  // TODO: requires meta.ad_sets chunk (not yet collected)
   return [];
 }
 
 function buildStructuredAds() {
+  // TODO: requires meta.ads chunk (not yet collected)
   return [];
 }
 
@@ -2575,6 +2632,89 @@ function buildCampaignAnomalyKey(campaign = {}) {
   return safeStr(campaign?.campaign_id).trim() || safeStr(campaign?.campaign_name).trim().toLowerCase();
 }
 
+function getPriorWeekTotals(chunks, platform) {
+  // Lee meta.history.daily_account_totals o google.history.daily_account_totals
+  // Suma los KPIs de los 7 días anteriores a "hoy - 7 días"
+  // Retorna { spend, roas, cpa, conversions } o null si no hay datos
+  const datasetPrefix = platform === 'google'
+    ? 'google.history.daily_account_totals'
+    : 'meta.history.daily_account_totals';
+  const historyRows = extractHistoryTotals(chunks, datasetPrefix);
+  if (!historyRows.length) return null;
+
+  const today = new Date();
+  const priorEndDate = new Date(today);
+  priorEndDate.setDate(today.getDate() - 7);
+  const priorStartDate = new Date(today);
+  priorStartDate.setDate(today.getDate() - 14);
+
+  const priorEndStr = priorEndDate.toISOString().slice(0, 10);
+  const priorStartStr = priorStartDate.toISOString().slice(0, 10);
+
+  const priorRows = historyRows.filter((r) => r.date >= priorStartStr && r.date <= priorEndStr);
+  if (!priorRows.length) return null;
+
+  let spend = 0;
+  let purchaseValue = 0;
+  let conversions = 0;
+  for (const r of priorRows) {
+    spend += toNum(r.kpis?.spend, 0);
+    purchaseValue += toNum(r.kpis?.purchase_value ?? r.kpis?.conversion_value, 0);
+    conversions += toNum(r.kpis?.purchases ?? r.kpis?.conversions, 0);
+  }
+
+  return {
+    spend: round2(spend),
+    roas: spend > 0 ? round2(purchaseValue / spend) : null,
+    cpa: conversions > 0 ? round2(spend / conversions) : null,
+    conversions: round2(conversions),
+  };
+}
+
+function buildCampaignPriorWeekMap(chunks, datasetPrefix) {
+  // Builds a Map<campaign_id, { spend, roas, cpa, conversions }> for the 7 days ending "today - 8"
+  // Uses meta.history.daily_campaigns.* or google.history.daily_campaigns.* chunks
+  const campaignChunks = (Array.isArray(chunks) ? chunks : [])
+    .filter((c) => safeStr(c?.dataset).startsWith(datasetPrefix));
+  if (!campaignChunks.length) return new Map();
+
+  const today = new Date();
+  const priorEndDate = new Date(today);
+  priorEndDate.setDate(today.getDate() - 7);
+  const priorStartDate = new Date(today);
+  priorStartDate.setDate(today.getDate() - 14);
+
+  const priorEndStr = priorEndDate.toISOString().slice(0, 10);
+  const priorStartStr = priorStartDate.toISOString().slice(0, 10);
+
+  const byId = new Map();
+  for (const chunk of campaignChunks) {
+    const rows = Array.isArray(chunk?.data?.campaigns_daily) ? chunk.data.campaigns_daily : [];
+    for (const row of rows) {
+      if (!isIsoDay(row?.date) || row.date < priorStartStr || row.date > priorEndStr) continue;
+      const cid = safeStr(row?.campaign_id).trim();
+      if (!cid) continue;
+      if (!byId.has(cid)) byId.set(cid, { spend: 0, purchaseValue: 0, conversions: 0 });
+      const agg = byId.get(cid);
+      agg.spend += toNum(row.kpis?.spend, 0);
+      agg.purchaseValue += toNum(row.kpis?.purchase_value ?? row.kpis?.conversion_value, 0);
+      agg.conversions += toNum(row.kpis?.purchases ?? row.kpis?.conversions, 0);
+    }
+  }
+
+  const result = new Map();
+  for (const [cid, agg] of byId.entries()) {
+    const { spend, purchaseValue, conversions } = agg;
+    result.set(cid, {
+      spend: round2(spend),
+      roas: spend > 0 ? round2(purchaseValue / spend) : null,
+      cpa: conversions > 0 ? round2(spend / conversions) : null,
+      conversions: round2(conversions),
+    });
+  }
+  return result;
+}
+
 function buildStructuredAnomalies({ metaPack, googlePack, ga4Pack }) {
   const out = [];
   const pushAnomaly = (item) => {
@@ -2590,7 +2730,18 @@ function buildStructuredAnomalies({ metaPack, googlePack, ga4Pack }) {
     });
   };
 
+  // Build per-campaign prior-week maps for WoW comparison
+  const metaCampaignPriorMap = buildCampaignPriorWeekMap(
+    metaPack?.chunks,
+    'meta.history.daily_campaigns.'
+  );
+  const googleCampaignPriorMap = buildCampaignPriorWeekMap(
+    googlePack?.chunks,
+    'google.history.daily_campaigns.'
+  );
+
   const pushCampaignAnomalies = ({ rows, platform, anomalyType, direction }) => {
+    const priorMap = platform === 'google' ? googleCampaignPriorMap : metaCampaignPriorMap;
     for (const row of compactArray(rows || [], 6)) {
       const campaignName = safeStr(row?.campaign_name || row?.name).trim();
       if (!campaignName) continue;
@@ -2613,15 +2764,35 @@ function buildStructuredAnomalies({ metaPack, googlePack, ga4Pack }) {
               metric === 'conversions' ? round2(conversions) :
                 metric === 'conversion_value' ? round2(conversionValue) : null;
 
+      const cid = safeStr(row?.campaign_id).trim();
+      const priorData = (cid && priorMap.has(cid)) ? priorMap.get(cid) : null;
+      const priorValue =
+        priorData == null ? null :
+          metric === 'roas_platform' ? priorData.roas :
+            metric === 'cpa' ? priorData.cpa :
+              metric === 'spend' ? priorData.spend :
+                metric === 'conversions' ? priorData.conversions :
+                  null;
+      const magnitudePct =
+        priorValue != null && currentValue != null && priorValue !== 0
+          ? round2(((currentValue - priorValue) / Math.abs(priorValue)) * 100)
+          : null;
+      const estimatedImpactUsd =
+        magnitudePct != null && priorData?.spend != null
+          ? round2((Math.abs(magnitudePct) / 100) * priorData.spend)
+          : (spend != null ? round2(spend) : null);
+
       pushAnomaly({
         entity_type: 'campaign',
         entity_name: campaignName,
-        campaign_id: safeStr(row?.campaign_id).trim() || null,
+        campaign_id: cid || null,
         platform,
         metric,
         direction,
         current_value: currentValue,
-        estimated_impact: spend != null ? round2(spend) : null,
+        prior_value: priorValue,
+        magnitude_pct: magnitudePct,
+        estimated_impact: estimatedImpactUsd,
         anomaly_type: anomalyType,
         plain_english:
           safeStr(row?.label).trim() ||
