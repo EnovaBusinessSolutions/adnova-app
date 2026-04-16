@@ -773,6 +773,18 @@ async function collectMeta(userId, opts = {}) {
     ),
   } = opts;
 
+  const buildAdSets = opts.buildAdSets !== undefined
+    ? !!opts.buildAdSets
+    : (Array.isArray(opts.granularity)
+        ? opts.granularity.includes('ad_sets')
+        : true);
+
+  const buildAds = opts.buildAds !== undefined
+    ? !!opts.buildAds
+    : (Array.isArray(opts.granularity)
+        ? opts.granularity.includes('ads')
+        : true);
+
   const contextDays = clampInt(contextRangeDays || DEFAULT_CONTEXT_RANGE_DAYS, 7, 365);
   const storageDays = clampInt(storageRangeDays || DEFAULT_STORAGE_RANGE_DAYS, Math.max(contextDays, 30), 3650);
   const contextDailyDays = clampInt(dailySeriesDays || contextDays, 7, 180);
@@ -1560,6 +1572,141 @@ async function collectMeta(userId, opts = {}) {
     contextRangeDays: contextDays,
   });
 
+  // --- 3a: Fetch ad sets with insights ---
+  let adSetsData = [];
+  if (buildAdSets) {
+    try {
+      for (const a of accountIds) {
+        const adSetsList = await pageAllInsights(
+          `https://graph.facebook.com/${API_VER}/act_${a}/adsets?fields=id,name,campaign_id,status,effective_status,bid_strategy,bid_amount,daily_budget,lifetime_budget,optimization_goal&limit=500&access_token=${encodeURIComponent(token)}`
+        );
+
+        const insights7Url = `https://graph.facebook.com/${API_VER}/act_${a}/insights?fields=adset_id,adset_name,campaign_id,campaign_name,spend,impressions,clicks,ctr,cpc,frequency,reach,actions,action_values&level=adset&date_preset=last_7d&limit=500&access_token=${encodeURIComponent(token)}`;
+        const insights7 = await pageAllInsights(insights7Url);
+        const insights30 = await pageAllInsights(insights7Url.replace('last_7d', 'last_30d'));
+
+        const insightsMap7 = new Map(insights7.map((r) => [r.adset_id, r]));
+        const insightsMap30 = new Map(insights30.map((r) => [r.adset_id, r]));
+
+        for (const adSet of adSetsList) {
+          const i7 = insightsMap7.get(adSet.id) || {};
+          const i30 = insightsMap30.get(adSet.id) || {};
+          const spend7 = toNum(i7.spend);
+          const purchases7 = pickActionValue(i7.actions, PURCHASE_ACTION_PRIORITY).value;
+          const spend30 = toNum(i30.spend);
+          const purchases30 = pickActionValue(i30.actions, PURCHASE_ACTION_PRIORITY).value;
+
+          adSetsData.push({
+            ad_set_id: adSet.id,
+            ad_set_name: adSet.name,
+            campaign_id: adSet.campaign_id,
+            status: adSet.effective_status || adSet.status,
+            bid_strategy: adSet.bid_strategy || null,
+            bid_amount: adSet.bid_amount ? minorToUnit(adSet.bid_amount) : null,
+            daily_budget: adSet.daily_budget ? minorToUnit(adSet.daily_budget) : null,
+            optimization_goal: adSet.optimization_goal || null,
+            last_7: {
+              spend: round2(spend7),
+              impressions: toNum(i7.impressions),
+              clicks: toNum(i7.clicks),
+              ctr: toNum(i7.ctr),
+              cpc: toNum(i7.cpc),
+              reach: toNum(i7.reach),
+              frequency: toNum(i7.frequency),
+              conversions: purchases7,
+            },
+            last_30: {
+              spend: round2(spend30),
+              impressions: toNum(i30.impressions),
+              clicks: toNum(i30.clicks),
+              ctr: toNum(i30.ctr),
+              cpc: toNum(i30.cpc),
+              frequency: toNum(i30.frequency),
+              conversions: purchases30,
+            },
+            cpa_7d: spend7 > 0 && purchases7 > 0 ? round2(spend7 / purchases7) : null,
+            cpa_30d: spend30 > 0 && purchases30 > 0 ? round2(spend30 / purchases30) : null,
+            frequency_warning: toNum(i7.frequency) > 3.5,
+          });
+        }
+      }
+    } catch (e) {
+      adSetsData = [];
+    }
+  }
+
+  // --- 3b: Fetch ads with insights ---
+  let adsData = [];
+  if (buildAds) {
+    try {
+      for (const a of accountIds) {
+        const adsList = await pageAllInsights(
+          `https://graph.facebook.com/${API_VER}/act_${a}/ads?fields=id,name,adset_id,campaign_id,status,effective_status,creative{id,title,object_type}&limit=500&access_token=${encodeURIComponent(token)}`
+        );
+
+        const adInsights7Url = `https://graph.facebook.com/${API_VER}/act_${a}/insights?fields=ad_id,ad_name,adset_id,campaign_id,spend,impressions,clicks,ctr,cpc,frequency,actions,action_values&level=ad&date_preset=last_7d&limit=500&access_token=${encodeURIComponent(token)}`;
+        const adInsights7 = await pageAllInsights(adInsights7Url);
+        const adInsights30 = await pageAllInsights(adInsights7Url.replace('last_7d', 'last_30d'));
+
+        const adInsightsMap7 = new Map(adInsights7.map((r) => [r.ad_id, r]));
+        const adInsightsMap30 = new Map(adInsights30.map((r) => [r.ad_id, r]));
+
+        const allRoas7 = adInsights7
+          .map((r) => {
+            const s = toNum(r.spend);
+            const v = pickActionValue(r.action_values, PURCHASE_ACTION_PRIORITY).value;
+            return s > 0 && v != null ? v / s : null;
+          })
+          .filter((v) => v != null);
+        const accountAvgRoas7 = allRoas7.length > 0
+          ? allRoas7.reduce((acc, b) => acc + b, 0) / allRoas7.length : null;
+
+        const allCtr7 = adInsights7.map((r) => toNum(r.ctr)).filter((v) => v > 0);
+        const accountAvgCtr7 = allCtr7.length > 0
+          ? allCtr7.reduce((acc, b) => acc + b, 0) / allCtr7.length : null;
+
+        for (const ad of adsList) {
+          const i7 = adInsightsMap7.get(ad.id) || {};
+          const i30 = adInsightsMap30.get(ad.id) || {};
+          const spend7 = toNum(i7.spend);
+          const purchaseValue7 = pickActionValue(i7.action_values, PURCHASE_ACTION_PRIORITY).value;
+          const roas7 = spend7 > 0 && purchaseValue7 != null ? round2(purchaseValue7 / spend7) : null;
+          const ctr7 = toNum(i7.ctr);
+          const freq7 = toNum(i7.frequency);
+          const spend30 = toNum(i30.spend);
+          const purchaseValue30 = pickActionValue(i30.action_values, PURCHASE_ACTION_PRIORITY).value;
+
+          adsData.push({
+            ad_id: ad.id,
+            ad_name: ad.name,
+            adset_id: ad.adset_id,
+            campaign_id: ad.campaign_id,
+            status: ad.effective_status || ad.status,
+            creative_type: ad.creative?.object_type || null,
+            headline: ad.creative?.title || null,
+            last_7_spend: round2(spend7),
+            last_7_impressions: toNum(i7.impressions),
+            last_7_ctr: round2(ctr7),
+            last_7_roas_platform: roas7,
+            last_7_frequency: freq7 > 0 ? round2(freq7) : null,
+            last_30_ctr: round2(toNum(i30.ctr)),
+            last_30_roas_platform: spend30 > 0 && purchaseValue30 != null
+              ? round2(purchaseValue30 / spend30) : null,
+            ctr_vs_account_avg: accountAvgCtr7 && ctr7 > 0
+              ? round2(ctr7 / accountAvgCtr7) : null,
+            roas_vs_account_avg: accountAvgRoas7 && roas7 != null
+              ? round2(roas7 / accountAvgRoas7) : null,
+            fatigue_flag: freq7 > 3 && toNum(i30.ctr) > 0 && ctr7 < toNum(i30.ctr),
+            top_performer_flag: roas7 != null && accountAvgRoas7 != null && spend7 >= 100
+              ? roas7 >= accountAvgRoas7 * 1.2 : false,
+          });
+        }
+      }
+    } catch (e) {
+      adsData = [];
+    }
+  }
+
   const summaryStats = {
     rows: 1,
     bytes: 0,
@@ -1688,6 +1835,32 @@ async function collectMeta(userId, opts = {}) {
         });
       }
     }
+  }
+
+  if (buildAdSets && adSetsData.length > 0) {
+    datasets.push({
+      source: 'metaAds',
+      dataset: 'meta.ad_sets',
+      range: contextRangeOut,
+      stats: { rows: adSetsData.length, bytes: 0 },
+      data: {
+        meta: contextHeader,
+        ad_sets: adSetsData,
+      },
+    });
+  }
+
+  if (buildAds && adsData.length > 0) {
+    datasets.push({
+      source: 'metaAds',
+      dataset: 'meta.ads',
+      range: contextRangeOut,
+      stats: { rows: adsData.length, bytes: 0 },
+      data: {
+        meta: contextHeader,
+        ads: adsData,
+      },
+    });
   }
 
   return {

@@ -1481,6 +1481,8 @@ function buildMetaContext(chunks, contextRangeDays) {
   return {
     dailyDataset: chunks.find((chunk) => chunk?.dataset === 'meta.daily_trends_ai') || null,
     rankedDataset: chunks.find((chunk) => chunk?.dataset === 'meta.campaigns_ranked') || null,
+    adSetsDataset: chunks.find((c) => c?.dataset === 'meta.ad_sets') || null,
+    adsDataset: chunks.find((c) => c?.dataset === 'meta.ads') || null,
     chunks,
     full: formatMetaForLlm({
       datasets: chunks,
@@ -2470,14 +2472,18 @@ function buildStructuredCrossChannel({ metaPack, googlePack, ga4Pack, usablePlat
   };
 }
 
-function buildStructuredAdSets() {
-  // TODO: requires meta.ad_sets chunk (not yet collected)
-  return [];
+function buildStructuredAdSets({ metaPack }) {
+  const raw = Array.isArray(metaPack?.adSetsDataset?.data?.ad_sets)
+    ? metaPack.adSetsDataset.data.ad_sets
+    : [];
+  return raw.slice(0, 200);
 }
 
-function buildStructuredAds() {
-  // TODO: requires meta.ads chunk (not yet collected)
-  return [];
+function buildStructuredAds({ metaPack }) {
+  const raw = Array.isArray(metaPack?.adsDataset?.data?.ads)
+    ? metaPack.adsDataset.data.ads
+    : [];
+  return raw.slice(0, 300);
 }
 
 function isStructuredSectionShallow(section, value) {
@@ -3080,8 +3086,8 @@ function buildStructuredSignalSchema({
   const devices = buildStructuredDevices({ metaPack, googlePack, ga4Pack });
   const ga4Web = buildStructuredGa4Web({ ga4Pack });
   const crossChannel = buildStructuredCrossChannel({ metaPack, googlePack, ga4Pack, usablePlatforms });
-  const adSets = buildStructuredAdSets();
-  const ads = buildStructuredAds();
+  const adSets = buildStructuredAdSets({ metaPack });
+  const ads = buildStructuredAds({ metaPack });
   const usableSourcesCount = usablePlatforms.length;
   const payloadStats = {
     daily_index_rows: dailyIndex.length,

@@ -412,6 +412,8 @@ function extractMetaRootPatchFromResult(r, ranges = {}) {
           'daily_ai',
           'history_daily_totals',
           'history_daily_campaigns',
+          'ad_sets',
+          'ads',
         ],
       },
     },
