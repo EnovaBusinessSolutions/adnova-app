@@ -34,7 +34,7 @@ export default function Navbar() {
         >
             <div className="mx-auto max-w-[1200px] px-5 md:px-10">
                 {/* Desktop */}
-                <div className="hidden md:flex items-center justify-between w-full py-4">
+                <div className="hidden md:flex items-center justify-between w-full py-4 relative">
                     {/* Logo */}
                     <Link href="/" className="flex items-center gap-2.5">
                         <Image
@@ -54,7 +54,7 @@ export default function Navbar() {
                     </Link>
 
                     {/* Links */}
-                    <nav className="flex items-center gap-7">
+                    <nav className="absolute left-1/2 -translate-x-1/2 flex items-center gap-7">
                         {navLinks.map((link) => (
                             <div key={link.href} className="relative group">
                                 <Link

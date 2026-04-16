@@ -26,8 +26,7 @@ export default function TermsOfServicePage() {
                             &quot;we,&quot; &quot;us,&quot;
                             &quot;our&quot;), a company registered in
                             Delaware, United States at 1111B S Governors Avenue
-                            STE 53849, Dover, DE 19904. Our VAT number is
-                            41-4858760.
+                            STE 53849, Dover, DE 19904.
                         </p>
                         <p className="t-p text-white-80">
                             We operate the website{" "}
