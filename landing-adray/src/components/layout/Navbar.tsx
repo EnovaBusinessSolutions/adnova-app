@@ -36,7 +36,7 @@ export default function Navbar() {
                 {/* Desktop */}
                 <div className="hidden md:flex items-center justify-between w-full py-4 relative">
                     {/* Logo */}
-                    <Link href="/" className="flex items-center gap-2.5">
+                    <Link href="/" className="flex items-center gap-2.5 md:-ml-2">
                         <Image
                             src={HEADER_LOGO}
                             alt="Adray"
@@ -69,16 +69,16 @@ export default function Navbar() {
                     </nav>
 
                     {/* CTA buttons */}
-                    <div className="flex items-center gap-3 shrink-0">
+                    <div className="flex items-center gap-3 shrink-0 md:-mr-2">
                         <a
                             href="/login"
-                            className="inline-flex items-center justify-center px-5 py-2.5 t-p-sm font-semibold rounded-[15px] text-white-90 border border-white-40 hover:bg-white/10 transition-colors duration-200"
+                            className="inline-flex items-center justify-center h-10 px-5 t-p-sm font-semibold rounded-[15px] text-white-90 border border-white-40 hover:bg-white/10 transition-colors duration-200"
                         >
                             Login
                         </a>
                         <a
                             href="/login"
-                            className="inline-flex items-center justify-center px-5 py-2.5 t-p-sm font-semibold rounded-[15px] bg-black-100 text-white-100 border border-white-40 glow-btn hover:scale-105 transition-transform duration-300"
+                            className="inline-flex items-center justify-center h-10 px-5 t-p-sm font-semibold rounded-[15px] bg-black-100 text-white-100 border border-white-40 glow-btn hover:scale-105 transition-transform duration-300"
                         >
                             Get Started Free
                         </a>
