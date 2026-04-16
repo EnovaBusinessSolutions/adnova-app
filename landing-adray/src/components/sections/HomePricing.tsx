@@ -61,10 +61,8 @@ const plans: Array<{
         features: [
             "Invoicing and credit terms (30–60 days)",
             "White-glove onboarding and setup",
-            "Dedicated customer success manager",
-            "SLA and priority support",
-            "Volume pricing",
-            "Signal or Core — your choice",
+            "Dedicated support",
+            "SLA",
         ],
         trust: null,
         cta: "Contact Us",
