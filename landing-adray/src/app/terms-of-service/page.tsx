@@ -9,28 +9,27 @@ export default function TermsOfServicePage() {
         <section className="pt-32 pb-24">
             <Container>
                 <h1 className="t-h2 text-white-95 mb-4">
-                    Condiciones del Servicio
+                    Terms of Service
                 </h1>
                 <p className="t-p text-white-80 mb-8">
-                    Última actualización: 31 de marzo de 2026
+                    Last updated: March 31, 2026
                 </p>
 
                 <div className="w-full overflow-hidden rounded-2xl border border-white/10 bg-black/20 p-6 md:p-10 space-y-8 text-white-90">
-                    {/* ── Aceptación ── */}
+                    {/* ── Acceptance ── */}
                     <div className="space-y-4">
                         <h2 className="t-h4 text-white-95">
-                            Aceptación de Nuestras Condiciones Legales
+                            Acceptance of Our Legal Terms
                         </h2>
                         <p className="t-p text-white-80">
-                            Somos Adray, Inc. (&quot;Empresa,&quot;
-                            &quot;nosotros,&quot; &quot;nos,&quot;
-                            &quot;nuestro/a&quot;), empresa registrada en
-                            Delaware, United States en 1111B S Governors Avenue
-                            STE 53849, Dover, DE 19904. Nuestro número de IVA es
-                            41-4858760.
+                            We are Adray, Inc. (&quot;Company,&quot;
+                            &quot;we,&quot; &quot;us,&quot;
+                            &quot;our&quot;), a company registered in
+                            Delaware, United States at 1111B S Governors Avenue
+                            STE 53849, Dover, DE 19904.
                         </p>
                         <p className="t-p text-white-80">
-                            Operamos el sitio web{" "}
+                            We operate the website{" "}
                             <a
                                 href="http://www.adray.ai"
                                 className="underline"
@@ -39,354 +38,339 @@ export default function TermsOfServicePage() {
                             >
                                 http://www.adray.ai
                             </a>{" "}
-                            (el &quot;Página web&quot;), la aplicación móvil
-                            Adray (el &quot;Aplicación&quot;) así como cualquier
-                            otro producto o servicio relacionado que haga
-                            referencia o enlace a estas condiciones legales (las
-                            &quot;Menciones legales&quot;) (colectivamente, el
-                            &quot;Servicios&quot;).
+                            (the &quot;Website&quot;), the Adray mobile
+                            application (the &quot;App&quot;), and any other
+                            related products or services that reference or link
+                            to these legal terms (the &quot;Legal Terms&quot;)
+                            (collectively, the &quot;Services&quot;).
                         </p>
                         <p className="t-p text-white-80">
-                            <strong>Acerca de Adray</strong> — Adray es una
-                            plataforma de infraestructura de datos de marketing
-                            basada en IA diseñada para empresas de comercio
-                            electrónico. Conecta y normaliza datos procedentes de
-                            plataformas publicitarias (Meta, Google Ads, TikTok),
-                            plataformas de comercio electrónico (Shopify,
-                            WooCommerce) y herramientas de análisis (Google
-                            Analytics 4), ofreciendo una visión unificada y
-                            conciliada del rendimiento de marketing a los
-                            sistemas de IA y las herramientas de inteligencia
-                            empresarial. Adray actúa como una capa de datos
-                            centralizada entre la pila de marketing de un
-                            comerciante y los flujos de trabajo basados en IA, lo
-                            que permite una atribución precisa, la generación de
-                            informes multicanal y la toma de decisiones basada en
-                            datos sin necesidad de consolidar los datos
-                            manualmente. La plataforma está diseñada para
-                            profesionales del marketing nativos de la IA que
-                            confían en herramientas como Claude y ChatGPT para
-                            analizar el rendimiento, generar insights y
-                            automatizar la generación de informes.
+                            <strong>About Adray</strong> — Adray is an
+                            AI-native marketing data infrastructure platform
+                            designed for ecommerce businesses. It connects and
+                            normalizes data from advertising platforms (Meta,
+                            Google Ads, TikTok), ecommerce platforms (Shopify,
+                            WooCommerce), and analytics tools (Google Analytics
+                            4), delivering a unified, reconciled view of
+                            marketing performance to AI systems and business
+                            intelligence workflows. Adray acts as a centralized
+                            data layer between a merchant&apos;s marketing stack
+                            and AI-powered workflows, enabling precise
+                            attribution, multi-channel reporting, and
+                            data-driven decision-making without manual data
+                            consolidation. The platform is designed for
+                            AI-native marketers who rely on tools like Claude
+                            and ChatGPT to analyze performance, generate
+                            insights, and automate reporting.
                         </p>
                         <p className="t-p text-white-80">
-                            Puede ponerse en contacto con nosotros por teléfono
-                            al +16194968692, correo electrónico{" "}
+                            You can contact us by phone at +16194968692, by
+                            email at{" "}
                             <a
                                 href="mailto:contact@adray.ai"
                                 className="underline"
                             >
                                 contact@adray.ai
                             </a>
-                            , o por correo a 1111B S Governors Avenue STE 53849,
+                            , or by mail at 1111B S Governors Avenue STE 53849,
                             Dover, DE 19904, United States.
                         </p>
                         <p className="t-p text-white-80">
-                            Las presentes Condiciones Legales constituyen un
-                            acuerdo jurídicamente vinculante celebrado entre
-                            usted, ya sea personalmente o en nombre de una
-                            entidad (&quot;usted&quot;), y Adray, Inc., relativas
-                            a su acceso y uso de los Servicios. Usted acepta que,
-                            al acceder a los Servicios, ha leído, comprendido y
-                            aceptado quedar vinculado por todas estas Condiciones
-                            Legales. SI NO ESTÁ DE ACUERDO CON TODAS ESTAS
-                            CONDICIONES LEGALES, SE LE PROHÍBE EXPRESAMENTE EL
-                            USO DE LOS SERVICIOS Y DEBE DEJAR DE UTILIZARLOS
-                            INMEDIATAMENTE.
+                            These Legal Terms constitute a legally binding
+                            agreement between you, either personally or on
+                            behalf of an entity (&quot;you&quot;), and Adray,
+                            Inc., concerning your access to and use of the
+                            Services. You agree that by accessing the Services,
+                            you have read, understood, and agreed to be bound by
+                            all of these Legal Terms. IF YOU DO NOT AGREE WITH
+                            ALL OF THESE LEGAL TERMS, YOU ARE EXPRESSLY
+                            PROHIBITED FROM USING THE SERVICES AND MUST
+                            DISCONTINUE USE IMMEDIATELY.
                         </p>
                         <p className="t-p text-white-80">
-                            Le avisaremos con antelación de cualquier cambio
-                            programado en los Servicios que esté utilizando. Las
-                            Condiciones legales modificadas entrarán en vigor en
-                            el momento de su publicación o notificación mediante{" "}
+                            We will notify you in advance of any scheduled
+                            changes to the Services you are using. Modified
+                            Legal Terms will take effect upon posting or
+                            notification via{" "}
                             <a
                                 href="mailto:contact@adray.ai"
                                 className="underline"
                             >
                                 contact@adray.ai
                             </a>
-                            , como se indica en el mensaje de correo electrónico.
-                            Al continuar utilizando los Servicios después de la
-                            fecha de entrada en vigor de cualquier cambio, usted
-                            acepta quedar vinculado por los términos modificados.
+                            , as indicated in the email message. By continuing
+                            to use the Services after the effective date of any
+                            change, you agree to be bound by the modified terms.
                         </p>
                         <p className="t-p text-white-80">
-                            Los Servicios están destinados a usuarios mayores de
-                            18 años. Las personas menores de 18 años no están
-                            autorizadas a utilizar o registrarse en los Servicios.
+                            The Services are intended for users who are at least
+                            18 years of age. Persons under 18 are not permitted
+                            to use or register for the Services.
                         </p>
                     </div>
 
-                    {/* ── Índice ── */}
+                    {/* ── Table of Contents ── */}
                     <div className="space-y-3">
-                        <h2 className="t-h4 text-white-95">Índice</h2>
+                        <h2 className="t-h4 text-white-95">Table of Contents</h2>
                         <ol className="list-decimal pl-5 space-y-1 t-p text-white-80">
-                            <li>Nuestros Servicios</li>
-                            <li>Derechos de Propiedad Intelectual</li>
-                            <li>Representaciones del Usuario</li>
-                            <li>Registro de Usuarios</li>
-                            <li>Compras y Pagos</li>
-                            <li>Suscripciones</li>
+                            <li>Our Services</li>
+                            <li>Intellectual Property Rights</li>
+                            <li>User Representations</li>
+                            <li>User Registration</li>
+                            <li>Purchases and Payment</li>
+                            <li>Subscriptions</li>
                             <li>Software</li>
-                            <li>Actividades Prohibidas</li>
-                            <li>Contribuciones Generadas por los Usuarios</li>
-                            <li>Contribución — Licencia</li>
-                            <li>Aplicación Móvil — Licencia</li>
-                            <li>Medios de Comunicación Social</li>
-                            <li>Sitios Web y Contenidos de Terceros</li>
-                            <li>Gestión de Servicios</li>
-                            <li>Política de Privacidad</li>
-                            <li>Duración y Rescisión</li>
-                            <li>Modificaciones e Interrupciones</li>
-                            <li>Derecho Aplicable</li>
-                            <li>Resolución de Conflictos</li>
-                            <li>Correcciones</li>
-                            <li>Aviso Legal</li>
-                            <li>Limitaciones de Responsabilidad</li>
-                            <li>Indemnización</li>
-                            <li>Datos de Usuario</li>
+                            <li>Prohibited Activities</li>
+                            <li>User-Generated Contributions</li>
+                            <li>Contribution License</li>
+                            <li>Mobile Application License</li>
+                            <li>Social Media</li>
+                            <li>Third-Party Websites and Content</li>
+                            <li>Services Management</li>
+                            <li>Privacy Policy</li>
+                            <li>Term and Termination</li>
+                            <li>Modifications and Interruptions</li>
+                            <li>Governing Law</li>
+                            <li>Dispute Resolution</li>
+                            <li>Corrections</li>
+                            <li>Disclaimer</li>
+                            <li>Limitations of Liability</li>
+                            <li>Indemnification</li>
+                            <li>User Data</li>
                             <li>
-                                Comunicaciones, Transacciones y Firmas
-                                Electrónicas
+                                Electronic Communications, Transactions, and
+                                Signatures
                             </li>
-                            <li>Usuarios y Residentes de California</li>
-                            <li>Varios</li>
+                            <li>California Users and Residents</li>
+                            <li>Miscellaneous</li>
                             <li>
-                                Anexo de Cumplimiento: Disposiciones
-                                Suplementarias
+                                Compliance Addendum: Supplemental Provisions
                             </li>
-                            <li>Contacto</li>
+                            <li>Contact Us</li>
                         </ol>
                     </div>
 
-                    {/* ── 1. Nuestros Servicios ── */}
+                    {/* ── 1. Our Services ── */}
                     <div className="space-y-4">
                         <h2 className="t-h4 text-white-95">
-                            1. Nuestros Servicios
+                            1. Our Services
                         </h2>
                         <p className="t-p text-white-80">
-                            La información proporcionada al utilizar los Servicios
-                            no está destinada a ser distribuida ni utilizada por
-                            ninguna persona o entidad en ninguna jurisdicción o
-                            país en el que dicha distribución o uso sea contrario
-                            a la ley o a la normativa o que nos someta a algún
-                            requisito de registro en dicha jurisdicción o país.
-                            Por consiguiente, las personas que decidan acceder a
-                            los Servicios desde otros lugares lo harán por
-                            iniciativa propia y serán las únicas responsables del
-                            cumplimiento de la legislación local, en la medida en
-                            que ésta sea aplicable.
+                            The information provided when using the Services is
+                            not intended for distribution to or use by any
+                            person or entity in any jurisdiction or country
+                            where such distribution or use would be contrary to
+                            law or regulation, or which would subject us to any
+                            registration requirement within such jurisdiction or
+                            country. Accordingly, those persons who choose to
+                            access the Services from other locations do so on
+                            their own initiative and are solely responsible for
+                            compliance with local laws, to the extent local laws
+                            are applicable.
                         </p>
                         <p className="t-p text-white-80">
-                            Los Servicios no están adaptados para cumplir la
-                            normativa específica del sector (Health Insurance
-                            Portability and Accountability Act (HIPAA), Federal
-                            Information Security Management Act (FISMA), etc.),
-                            por lo que si sus interacciones estuvieran sujetas a
-                            dichas leyes, no podrá utilizar los Servicios. No
-                            podrá utilizar los Servicios de forma que infrinja la
-                            Ley Gramm-Leach-Bliley (GLBA).
+                            The Services are not tailored to comply with
+                            industry-specific regulations (such as the Health
+                            Insurance Portability and Accountability Act
+                            (HIPAA) or the Federal Information Security
+                            Management Act (FISMA)), so if your interactions
+                            would be subject to such laws, you may not use the
+                            Services. You may not use the Services in a way that
+                            would violate the Gramm-Leach-Bliley Act (GLBA).
                         </p>
                     </div>
 
-                    {/* ── 2. Derechos de Propiedad Intelectual ── */}
+                    {/* ── 2. Intellectual Property Rights ── */}
                     <div className="space-y-4">
                         <h2 className="t-h4 text-white-95">
-                            2. Derechos de Propiedad Intelectual
+                            2. Intellectual Property Rights
                         </h2>
                         <h3 className="t-p font-semibold text-white-90">
-                            Nuestra propiedad intelectual
+                            Our intellectual property
                         </h3>
                         <p className="t-p text-white-80">
-                            Somos el propietario o el licenciatario de todos los
-                            derechos de propiedad intelectual de nuestros
-                            Servicios, incluido todo el código fuente, bases de
-                            datos, funcionalidad, software, diseños de sitios web,
-                            audio, vídeo, texto, fotografías y gráficos de los
-                            Servicios (colectivamente, el
-                            &quot;Contenido&quot;), así como las marcas
-                            comerciales, las marcas de servicio y los logotipos
-                            que contiene (el &quot;Marcas&quot;).
+                            We are the owner or licensee of all intellectual
+                            property rights in our Services, including all
+                            source code, databases, functionality, software,
+                            website designs, audio, video, text, photographs,
+                            and graphics in the Services (collectively, the
+                            &quot;Content&quot;), as well as the trademarks,
+                            service marks, and logos contained therein (the
+                            &quot;Marks&quot;).
                         </p>
                         <p className="t-p text-white-80">
-                            Nuestro Contenido y Marcas están protegidos por las
-                            leyes de derechos de autor y marcas registradas (y
-                            otros derechos de propiedad intelectual y leyes de
-                            competencia desleal) y tratados en Estados Unidos y en
-                            todo el mundo.
+                            Our Content and Marks are protected by copyright
+                            and trademark laws (and various other intellectual
+                            property rights and unfair competition laws) and
+                            treaties in the United States and around the world.
                         </p>
                         <p className="t-p text-white-80">
-                            El Contenido y las Marcas se proporcionan en o a
-                            través de los Servicios &quot;TAL CUAL&quot; para su
-                            uso personal, no comercial o fines empresariales
-                            internos.
+                            The Content and Marks are provided in or through
+                            the Services &quot;AS IS&quot; for your personal,
+                            non-commercial use or internal business purpose
+                            only.
                         </p>
                         <h3 className="t-p font-semibold text-white-90">
-                            Su uso de nuestros Servicios
+                            Your use of our Services
                         </h3>
                         <p className="t-p text-white-80">
-                            Sujeto al cumplimiento por su parte de las presentes
-                            Condiciones Legales, incluido el apartado
-                            &quot;Actividades Prohibidas&quot;, le concedemos un
-                            derecho no exclusivo, intransferible, revocable
-                            licencia a: acceder a los Servicios; y descargar o
-                            imprimir una copia de cualquier parte del Contenido al
-                            que haya accedido correctamente, únicamente para su
-                            uso personal, no comercial o fines empresariales
-                            internos.
+                            Subject to your compliance with these Legal Terms,
+                            including the &quot;Prohibited Activities&quot;
+                            section below, we grant you a non-exclusive,
+                            non-transferable, revocable license to: access the
+                            Services; and download or print a copy of any
+                            portion of the Content to which you have properly
+                            gained access, solely for your personal,
+                            non-commercial use or internal business purpose.
                         </p>
                         <p className="t-p text-white-80">
-                            Salvo lo dispuesto en esta sección o en cualquier otra
-                            parte de nuestras Condiciones Legales, ninguna parte
-                            de los Servicios ni ningún Contenido o Marca podrán
-                            ser copiados, reproducidos, agregados, republicados,
-                            cargados, enviados, mostrados públicamente,
-                            codificados, traducirse, transmitirse, distribuirse,
-                            venderse, licenciarse o explotarse de otro modo con
-                            fines comerciales, sin nuestro permiso expreso previo
-                            por escrito.
+                            Except as set out in this section or elsewhere in
+                            our Legal Terms, no part of the Services and no
+                            Content or Marks may be copied, reproduced,
+                            aggregated, republished, uploaded, posted, publicly
+                            displayed, encoded, translated, transmitted,
+                            distributed, sold, licensed, or otherwise exploited
+                            for any commercial purpose whatsoever, without our
+                            express prior written permission.
                         </p>
                         <p className="t-p text-white-80">
-                            Si desea hacer un uso de los Servicios, Contenidos o
-                            Marcas distinto del establecido en esta sección,
-                            dirija su solicitud a:{" "}
+                            If you wish to make any use of the Services,
+                            Content, or Marks other than as set out in this
+                            section, please address your request to:{" "}
                             <a
                                 href="mailto:contact@adray.ai"
                                 className="underline"
                             >
                                 contact@adray.ai
                             </a>
-                            . Nos reservamos todos los derechos no concedidos
-                            expresamente a usted sobre los Servicios, el
-                            Contenido y las Marcas.
+                            . We reserve all rights not expressly granted to
+                            you in and to the Services, Content, and Marks.
                         </p>
                         <h3 className="t-p font-semibold text-white-90">
-                            Sus propuestas y contribuciones
+                            Your submissions and contributions
                         </h3>
                         <p className="t-p text-white-80">
-                            <strong>Presentaciones:</strong> Al enviarnos
-                            directamente cualquier pregunta, comentario,
-                            sugerencia, idea, opinión u otra información sobre los
-                            Servicios (&quot;Presentaciones&quot;), usted acepta
-                            cedernos todos los derechos de propiedad intelectual
-                            sobre dicha Presentación. Usted acepta que seremos
-                            propietarios de este Envío y tendremos derecho a su
-                            uso y difusión sin restricciones para cualquier fin
-                            lícito, comercial o de otro tipo, sin reconocimiento
-                            o compensación para usted.
+                            <strong>Submissions:</strong> By sending us any
+                            question, comment, suggestion, idea, feedback, or
+                            other information about the Services
+                            (&quot;Submissions&quot;), you agree to assign to
+                            us all intellectual property rights in such
+                            Submission. You agree that we shall own this
+                            Submission and be entitled to its unrestricted use
+                            and dissemination for any lawful purpose, commercial
+                            or otherwise, without acknowledgment or compensation
+                            to you.
                         </p>
                         <p className="t-p text-white-80">
-                            <strong>Contribuciones:</strong> Los Servicios pueden
-                            invitarle a chatear, contribuir o participar en blogs,
-                            tablones de mensajes, foros en línea y otras
-                            funcionalidades durante las cuales puede crear,
-                            enviar, publicar, mostrar, transmitir, publicar,
-                            distribuir o difundir contenidos y materiales
-                            (&quot;Contribuciones&quot;). Toda Presentación que se
-                            difunda públicamente se considerará también una
-                            Contribución.
+                            <strong>Contributions:</strong> The Services may
+                            invite you to chat, contribute to, or participate in
+                            blogs, message boards, online forums, and other
+                            functionality during which you may create, submit,
+                            post, display, transmit, publish, distribute, or
+                            broadcast content and materials
+                            (&quot;Contributions&quot;). Any Submission that is
+                            publicly posted shall also be treated as a
+                            Contribution.
                         </p>
                         <p className="t-p text-white-80">
-                            Al publicar Contribuciones, nos concede una licencia
-                            ilimitada, irrevocable, perpetua, no exclusiva,
-                            transferible, libre de regalías, totalmente pagada, en
-                            todo el mundo, para utilizar, copiar, reproducir,
-                            distribuir, vender, publicar, difundir, almacenar,
-                            ejecutar públicamente, mostrar públicamente,
-                            reformatear, traducir, extraer y explotar sus
-                            Contribuciones para cualquier propósito, comercial,
-                            publicitario o de otro tipo.
+                            By posting Contributions, you grant us an
+                            unlimited, irrevocable, perpetual, non-exclusive,
+                            transferable, royalty-free, fully paid, worldwide
+                            right and license to use, copy, reproduce,
+                            distribute, sell, publish, broadcast, store,
+                            publicly perform, publicly display, reformat,
+                            translate, excerpt, and exploit your Contributions
+                            for any purpose, commercial, advertising, or
+                            otherwise.
                         </p>
                     </div>
 
-                    {/* ── 3. Representaciones del Usuario ── */}
+                    {/* ── 3. User Representations ── */}
                     <div className="space-y-4">
                         <h2 className="t-h4 text-white-95">
-                            3. Representaciones del Usuario
+                            3. User Representations
                         </h2>
                         <p className="t-p text-white-80">
-                            Al utilizar los Servicios, usted declara y garantiza
-                            que: (1) toda la información de registro que envíe
-                            será verdadera, exacta, actual y completa; (2)
-                            mantendrá la exactitud de dicha información; (3) tiene
-                            capacidad legal y acepta cumplir estas Condiciones
-                            Legales; (4) no es menor de edad en su jurisdicción;
-                            (5) no accederá a los Servicios a través de medios
-                            automatizados o no humanos; (6) no utilizará los
-                            Servicios para ningún fin ilegal; y (7) su uso de los
-                            Servicios no infringirá ninguna ley o normativa
-                            aplicable.
+                            By using the Services, you represent and warrant
+                            that: (1) all registration information you submit
+                            will be true, accurate, current, and complete; (2)
+                            you will maintain the accuracy of such information;
+                            (3) you have the legal capacity and agree to comply
+                            with these Legal Terms; (4) you are not a minor in
+                            your jurisdiction; (5) you will not access the
+                            Services through automated or non-human means; (6)
+                            you will not use the Services for any illegal
+                            purpose; and (7) your use of the Services will not
+                            violate any applicable law or regulation.
                         </p>
                         <p className="t-p text-white-80">
-                            Si proporciona información falsa, inexacta, no
-                            actualizada o incompleta, tenemos derecho a suspender
-                            o cancelar su cuenta y rechazar cualquier uso actual o
-                            futuro de los Servicios.
+                            If you provide any information that is untrue,
+                            inaccurate, not current, or incomplete, we have the
+                            right to suspend or terminate your account and
+                            refuse any and all current or future use of the
+                            Services.
                         </p>
                     </div>
 
-                    {/* ── 4. Registro de Usuarios ── */}
+                    {/* ── 4. User Registration ── */}
                     <div className="space-y-4">
                         <h2 className="t-h4 text-white-95">
-                            4. Registro de Usuarios
+                            4. User Registration
                         </h2>
                         <p className="t-p text-white-80">
-                            Es posible que tenga que registrarse para utilizar los
-                            Servicios. Usted se compromete a mantener la
-                            confidencialidad de su contraseña y será responsable
-                            de todo uso que se haga de su cuenta y contraseña. Nos
-                            reservamos el derecho a eliminar, reclamar o cambiar
-                            un nombre de usuario que usted seleccione si
-                            determinamos, a nuestra entera discreción, que dicho
-                            nombre de usuario es inapropiado, obsceno o
-                            censurable.
+                            You may be required to register to use the
+                            Services. You agree to keep your password
+                            confidential and will be responsible for all use of
+                            your account and password. We reserve the right to
+                            remove, reclaim, or change a username you select if
+                            we determine, in our sole discretion, that such
+                            username is inappropriate, obscene, or otherwise
+                            objectionable.
                         </p>
                     </div>
 
-                    {/* ── 5. Compras y Pagos ── */}
+                    {/* ── 5. Purchases and Payment ── */}
                     <div className="space-y-4">
                         <h2 className="t-h4 text-white-95">
-                            5. Compras y Pagos
+                            5. Purchases and Payment
                         </h2>
                         <p className="t-p text-white-80">
-                            Aceptamos las siguientes formas de pago: Visa,
-                            Mastercard, American Express, Discover y PayPal.
+                            We accept the following forms of payment: Visa,
+                            Mastercard, American Express, Discover, and PayPal.
                         </p>
                         <p className="t-p text-white-80">
-                            Usted se compromete a proporcionar información actual,
-                            completa y precisa sobre la compra y la cuenta para
-                            todas las compras realizadas a través de los
-                            Servicios. El impuesto sobre las ventas se añadirá al
-                            precio de las compras según consideremos necesario.
-                            Podemos modificar los precios en cualquier momento.
-                            Todos los pagos serán en dólares estadounidenses.
+                            You agree to provide current, complete, and accurate
+                            purchase and account information for all purchases
+                            made via the Services. Sales tax will be added to
+                            the price of purchases as deemed necessary by us. We
+                            may change prices at any time. All payments shall be
+                            in US dollars.
                         </p>
                         <p className="t-p text-white-80">
-                            Nos reservamos el derecho a rechazar cualquier pedido
-                            realizado a través de los Servicios. Podemos, a
-                            nuestra entera discreción, limitar o cancelar las
-                            cantidades compradas por persona, por hogar o por
-                            pedido.
+                            We reserve the right to refuse any order placed
+                            through the Services. We may, in our sole
+                            discretion, limit or cancel quantities purchased per
+                            person, per household, or per order.
                         </p>
                     </div>
 
-                    {/* ── 6. Suscripciones ── */}
+                    {/* ── 6. Subscriptions ── */}
                     <div className="space-y-4">
-                        <h2 className="t-h4 text-white-95">6. Suscripciones</h2>
+                        <h2 className="t-h4 text-white-95">6. Subscriptions</h2>
                         <p className="t-p text-white-80">
-                            <strong>Facturación y renovación:</strong> Su
-                            suscripción continuará y se renovará automáticamente a
-                            menos que sea cancelada. Usted da su consentimiento
-                            para que realicemos cargos recurrentes en su método de
-                            pago sin requerir su aprobación previa para cada
-                            cargo recurrente.
+                            <strong>Billing and renewal:</strong> Your
+                            subscription will continue and automatically renew
+                            unless canceled. You consent to our charging your
+                            payment method on a recurring basis without
+                            requiring your prior approval for each recurring
+                            charge.
                         </p>
                         <p className="t-p text-white-80">
-                            <strong>Anulación:</strong> Puede cancelar su
-                            suscripción en cualquier momento accediendo a su
-                            cuenta. La cancelación surtirá efecto al final del
-                            periodo de pago en curso. Si tiene alguna pregunta,
-                            envíenos un correo electrónico a{" "}
+                            <strong>Cancellation:</strong> You can cancel your
+                            subscription at any time by logging into your
+                            account. Your cancellation will take effect at the
+                            end of the current paid term. If you have any
+                            questions, please email us at{" "}
                             <a
                                 href="mailto:contact@adray.ai"
                                 className="underline"
@@ -396,10 +380,10 @@ export default function TermsOfServicePage() {
                             .
                         </p>
                         <p className="t-p text-white-80">
-                            <strong>Cambios en las tasas:</strong> Podemos, de vez
-                            en cuando, hacer cambios en la cuota de suscripción y
-                            le comunicaremos cualquier cambio de precio de
-                            conformidad con la legislación aplicable.
+                            <strong>Fee changes:</strong> We may, from time to
+                            time, make changes to the subscription fee and will
+                            communicate any price changes to you in accordance
+                            with applicable law.
                         </p>
                     </div>
 
@@ -407,520 +391,536 @@ export default function TermsOfServicePage() {
                     <div className="space-y-4">
                         <h2 className="t-h4 text-white-95">7. Software</h2>
                         <p className="t-p text-white-80">
-                            Podemos incluir software para su uso en relación con
-                            nuestros Servicios. Si dicho software va acompañado de
-                            un acuerdo de licencia de usuario final
-                            (&quot;CLUF&quot;), los términos del CLUF regirán su
-                            uso. Si no va acompañado de un CLUF, le concedemos un
-                            derecho de uso no exclusivo, revocable, personal e
-                            intransferible. Cualquier software y documentación
-                            relacionada se proporciona &quot;TAL CUAL&quot; sin
-                            garantía de ningún tipo.
+                            We may include software for use in connection with
+                            our Services. If such software is accompanied by an
+                            end user license agreement (&quot;EULA&quot;), the
+                            terms of the EULA will govern your use of the
+                            software. If such software is not accompanied by an
+                            EULA, we grant you a non-exclusive, revocable,
+                            personal, non-transferable license to use such
+                            software. Any software and any related
+                            documentation is provided &quot;AS IS&quot; without
+                            warranty of any kind.
                         </p>
                     </div>
 
-                    {/* ── 8. Actividades Prohibidas ── */}
+                    {/* ── 8. Prohibited Activities ── */}
                     <div className="space-y-4">
                         <h2 className="t-h4 text-white-95">
-                            8. Actividades Prohibidas
+                            8. Prohibited Activities
                         </h2>
                         <p className="t-p text-white-80">
-                            No podrá acceder a los Servicios ni utilizarlos para
-                            fines distintos de aquellos para los que los ponemos a
-                            su disposición. Como usuario de los Servicios, usted
-                            se compromete a no:
+                            You may not access or use the Services for any
+                            purpose other than that for which we make the
+                            Services available. As a user of the Services, you
+                            agree not to:
                         </p>
                         <ul className="list-disc pl-5 space-y-2 t-p text-white-80">
                             <li>
-                                Recuperar sistemáticamente datos u otros
-                                contenidos de los Servicios para crear
-                                colecciones, compilaciones, bases de datos o
-                                directorios sin nuestro permiso por escrito.
+                                Systematically retrieve data or other content
+                                from the Services to create or compile, directly
+                                or indirectly, a collection, compilation,
+                                database, or directory without written
+                                permission from us.
                             </li>
                             <li>
-                                Engañarnos, defraudarnos o engañarnos a nosotros
-                                y a otros usuarios, especialmente en cualquier
-                                intento de obtener información confidencial de la
-                                cuenta.
+                                Trick, defraud, or mislead us and other users,
+                                especially in any attempt to learn sensitive
+                                account information such as user passwords.
                             </li>
                             <li>
-                                Eludir, desactivar o interferir de cualquier otro
-                                modo con las funciones de seguridad de los
-                                Servicios.
+                                Circumvent, disable, or otherwise interfere
+                                with security-related features of the Services.
                             </li>
                             <li>
-                                Desprestigiar, empañar o perjudicar de cualquier
-                                otro modo a nosotros y/o a los Servicios.
+                                Disparage, tarnish, or otherwise harm, in our
+                                opinion, us and/or the Services.
                             </li>
                             <li>
-                                Utilizar cualquier información obtenida de los
-                                Servicios para acosar, abusar o dañar a otra
-                                persona.
+                                Use any information obtained from the Services
+                                in order to harass, abuse, or harm another
+                                person.
                             </li>
                             <li>
-                                Hacer un uso indebido de nuestros servicios de
-                                asistencia o presentar informes falsos.
+                                Make improper use of our support services or
+                                submit false reports of abuse or misconduct.
                             </li>
                             <li>
-                                Utilizar los Servicios de forma contraria a las
-                                leyes o reglamentos aplicables.
+                                Use the Services in a manner inconsistent with
+                                any applicable laws or regulations.
                             </li>
                             <li>
-                                Cargar o transmitir virus, troyanos u otro
-                                material que interfiera con los Servicios.
+                                Upload or transmit viruses, Trojan horses, or
+                                other material that interferes with any
+                                party&apos;s uninterrupted use and enjoyment of
+                                the Services.
                             </li>
                             <li>
-                                Participar en cualquier uso automatizado del
-                                sistema, incluido el uso de bots, scripts o
-                                herramientas de minería de datos.
+                                Engage in any automated use of the system, such
+                                as using scripts to send comments or messages,
+                                or using any data mining, robots, or similar
+                                data gathering and extraction tools.
                             </li>
                             <li>
-                                Intentar suplantar a otro usuario o persona.
+                                Attempt to impersonate another user or person.
                             </li>
                             <li>
-                                Interferir, interrumpir o crear una carga indebida
-                                en los Servicios.
+                                Interfere with, disrupt, or create an undue
+                                burden on the Services or the networks or
+                                services connected to the Services.
                             </li>
                             <li>
-                                Copiar o adaptar el software de los Servicios,
-                                incluidos Flash, PHP, HTML, JavaScript u otros
-                                códigos.
+                                Copy or adapt the Services&apos; software,
+                                including but not limited to Flash, PHP, HTML,
+                                JavaScript, or other code.
                             </li>
                             <li>
-                                Descifrar, descompilar, desensamblar o aplicar
-                                ingeniería inversa a cualquiera de los programas
-                                informáticos de los Servicios, salvo en la medida
-                                en que lo permita la legislación aplicable.
+                                Decipher, decompile, disassemble, or reverse
+                                engineer any of the software comprising or in
+                                any way making up a part of the Services, except
+                                as permitted by applicable law.
                             </li>
                             <li>
-                                Vender o transferir de cualquier otro modo su
-                                perfil.
+                                Sell or otherwise transfer your profile.
                             </li>
                             <li>
-                                Utilizar los Servicios para anunciar u ofrecer la
-                                venta de bienes y servicios.
+                                Use the Services to advertise or offer to sell
+                                goods and services.
                             </li>
                         </ul>
                     </div>
 
-                    {/* ── 9. Contribuciones Generadas por los Usuarios ── */}
+                    {/* ── 9. User-Generated Contributions ── */}
                     <div className="space-y-4">
                         <h2 className="t-h4 text-white-95">
-                            9. Contribuciones Generadas por los Usuarios
+                            9. User-Generated Contributions
                         </h2>
                         <p className="t-p text-white-80">
-                            Los Servicios pueden invitarle a chatear, contribuir o
-                            participar en blogs, tablones de mensajes, foros en
-                            línea y otras funcionalidades, y pueden ofrecerle la
-                            oportunidad de crear, enviar, publicar, mostrar,
-                            transmitir, ejecutar, publicar, distribuir o difundir
-                            contenidos y materiales (&quot;Contribuciones&quot;).
-                            Las contribuciones pueden ser vistas por otros
-                            usuarios de los Servicios y a través de sitios web de
-                            terceros. Por lo tanto, las contribuciones que usted
-                            transmita pueden ser tratadas como no confidenciales y
-                            sin derechos de propiedad.
+                            The Services may invite you to chat, contribute to,
+                            or participate in blogs, message boards, online
+                            forums, and other functionality, and may provide you
+                            with the opportunity to create, submit, post,
+                            display, transmit, perform, publish, distribute, or
+                            broadcast content and materials to us or on the
+                            Services (&quot;Contributions&quot;). Contributions
+                            may be viewable by other users of the Services and
+                            through third-party websites. As such, any
+                            Contributions you transmit may be treated as
+                            non-confidential and non-proprietary.
                         </p>
                         <p className="t-p text-white-80">
-                            Al crear o poner a disposición cualquier Contribución,
-                            usted declara y garantiza que: sus Contribuciones no
-                            infringen derechos de propiedad intelectual de
-                            terceros; usted es el creador y propietario o dispone
-                            de las licencias necesarias; sus Contribuciones no son
-                            falsas, inexactas o engañosas; no son publicidad no
-                            solicitada ni spam; no son obscenas, lascivas,
-                            violentas ni acosadoras; y no infringen ninguna ley o
-                            normativa aplicable.
+                            When you create or make available any
+                            Contributions, you thereby represent and warrant
+                            that: your Contributions do not infringe the
+                            intellectual property rights of any third party;
+                            you are the creator and owner or have the necessary
+                            licenses; your Contributions are not false,
+                            inaccurate, or misleading; they are not unsolicited
+                            advertising or spam; they are not obscene, lewd,
+                            violent, or harassing; and they do not violate any
+                            applicable law or regulation.
                         </p>
                     </div>
 
-                    {/* ── 10. Contribución Licencia ── */}
+                    {/* ── 10. Contribution License ── */}
                     <div className="space-y-4">
                         <h2 className="t-h4 text-white-95">
-                            10. Contribución — Licencia
+                            10. Contribution License
                         </h2>
                         <p className="t-p text-white-80">
-                            Al publicar sus Contribuciones en cualquier parte de
-                            los Servicios, usted nos concede automáticamente una
-                            licencia ilimitada, irrevocable, perpetua, no
-                            exclusiva, transferible, libre de derechos de autor,
-                            totalmente pagada, en todo el mundo, para alojar,
-                            utilizar, copiar, reproducir, revelar, vender,
-                            publicar, difundir, almacenar, ejecutar públicamente,
-                            mostrar públicamente, reformatear, traducir,
-                            transmitir, extraer y distribuir dichas
-                            Contribuciones para cualquier propósito.
+                            By posting your Contributions to any part of the
+                            Services, you automatically grant us an unlimited,
+                            irrevocable, perpetual, non-exclusive, transferable,
+                            royalty-free, fully paid, worldwide right and
+                            license to host, use, copy, reproduce, disclose,
+                            sell, publish, broadcast, store, publicly perform,
+                            publicly display, reformat, translate, transmit,
+                            excerpt, and distribute such Contributions for any
+                            purpose.
                         </p>
                         <p className="t-p text-white-80">
-                            No hacemos valer ninguna propiedad sobre sus
-                            Contribuciones. Usted conserva la plena propiedad de
-                            todas sus Contribuciones y de cualquier derecho de
-                            propiedad intelectual asociado. No somos responsables
-                            de ninguna declaración o representación en sus
-                            Contribuciones.
+                            We do not assert any ownership over your
+                            Contributions. You retain full ownership of all of
+                            your Contributions and any intellectual property
+                            rights or other proprietary rights associated with
+                            your Contributions. We are not liable for any
+                            statements or representations in your Contributions.
                         </p>
                     </div>
 
-                    {/* ── 11. Aplicación Móvil Licencia ── */}
+                    {/* ── 11. Mobile Application License ── */}
                     <div className="space-y-4">
                         <h2 className="t-h4 text-white-95">
-                            11. Aplicación Móvil — Licencia
+                            11. Mobile Application License
                         </h2>
                         <p className="t-p text-white-80">
-                            Si accede a los Servicios a través de la App, le
-                            concedemos un derecho revocable, no exclusivo,
-                            intransferible y limitado a instalar y utilizar la App
-                            en dispositivos electrónicos inalámbricos de su
-                            propiedad o bajo su control, estrictamente de acuerdo
-                            con los términos y condiciones de esta licencia.
+                            If you access the Services via the App, we grant
+                            you a revocable, non-exclusive, non-transferable,
+                            limited right to install and use the App on wireless
+                            electronic devices owned or controlled by you, and
+                            to access and use the App on such devices strictly
+                            in accordance with the terms and conditions of this
+                            license.
                         </p>
                         <p className="t-p text-white-80">
-                            <strong>Dispositivos Apple y Android:</strong> La
-                            licencia concedida para nuestra App se limita a
-                            utilizarla en un dispositivo que utilice los sistemas
-                            operativos Apple iOS o Android, según proceda, y de
-                            conformidad con las normas de uso establecidas en las
-                            condiciones de servicio del distribuidor de la
-                            aplicación correspondiente.
+                            <strong>Apple and Android devices:</strong> The
+                            license granted to you for our App is limited to a
+                            non-transferable license to use the App on a device
+                            that uses the Apple iOS or Android operating
+                            systems, as applicable, and in accordance with the
+                            usage rules set forth in the applicable app
+                            distributor&apos;s terms of service.
                         </p>
                     </div>
 
-                    {/* ── 12. Medios de Comunicación Social ── */}
+                    {/* ── 12. Social Media ── */}
                     <div className="space-y-4">
                         <h2 className="t-h4 text-white-95">
-                            12. Medios de Comunicación Social
+                            12. Social Media
                         </h2>
                         <p className="t-p text-white-80">
-                            Como parte de la funcionalidad de los Servicios, usted
-                            puede vincular su cuenta con cuentas en línea que
-                            tenga con terceros proveedores de servicios (cada una
-                            de dichas cuentas, una &quot;Cuenta de
-                            terceros&quot;). Usted declara y garantiza que tiene
-                            derecho a revelar los datos de acceso de su Cuenta de
-                            terceros y/o permitirnos acceder a ella, sin
-                            incumplimiento por su parte de ninguno de los términos
-                            aplicables.
+                            As part of the functionality of the Services, you
+                            may link your account with online accounts you have
+                            with third-party service providers (each such
+                            account, a &quot;Third-Party Account&quot;). You
+                            represent and warrant that you are entitled to
+                            disclose your Third-Party Account login information
+                            to us and/or grant us access to your Third-Party
+                            Account without breach on your part of any of the
+                            terms and conditions that govern your use of the
+                            applicable Third-Party Account.
                         </p>
                         <p className="t-p text-white-80">
-                            TENGA EN CUENTA QUE SU RELACIÓN CON LOS TERCEROS
-                            PROVEEDORES DE SERVICIOS SE RIGE EXCLUSIVAMENTE POR
-                            SU(S) ACUERDO(S) CON DICHOS TERCEROS PROVEEDORES.
-                        </p>
-                    </div>
-
-                    {/* ── 13. Sitios Web y Contenidos de Terceros ── */}
-                    <div className="space-y-4">
-                        <h2 className="t-h4 text-white-95">
-                            13. Sitios Web y Contenidos de Terceros
-                        </h2>
-                        <p className="t-p text-white-80">
-                            Los Servicios pueden contener enlaces a otros sitios
-                            web (&quot;Sitios web de terceros&quot;) así como
-                            contenidos procedentes de terceros (&quot;Contenidos
-                            de terceros&quot;). No investigamos, supervisamos ni
-                            comprobamos la exactitud de dichos contenidos. Si
-                            decide abandonar los Servicios y acceder a Sitios Web
-                            de terceros, lo hace por su cuenta y riesgo, y debe
-                            ser consciente de que estas Condiciones Legales ya no
-                            rigen.
+                            PLEASE NOTE THAT YOUR RELATIONSHIP WITH THE
+                            THIRD-PARTY SERVICE PROVIDERS ASSOCIATED WITH YOUR
+                            THIRD-PARTY ACCOUNTS IS GOVERNED SOLELY BY YOUR
+                            AGREEMENT(S) WITH SUCH THIRD-PARTY SERVICE
+                            PROVIDERS.
                         </p>
                     </div>
 
-                    {/* ── 14. Gestión de Servicios ── */}
+                    {/* ── 13. Third-Party Websites and Content ── */}
                     <div className="space-y-4">
                         <h2 className="t-h4 text-white-95">
-                            14. Gestión de Servicios
+                            13. Third-Party Websites and Content
                         </h2>
                         <p className="t-p text-white-80">
-                            Nos reservamos el derecho, pero no la obligación, de:
-                            (1) supervisar los Servicios para detectar
-                            infracciones; (2) emprender acciones legales oportunas
-                            contra infractores; (3) denegar, restringir el acceso,
-                            limitar la disponibilidad o inhabilitar cualquiera de
-                            sus Contribuciones; (4) eliminar archivos y contenidos
-                            de tamaño excesivo; y (5) gestionar los Servicios de
-                            un modo diseñado para proteger nuestros derechos y
-                            propiedad.
+                            The Services may contain links to other websites
+                            (&quot;Third-Party Websites&quot;) as well as
+                            content belonging to or originating from third
+                            parties (&quot;Third-Party Content&quot;). We do
+                            not investigate, monitor, or check such websites or
+                            content for accuracy. If you decide to leave the
+                            Services and access the Third-Party Websites, you
+                            do so at your own risk and should be aware that
+                            these Legal Terms no longer govern.
                         </p>
                     </div>
 
-                    {/* ── 15. Política de Privacidad ── */}
+                    {/* ── 14. Services Management ── */}
                     <div className="space-y-4">
                         <h2 className="t-h4 text-white-95">
-                            15. Política de Privacidad
+                            14. Services Management
                         </h2>
                         <p className="t-p text-white-80">
-                            Nos preocupamos por la privacidad y la seguridad de
-                            los datos. Consulte nuestra{" "}
+                            We reserve the right, but not the obligation, to:
+                            (1) monitor the Services for violations of these
+                            Legal Terms; (2) take appropriate legal action
+                            against anyone who violates the law or these Legal
+                            Terms; (3) refuse, restrict access to, limit the
+                            availability of, or disable any of your
+                            Contributions; (4) remove from the Services or
+                            otherwise disable all files and content that are
+                            excessive in size; and (5) otherwise manage the
+                            Services in a manner designed to protect our rights
+                            and property.
+                        </p>
+                    </div>
+
+                    {/* ── 15. Privacy Policy ── */}
+                    <div className="space-y-4">
+                        <h2 className="t-h4 text-white-95">
+                            15. Privacy Policy
+                        </h2>
+                        <p className="t-p text-white-80">
+                            We care about data privacy and security. Please
+                            review our{" "}
                             <a
                                 href="/privacy-policy"
                                 className="underline"
                             >
-                                Política de Privacidad
+                                Privacy Policy
                             </a>
-                            . Al utilizar los Servicios, usted acepta quedar
-                            vinculado por nuestra Política de Privacidad. Los
-                            Servicios están alojados en Estados Unidos. Si accede
-                            a los Servicios desde cualquier otra región, al
-                            continuar utilizando los Servicios estará
-                            transfiriendo sus datos a Estados Unidos y consiente
-                            expresamente dicha transferencia.
+                            . By using the Services, you agree to be bound by
+                            our Privacy Policy, which is incorporated into
+                            these Legal Terms. The Services are hosted in the
+                            United States. If you access the Services from any
+                            other region of the world, by continuing to use the
+                            Services, you are transferring your data to the
+                            United States and expressly consent to that
+                            transfer.
                         </p>
                     </div>
 
-                    {/* ── 16. Duración y Rescisión ── */}
+                    {/* ── 16. Term and Termination ── */}
                     <div className="space-y-4">
                         <h2 className="t-h4 text-white-95">
-                            16. Duración y Rescisión
+                            16. Term and Termination
                         </h2>
                         <p className="t-p text-white-80">
-                            Estas Condiciones Legales permanecerán en pleno vigor
-                            y efecto mientras usted utilice los Servicios. NOS
-                            RESERVAMOS EL DERECHO, A NUESTRA ENTERA DISCRECIÓN Y
-                            SIN PREVIO AVISO NI RESPONSABILIDAD, A DENEGAR EL
-                            ACCESO Y EL USO DE LOS SERVICIOS A CUALQUIER PERSONA
-                            POR CUALQUIER MOTIVO O SIN MOTIVO ALGUNO. PODEMOS
-                            PONER FIN A SU USO O PARTICIPACIÓN EN LOS SERVICIOS O
-                            ELIMINAR SU CUENTA Y CUALQUIER CONTENIDO EN CUALQUIER
-                            MOMENTO, SIN PREVIO AVISO, A NUESTRA ENTERA
-                            DISCRECIÓN.
+                            These Legal Terms shall remain in full force and
+                            effect while you use the Services. WE RESERVE THE
+                            RIGHT TO, IN OUR SOLE DISCRETION AND WITHOUT NOTICE
+                            OR LIABILITY, DENY ACCESS TO AND USE OF THE
+                            SERVICES (INCLUDING BLOCKING CERTAIN IP ADDRESSES),
+                            TO ANY PERSON FOR ANY REASON OR FOR NO REASON. WE
+                            MAY TERMINATE YOUR USE OR PARTICIPATION IN THE
+                            SERVICES OR DELETE YOUR ACCOUNT AND ANY CONTENT OR
+                            INFORMATION THAT YOU POSTED AT ANY TIME, WITHOUT
+                            WARNING, IN OUR SOLE DISCRETION.
                         </p>
                         <p className="t-p text-white-80">
-                            Si cancelamos o suspendemos su cuenta, se le prohíbe
-                            registrarse y crear una nueva cuenta con su nombre, un
-                            nombre falso o prestado, o el nombre de un tercero.
+                            If we terminate or suspend your account for any
+                            reason, you are prohibited from registering and
+                            creating a new account under your name, a fake or
+                            borrowed name, or the name of any third party.
                         </p>
                     </div>
 
-                    {/* ── 17. Modificaciones e Interrupciones ── */}
+                    {/* ── 17. Modifications and Interruptions ── */}
                     <div className="space-y-4">
                         <h2 className="t-h4 text-white-95">
-                            17. Modificaciones e Interrupciones
+                            17. Modifications and Interruptions
                         </h2>
                         <p className="t-p text-white-80">
-                            Nos reservamos el derecho a cambiar, modificar o
-                            eliminar el contenido de los Servicios en cualquier
-                            momento o por cualquier motivo, a nuestra entera
-                            discreción y sin previo aviso. No podemos garantizar
-                            que los Servicios estén disponibles en todo momento.
-                            Usted acepta que no tenemos responsabilidad alguna por
-                            cualquier pérdida causada por su incapacidad para
-                            acceder o utilizar los Servicios durante cualquier
-                            tiempo de inactividad.
+                            We reserve the right to change, modify, or remove
+                            the contents of the Services at any time or for any
+                            reason at our sole discretion without notice. We
+                            cannot guarantee the Services will be available at
+                            all times. You agree that we have no liability
+                            whatsoever for any loss, damage, or inconvenience
+                            caused by your inability to access or use the
+                            Services during any downtime or discontinuance of
+                            the Services.
                         </p>
                     </div>
 
-                    {/* ── 18. Derecho Aplicable ── */}
+                    {/* ── 18. Governing Law ── */}
                     <div className="space-y-4">
                         <h2 className="t-h4 text-white-95">
-                            18. Derecho Aplicable
+                            18. Governing Law
                         </h2>
                         <p className="t-p text-white-80">
-                            Estas Condiciones Legales y su uso de los Servicios se
-                            rigen e interpretan de acuerdo con las leyes del
-                            Estado de Delaware, aplicable a los acuerdos
-                            celebrados y que deban ejecutarse íntegramente en el
-                            Estado de Delaware, sin tener en cuenta sus principios
-                            de conflicto de leyes.
+                            These Legal Terms and your use of the Services are
+                            governed by and construed in accordance with the
+                            laws of the State of Delaware applicable to
+                            agreements made and to be entirely performed within
+                            the State of Delaware, without regard to its
+                            conflict of law principles.
                         </p>
                     </div>
 
-                    {/* ── 19. Resolución de Conflictos ── */}
+                    {/* ── 19. Dispute Resolution ── */}
                     <div className="space-y-4">
                         <h2 className="t-h4 text-white-95">
-                            19. Resolución de Conflictos
+                            19. Dispute Resolution
                         </h2>
                         <h3 className="t-p font-semibold text-white-90">
-                            Negociaciones informales
+                            Informal negotiations
                         </h3>
                         <p className="t-p text-white-80">
-                            Para agilizar la resolución y controlar el coste de
-                            cualquier disputa, las Partes acuerdan intentar
-                            primero negociar cualquier Disputa de manera informal
-                            durante al menos ciento veinte (120) días antes de
-                            iniciar el arbitraje.
+                            To expedite resolution and control the cost of any
+                            dispute, the Parties agree to first attempt to
+                            negotiate any Dispute informally for at least one
+                            hundred twenty (120) days before initiating
+                            arbitration.
                         </p>
                         <h3 className="t-p font-semibold text-white-90">
-                            Arbitraje vinculante
+                            Binding arbitration
                         </h3>
                         <p className="t-p text-white-80">
-                            Si las Partes no consiguen resolver una Disputa
-                            mediante negociaciones informales, la Disputa se
-                            resolverá definitiva y exclusivamente mediante
-                            arbitraje vinculante. USTED ENTIENDE QUE SIN ESTA
-                            DISPOSICIÓN, TENDRÍA DERECHO A DEMANDAR ANTE UN
-                            TRIBUNAL Y A TENER UN JUICIO CON JURADO. El arbitraje
-                            se iniciará y se desarrollará con arreglo al
-                            Reglamento de Arbitraje Comercial de la Asociación
-                            Americana de Arbitraje (&quot;AAA&quot;). El arbitraje
-                            tendrá lugar en New Castle, Delaware.
+                            If the Parties are unable to resolve a Dispute
+                            through informal negotiations, the Dispute will be
+                            finally and exclusively resolved through binding
+                            arbitration. YOU UNDERSTAND THAT WITHOUT THIS
+                            PROVISION, YOU WOULD HAVE THE RIGHT TO SUE IN COURT
+                            AND HAVE A JURY TRIAL. The arbitration shall be
+                            commenced and conducted under the Commercial
+                            Arbitration Rules of the American Arbitration
+                            Association (&quot;AAA&quot;). The arbitration
+                            shall take place in New Castle, Delaware.
                         </p>
                         <h3 className="t-p font-semibold text-white-90">
-                            Restricciones
+                            Restrictions
                         </h3>
                         <p className="t-p text-white-80">
-                            Las Partes acuerdan que cualquier arbitraje se
-                            limitará a la Disputa entre las Partes
-                            individualmente. No se acumulará ningún arbitraje con
-                            ningún otro procedimiento; no existe derecho ni
-                            autoridad para que ninguna Disputa sea arbitrada sobre
-                            la base de una acción colectiva.
+                            The Parties agree that any arbitration shall be
+                            limited to the Dispute between the Parties
+                            individually. No arbitration shall be joined with
+                            any other proceeding; there is no right or authority
+                            for any Dispute to be arbitrated on a class-action
+                            basis.
                         </p>
                     </div>
 
-                    {/* ── 20. Correcciones ── */}
+                    {/* ── 20. Corrections ── */}
                     <div className="space-y-4">
-                        <h2 className="t-h4 text-white-95">20. Correcciones</h2>
+                        <h2 className="t-h4 text-white-95">20. Corrections</h2>
                         <p className="t-p text-white-80">
-                            Puede haber información en los Servicios que contenga
-                            errores tipográficos, inexactitudes u omisiones. Nos
-                            reservamos el derecho a corregir cualquier error,
-                            inexactitud u omisión y a modificar o actualizar la
-                            información de los Servicios en cualquier momento, sin
-                            previo aviso.
+                            There may be information on the Services that
+                            contains typographical errors, inaccuracies, or
+                            omissions. We reserve the right to correct any
+                            errors, inaccuracies, or omissions and to change or
+                            update the information on the Services at any time,
+                            without prior notice.
                         </p>
                     </div>
 
-                    {/* ── 21. Aviso Legal ── */}
+                    {/* ── 21. Disclaimer ── */}
                     <div className="space-y-4">
-                        <h2 className="t-h4 text-white-95">21. Aviso Legal</h2>
+                        <h2 className="t-h4 text-white-95">21. Disclaimer</h2>
                         <p className="t-p text-white-80">
-                            LOS SERVICIOS SE PRESTAN &quot;TAL CUAL&quot; Y
-                            &quot;SEGÚN DISPONIBILIDAD&quot;. USTED ACEPTA QUE EL
-                            USO QUE HAGA DE LOS SERVICIOS SERÁ POR SU CUENTA Y
-                            RIESGO. EN LA MEDIDA EN QUE LA LEY LO PERMITA,
-                            RENUNCIAMOS A TODAS LAS GARANTÍAS, EXPRESAS O
-                            IMPLÍCITAS, EN RELACIÓN CON LOS SERVICIOS Y EL USO
-                            QUE USTED HAGA DE LOS MISMOS, INCLUIDAS LAS
-                            GARANTÍAS IMPLÍCITAS DE COMERCIABILIDAD, IDONEIDAD
-                            PARA UN FIN DETERMINADO Y NO INFRACCIÓN.
+                            THE SERVICES ARE PROVIDED ON AN AS-IS AND
+                            AS-AVAILABLE BASIS. YOU AGREE THAT YOUR USE OF THE
+                            SERVICES WILL BE AT YOUR SOLE RISK. TO THE FULLEST
+                            EXTENT PERMITTED BY LAW, WE DISCLAIM ALL WARRANTIES,
+                            EXPRESS OR IMPLIED, IN CONNECTION WITH THE SERVICES
+                            AND YOUR USE THEREOF, INCLUDING, WITHOUT LIMITATION,
+                            THE IMPLIED WARRANTIES OF MERCHANTABILITY, FITNESS
+                            FOR A PARTICULAR PURPOSE, AND NON-INFRINGEMENT.
                         </p>
                     </div>
 
-                    {/* ── 22. Limitaciones de Responsabilidad ── */}
-                    <div className="space-y-4">
-                        <h2 className="t-h4 text-white-95">
-                            22. Limitaciones de Responsabilidad
-                        </h2>
-                        <p className="t-p text-white-80">
-                            EN NINGÚN CASO NOSOTROS O NUESTROS DIRECTORES,
-                            EMPLEADOS O AGENTES SEREMOS RESPONSABLES ANTE USTED O
-                            ANTE TERCEROS POR NINGÚN DAÑO DIRECTO, INDIRECTO,
-                            CONSECUENTE, EJEMPLAR, INCIDENTAL, ESPECIAL O
-                            PUNITIVO, INCLUYENDO LUCRO CESANTE, PÉRDIDA DE
-                            INGRESOS, PÉRDIDA DE DATOS U OTROS DAÑOS DERIVADOS DE
-                            SU USO DE LOS SERVICIOS. NUESTRA RESPONSABILIDAD SE
-                            LIMITARÁ EN TODO MOMENTO AL IMPORTE ABONADO POR USTED
-                            A NOSOTROS DURANTE LOS TRES (3) MESES ANTERIORES A
-                            CUALQUIER CAUSA DE ACCIÓN.
-                        </p>
-                    </div>
-
-                    {/* ── 23. Indemnización ── */}
+                    {/* ── 22. Limitations of Liability ── */}
                     <div className="space-y-4">
                         <h2 className="t-h4 text-white-95">
-                            23. Indemnización
+                            22. Limitations of Liability
                         </h2>
                         <p className="t-p text-white-80">
-                            Usted se compromete a defendernos, indemnizarnos y
-                            eximirnos de toda responsabilidad, incluidas nuestras
-                            filiales y todos nuestros respectivos funcionarios,
-                            agentes y socios, de cualquier pérdida, daño,
-                            responsabilidad, reclamación o demanda, incluidos los
-                            honorarios razonables de abogados, efectuados por
-                            terceros debido a o derivados de: (1) sus
-                            Contribuciones; (2) el uso de los Servicios; (3) el
-                            incumplimiento de las presentes Condiciones Legales;
-                            (4) cualquier incumplimiento de sus declaraciones y
-                            garantías; (5) su violación de los derechos de un
-                            tercero; o (6) cualquier acto perjudicial manifiesto
-                            hacia cualquier otro usuario de los Servicios.
+                            IN NO EVENT WILL WE OR OUR DIRECTORS, EMPLOYEES,
+                            OR AGENTS BE LIABLE TO YOU OR ANY THIRD PARTY FOR
+                            ANY DIRECT, INDIRECT, CONSEQUENTIAL, EXEMPLARY,
+                            INCIDENTAL, SPECIAL, OR PUNITIVE DAMAGES, INCLUDING
+                            LOST PROFIT, LOST REVENUE, LOSS OF DATA, OR OTHER
+                            DAMAGES ARISING FROM YOUR USE OF THE SERVICES, EVEN
+                            IF WE HAVE BEEN ADVISED OF THE POSSIBILITY OF SUCH
+                            DAMAGES. OUR LIABILITY TO YOU FOR ANY CAUSE
+                            WHATSOEVER AND REGARDLESS OF THE FORM OF THE
+                            ACTION, WILL AT ALL TIMES BE LIMITED TO THE AMOUNT
+                            PAID, IF ANY, BY YOU TO US DURING THE THREE (3)
+                            MONTH PERIOD PRIOR TO ANY CAUSE OF ACTION ARISING.
                         </p>
                     </div>
 
-                    {/* ── 24. Datos de Usuario ── */}
+                    {/* ── 23. Indemnification ── */}
                     <div className="space-y-4">
                         <h2 className="t-h4 text-white-95">
-                            24. Datos de Usuario
+                            23. Indemnification
                         </h2>
                         <p className="t-p text-white-80">
-                            Conservaremos determinados datos que usted transmita a
-                            los Servicios con el fin de gestionar su
-                            funcionamiento. Aunque realizamos copias de seguridad
-                            periódicas, usted es el único responsable de todos los
-                            datos que transmita. Usted acepta que no tendremos
-                            ninguna responsabilidad ante usted por la pérdida o
-                            corrupción de dichos datos.
+                            You agree to defend, indemnify, and hold us
+                            harmless, including our subsidiaries, affiliates,
+                            and all of our respective officers, agents,
+                            partners, and employees, from and against any loss,
+                            damage, liability, claim, or demand, including
+                            reasonable attorneys&apos; fees and expenses, made
+                            by any third party due to or arising out of: (1)
+                            your Contributions; (2) use of the Services; (3)
+                            breach of these Legal Terms; (4) any breach of your
+                            representations and warranties set forth in these
+                            Legal Terms; (5) your violation of the rights of a
+                            third party, including but not limited to
+                            intellectual property rights; or (6) any overt
+                            harmful act toward any other user of the Services
+                            with whom you connected via the Services.
                         </p>
                     </div>
 
-                    {/* ── 25. Comunicaciones Electrónicas ── */}
+                    {/* ── 24. User Data ── */}
                     <div className="space-y-4">
                         <h2 className="t-h4 text-white-95">
-                            25. Comunicaciones, Transacciones y Firmas
-                            Electrónicas
+                            24. User Data
                         </h2>
                         <p className="t-p text-white-80">
-                            La visita a los Servicios, el envío de correos
-                            electrónicos y la cumplimentación de formularios en
-                            línea constituyen comunicaciones electrónicas. Usted
-                            da su consentimiento para recibir comunicaciones
-                            electrónicas, y acepta que todos los acuerdos, avisos,
-                            divulgaciones y otras comunicaciones que le
-                            proporcionemos electrónicamente satisfacen cualquier
-                            requisito legal de que dicha comunicación sea por
-                            escrito. POR LA PRESENTE, USTED ACEPTA EL USO DE
-                            FIRMAS, CONTRATOS, PEDIDOS Y OTROS REGISTROS
-                            ELECTRÓNICOS, ASÍ COMO LA ENTREGA ELECTRÓNICA DE
-                            NOTIFICACIONES, POLÍTICAS Y REGISTROS DE
-                            TRANSACCIONES.
+                            We will maintain certain data that you transmit to
+                            the Services for the purpose of managing the
+                            performance of the Services, as well as data
+                            relating to your use of the Services. Although we
+                            perform regular routine data backups, you are solely
+                            responsible for all data that you transmit or that
+                            relates to any activity you have undertaken using
+                            the Services. You agree that we shall have no
+                            liability to you for any loss or corruption of any
+                            such data.
+                        </p>
+                    </div>
+
+                    {/* ── 25. Electronic Communications ── */}
+                    <div className="space-y-4">
+                        <h2 className="t-h4 text-white-95">
+                            25. Electronic Communications, Transactions, and
+                            Signatures
+                        </h2>
+                        <p className="t-p text-white-80">
+                            Visiting the Services, sending us emails, and
+                            completing online forms constitute electronic
+                            communications. You consent to receive electronic
+                            communications, and you agree that all agreements,
+                            notices, disclosures, and other communications we
+                            provide to you electronically, via email and on the
+                            Services, satisfy any legal requirement that such
+                            communication be in writing. YOU HEREBY AGREE TO
+                            THE USE OF ELECTRONIC SIGNATURES, CONTRACTS,
+                            ORDERS, AND OTHER RECORDS, AND TO ELECTRONIC
+                            DELIVERY OF NOTICES, POLICIES, AND RECORDS OF
+                            TRANSACTIONS INITIATED OR COMPLETED BY US OR VIA
+                            THE SERVICES.
                         </p>
                     </div>
 
                     {/* ── 26. California ── */}
                     <div className="space-y-4">
                         <h2 className="t-h4 text-white-95">
-                            26. Usuarios y Residentes de California
+                            26. California Users and Residents
                         </h2>
                         <p className="t-p text-white-80">
-                            Si cualquier reclamación con nosotros no se resuelve
-                            satisfactoriamente, puede ponerse en contacto con la
-                            Unidad de Reclamaciones de la División de Servicios al
-                            Consumidor del Departamento de Asuntos del Consumidor
-                            de California por escrito a 1625 North Market Blvd,
-                            Suite N 112, Sacramento, California 95834 o por
-                            teléfono llamando al (800) 952-5210 o al (916)
-                            445-1254.
+                            If any complaint with us is not satisfactorily
+                            resolved, you can contact the Complaint Assistance
+                            Unit of the Division of Consumer Services of the
+                            California Department of Consumer Affairs in writing
+                            at 1625 North Market Blvd., Suite N 112,
+                            Sacramento, California 95834 or by telephone at
+                            (800) 952-5210 or (916) 445-1254.
                         </p>
                     </div>
 
-                    {/* ── 27. Varios ── */}
+                    {/* ── 27. Miscellaneous ── */}
                     <div className="space-y-4">
-                        <h2 className="t-h4 text-white-95">27. Varios</h2>
+                        <h2 className="t-h4 text-white-95">27. Miscellaneous</h2>
                         <p className="t-p text-white-80">
-                            Las presentes Condiciones Legales y cualesquiera
-                            políticas o normas de funcionamiento publicadas por
-                            nosotros en los Servicios constituyen la totalidad del
-                            acuerdo y entendimiento entre usted y nosotros. El
-                            hecho de que no ejerzamos cualquier derecho o
-                            disposición no constituirá una renuncia a dicho
-                            derecho. Si se determina que alguna disposición es
-                            ilegal, nula o inaplicable, dicha disposición se
-                            considerará separable y no afectará a la validez de
-                            las disposiciones restantes. No se crea ninguna
-                            relación de empresa conjunta, asociación, empleo o
-                            agencia entre usted y nosotros como resultado de
-                            estas Condiciones Legales.
+                            These Legal Terms and any policies or operating
+                            rules posted by us on the Services constitute the
+                            entire agreement and understanding between you and
+                            us. Our failure to exercise or enforce any right or
+                            provision of these Legal Terms shall not operate as
+                            a waiver of such right or provision. If any
+                            provision or part of a provision of these Legal
+                            Terms is determined to be unlawful, void, or
+                            unenforceable, that provision or part of the
+                            provision is deemed severable and does not affect
+                            the validity and enforceability of any remaining
+                            provisions. There is no joint venture, partnership,
+                            employment, or agency relationship created between
+                            you and us as a result of these Legal Terms.
                         </p>
                     </div>
 
-                    {/* ── 28. Anexo de Cumplimiento ── */}
+                    {/* ── 28. Compliance Addendum ── */}
                     <div className="space-y-4">
                         <h2 className="t-h4 text-white-95">
-                            28. Anexo de Cumplimiento: Disposiciones
-                            Suplementarias para el Cumplimiento de Anthropic
-                            (Claude), OpenAI (ChatGPT), Google OAuth y la Tienda
-                            de Aplicaciones de Shopify
+                            28. Compliance Addendum: Supplemental Provisions
+                            for Anthropic (Claude), OpenAI (ChatGPT), Google
+                            OAuth, and the Shopify App Store
                         </h2>
 
                         <h3 className="t-p font-semibold text-white-90">
@@ -1050,13 +1050,13 @@ export default function TermsOfServicePage() {
                         </p>
                     </div>
 
-                    {/* ── 29. Contacto ── */}
+                    {/* ── 29. Contact Us ── */}
                     <div className="space-y-4">
-                        <h2 className="t-h4 text-white-95">29. Contacto</h2>
+                        <h2 className="t-h4 text-white-95">29. Contact Us</h2>
                         <p className="t-p text-white-80">
-                            Para resolver una queja relativa a los Servicios o
-                            para recibir más información, póngase en contacto con
-                            nosotros en:
+                            In order to resolve a complaint regarding the
+                            Services or to receive further information regarding
+                            use of the Services, please contact us at:
                         </p>
                         <p className="t-p text-white-80">
                             Adray, Inc.
@@ -1067,7 +1067,7 @@ export default function TermsOfServicePage() {
                             <br />
                             United States
                             <br />
-                            Teléfono: +16194968692
+                            Phone: +16194968692
                             <br />
                             <a
                                 href="mailto:contact@adray.ai"

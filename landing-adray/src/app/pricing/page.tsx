@@ -206,7 +206,7 @@ export default function PricingPage() {
                                         <span className="text-ad-muted t-p-sm">/month</span>
                                     </div>
                                     <p className="mt-2 t-p-sm text-ad-muted">Free forever — 30-day rolling data · No credit card needed · AI and email support</p>
-                                    <div className="mt-6 mb-6">
+                                    <div className="mt-auto pt-6 mb-[7px]">
                                         <Button variant="primary" href="/login" className="w-full whitespace-nowrap min-h-[48px]">
                                             Get Started Free
                                         </Button>
@@ -242,7 +242,7 @@ export default function PricingPage() {
                                             </div>
                                         ))}
                                     </div>
-                                    <div className="mt-6 mb-2">
+                                    <div className="mt-auto pt-6 mb-2">
                                         <Button variant="primary" href="/login" className="w-full whitespace-nowrap min-h-[48px]">
                                             Start Signal
                                         </Button>
@@ -302,7 +302,7 @@ export default function PricingPage() {
                                         <span className="text-ad-muted t-p-sm">/month</span>
                                     </div>
                                     <p className="mt-2 t-p-sm text-ad-muted">Free forever — 30-day rolling data · No credit card needed · AI and email support</p>
-                                    <div className="mt-6 mb-2">
+                                    <div className="mt-auto pt-6 mb-2">
                                         <Button variant="primary" href="/login" className="w-full whitespace-nowrap min-h-[48px]">
                                             Get Started Free
                                         </Button>
