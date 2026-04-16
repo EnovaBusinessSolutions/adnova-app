@@ -365,17 +365,24 @@ export default function PricingPage() {
                             <div className="relative z-10 p-8 md:p-12">
                                 <div className="flex items-center gap-3 mb-4">
                                     <span className="t-p-sm uppercase tracking-widest text-ad-tag font-medium">Enterprise</span>
-                                    <span className="px-3 py-1 rounded-full border border-ad-border t-p-sm text-ad-muted">Custom pricing</span>
                                 </div>
                                 <h2 className="t-h3 text-white-100 mb-3">For advertisers and agencies that need invoicing, credit terms, white-glove setup, and dedicated customer support.</h2>
-                                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-6 mb-8">
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-6 mb-8">
+                                    <div className="rounded-xl border border-ad-border p-5">
+                                        <p className="t-p-sm text-ad-muted mb-1">Signal Enterprise</p>
+                                        <p className="t-h3 text-white-100">$499<span className="t-p-sm text-ad-muted font-normal">/month</span></p>
+                                    </div>
+                                    <div className="rounded-xl border border-ad-border p-5">
+                                        <p className="t-p-sm text-ad-muted mb-1">Core Enterprise</p>
+                                        <p className="t-h3 text-white-100">1% <span className="t-p-sm text-ad-muted font-normal">of ad spend, min $1,500/month</span></p>
+                                    </div>
+                                </div>
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-8">
                                     {[
                                         "Invoicing and credit terms (30–60 days)",
                                         "White-glove onboarding and setup",
-                                        "Dedicated customer success manager",
-                                        "SLA and priority support",
-                                        "Volume pricing",
-                                        "Signal or Core — your choice",
+                                        "Dedicated support",
+                                        "SLA",
                                     ].map((f) => (
                                         <div key={f} className="flex items-start gap-3">
                                             <Check size={15} className="text-ad-primary shrink-0 mt-0.5" />
