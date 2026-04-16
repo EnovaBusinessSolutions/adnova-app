@@ -7,6 +7,7 @@ import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useSettings } from "@/hooks/useSettings";
+import { GoogleMerchantSelectorDialog } from "@/components/google/GoogleMerchantSelectorDialog";
 
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 
@@ -88,11 +89,23 @@ type OnboardingStatus = {
       maxSelect: number;
     };
     shopify: { connected: boolean };
+    merchant: {
+      connected: boolean;
+      availableCount: number;
+      selectedCount: number;
+      requiredSelection: boolean;
+      selected: string[];
+      defaultMerchantId: string | null;
+      maxSelect: number;
+    };
+    integrationReady?: {
+      merchant?: boolean;
+    };
   };
 };
 
 type SettingsTab = "notifications" | "security" | "integrations";
-type DisconnectKind = "meta" | "google_ads" | "ga4" | "shopify";
+type DisconnectKind = "meta" | "google_ads" | "ga4" | "shopify" | "merchant";
 
 /* =========================
  * Query helpers
@@ -343,11 +356,12 @@ const Settings = () => {
       meta: !!st?.meta?.connected,
       googleAds: !!st?.googleAds?.connected,
       ga4: !!st?.ga4?.connected,
+      merchant: !!st?.merchant?.connected,
     };
   }, [st]);
 
   const connectedCount = useMemo(() => {
-    return [connections.shopify, connections.meta, connections.googleAds, connections.ga4].filter(Boolean).length;
+    return [connections.shopify, connections.meta, connections.googleAds, connections.ga4, connections.merchant].filter(Boolean).length;
   }, [connections]);
 
   const [me, setMe] = useState<{ plan?: string; subscription?: { status?: string } } | null>(null);
@@ -370,11 +384,29 @@ const Settings = () => {
   const [disconnectKind, setDisconnectKind] = useState<DisconnectKind>("google_ads");
   const [disconnectLoading, setDisconnectLoading] = useState(false);
   const [disconnectError, setDisconnectError] = useState<string | null>(null);
+  const [merchantSelectorOpen, setMerchantSelectorOpen] = useState(false);
+
+  const merchantNeedsSelection = !!(
+    connections.merchant &&
+    (st?.merchant?.requiredSelection ||
+      ((st?.merchant?.availableCount || 0) > 1 && (st?.merchant?.selectedCount || 0) === 0))
+  );
+
+  const merchantReady = !!(
+    st?.integrationReady?.merchant ||
+    (connections.merchant &&
+      ((st?.merchant?.selectedCount || 0) > 0 || !!st?.merchant?.defaultMerchantId) &&
+      !merchantNeedsSelection)
+  );
+
+  const merchantActionLabel = merchantReady ? "Connected" : merchantNeedsSelection ? "Select" : "Connect";
+  const merchantConnectUrl = `/auth/google/merchant/connect?returnTo=${encodeURIComponent("/dashboard/settings?tab=integrations&selector=1&google=ok&product=merchant")}`;
 
   const disconnectLabel = useMemo(() => {
     if (disconnectKind === "meta") return "Meta Ads";
     if (disconnectKind === "google_ads") return "Google Ads";
     if (disconnectKind === "ga4") return "Google Analytics (GA4)";
+    if (disconnectKind === "merchant") return "Google Merchant Center";
     return "Shopify";
   }, [disconnectKind]);
 
@@ -399,12 +431,25 @@ const Settings = () => {
     }
   };
 
+  useEffect(() => {
+    const qs = getQS();
+    const selector = qs.get("selector") === "1";
+    const product = (qs.get("product") || "").toLowerCase();
+    if (selector && product === "merchant" && qs.get("google") === "ok") {
+      setMerchantSelectorOpen(true);
+    }
+  }, []);
+
   const handleSave = async () => {
     await saveSettings();
   };
 
   const handleReset = () => {
     resetSettings();
+  };
+
+  const handleMerchantSaved = async () => {
+    await refreshConnections();
   };
 
   return (
@@ -581,6 +626,32 @@ const Settings = () => {
                               accent="from-violet-500/15 via-indigo-400/10 to-transparent"
                               onDisconnect={connections.ga4 ? () => openDisconnect("ga4") : undefined}
                             />
+
+                            <IntegrationRow
+                              icon={ShoppingBag}
+                              name="Google Merchant Center"
+                              subLabel={
+                                merchantReady
+                                  ? "Merchant Center account connected and ready for product intelligence."
+                                  : "Connect Merchant Center to unlock catalog and product feed insights."
+                              }
+                              connected={connections.merchant}
+                              onDisconnect={connections.merchant ? () => openDisconnect("merchant") : undefined}
+                            />
+                            {!merchantReady && (
+                              <div className="mt-2 flex justify-end">
+                                <Button
+                                  size="sm"
+                                  onClick={() => {
+                                    if (merchantNeedsSelection) { setMerchantSelectorOpen(true); return; }
+                                    if (!connections.merchant) { window.location.assign(merchantConnectUrl); }
+                                  }}
+                                  className="rounded-xl border border-white/10 bg-white/[0.05] px-4 text-white hover:bg-white/[0.08]"
+                                >
+                                  {merchantActionLabel} →
+                                </Button>
+                              </div>
+                            )}
                           </div>
                         </SectionShell>
                       </TabsContent>
@@ -682,6 +753,12 @@ const Settings = () => {
             </div>
           </Card>
         </div>
+
+        <GoogleMerchantSelectorDialog
+          open={merchantSelectorOpen}
+          onOpenChange={setMerchantSelectorOpen}
+          onSaved={handleMerchantSaved}
+        />
 
         <Dialog open={disconnectOpen} onOpenChange={(v) => !disconnectLoading && setDisconnectOpen(v)}>
           <DialogContent className="max-w-lg overflow-hidden rounded-[28px] border border-white/10 bg-[radial-gradient(circle_at_top_left,rgba(244,63,94,0.10),transparent_30%),linear-gradient(180deg,rgba(10,10,15,0.97),rgba(14,14,20,0.97))] text-white shadow-[0_30px_100px_rgba(0,0,0,0.5)] backdrop-blur-2xl">

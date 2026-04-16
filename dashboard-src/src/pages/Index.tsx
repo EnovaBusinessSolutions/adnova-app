@@ -15,7 +15,9 @@ import {
   Settings2,
   Sparkle,
   CheckCircle2,
+  ShoppingBag,
 } from "lucide-react";
+import { GoogleMerchantSelectorDialog } from "@/components/google/GoogleMerchantSelectorDialog";
 
 async function apiJson<T>(url: string) {
   const r = await fetch(url, { credentials: "include" });
@@ -70,6 +72,18 @@ type OnboardingStatus = {
       maxSelect: number;
     };
     shopify?: { connected: boolean };
+    merchant?: {
+      connected: boolean;
+      availableCount: number;
+      selectedCount: number;
+      requiredSelection: boolean;
+      selected: string[];
+      defaultMerchantId: string | null;
+      maxSelect: number;
+    };
+    integrationReady?: {
+      merchant?: boolean;
+    };
     pixel?: { connected: boolean; shop: string | null };
     pixels?: {
       meta?: {
@@ -153,8 +167,8 @@ function cleanConnectFlagsFromQS() {
   replaceQS(next);
 }
 
-type ASMOnly = "all" | "meta" | "googleAds" | "googleGa";
-type ASMRequired = { meta?: boolean; googleAds?: boolean; googleGa?: boolean };
+type ASMOnly = "all" | "meta" | "googleAds" | "googleGa" | "merchant";
+type ASMRequired = { meta?: boolean; googleAds?: boolean; googleGa?: boolean; merchant?: boolean };
 
 type PixelOnly = "metaPixel" | "googleConversion";
 type PixelRequired = { metaPixel?: boolean; googleConversion?: boolean };
@@ -513,6 +527,7 @@ export default function Index() {
   const [asmUiLoading, setAsmUiLoading] = useState(false);
   const [asmUiError, setAsmUiError] = useState<string | null>(null);
   const [pixelWizardOpen, setPixelWizardOpen] = useState(false);
+  const [merchantSelectorOpen, setMerchantSelectorOpen] = useState(false);
 
   const refreshConnections = async () => {
     setLoadingConnections(true);
@@ -537,6 +552,21 @@ export default function Index() {
   const metaConnected = !!st?.meta?.connected;
   const googleAdsConnected = !!st?.googleAds?.connected;
   const ga4Connected = !!st?.ga4?.connected;
+
+  const merchantConnected = !!st?.merchant?.connected;
+  const merchantReady = !!(
+    st?.integrationReady?.merchant ||
+    (merchantConnected &&
+      (st?.merchant?.selectedCount || 0) > 0 &&
+      !(st?.merchant?.requiredSelection))
+  );
+  const merchantNeedsPick = merchantConnected && !!(
+    st?.merchant?.requiredSelection ||
+    ((st?.merchant?.availableCount || 0) > 1 && (st?.merchant?.selectedCount || 0) === 0)
+  );
+  const connectGoogleMerchantUrl = `/auth/google/merchant/connect?returnTo=${encodeURIComponent(
+    `${window.location.origin}/?selector=1&google=ok&product=merchant`
+  )}`;
 
   // Pixel setup: true when wizard was completed (user.shop set on backend)
   // Also check localStorage as instant fallback before first API response
@@ -592,11 +622,13 @@ export default function Index() {
       !!st?.ga4?.requiredSelection ||
       ((st?.ga4?.availableCount || 0) > 1 && (st?.ga4?.selectedCount || 0) === 0);
 
-    return { meta, googleAds, ga4 };
+    const merchant = !!st?.merchant?.requiredSelection ||
+      ((st?.merchant?.availableCount || 0) > 1 && (st?.merchant?.selectedCount || 0) === 0);
+    return { meta, googleAds, ga4, merchant };
   }, [st]);
 
   const mustPickAnything = useMemo(() => {
-    return requiredSelectionSafe.meta || requiredSelectionSafe.googleAds || requiredSelectionSafe.ga4;
+    return requiredSelectionSafe.meta || requiredSelectionSafe.googleAds || requiredSelectionSafe.ga4 || requiredSelectionSafe.merchant;
   }, [requiredSelectionSafe]);
 
   const hasMetaMulti = (st?.meta?.availableCount || 0) > 1;
@@ -615,6 +647,10 @@ export default function Index() {
   const connectGoogleGa4Url = `/auth/google/ga/connect?returnTo=${encodeURIComponent(connectReturnToGoogleGa4)}`;
 
   const openSelectorFor = async (only: ASMOnly, required?: ASMRequired, showAll = false) => {
+    if (only === "merchant") {
+      setMerchantSelectorOpen(true);
+      return;
+    }
     setAsmUiError(null);
     setAsmUiLoading(true);
     try {
@@ -715,6 +751,10 @@ export default function Index() {
 
     if (selector || kind) {
       autoOpenedRef.current = true;
+      const product = (qs.get("product") || "").toLowerCase();
+      if (selector && product === "merchant") {
+        if (merchantNeedsPick) openSelectorFor("merchant", { merchant: true }, true);
+      }
       return;
     }
 
@@ -732,7 +772,7 @@ export default function Index() {
         googleGa: requiredSelectionSafe.ga4,
       },
     });
-  }, [loadingConnections, status, mustPickAnything, requiredSelectionSafe]);
+  }, [loadingConnections, status, mustPickAnything, requiredSelectionSafe, merchantNeedsPick]);
 
   const readyCtaRef = useRef<HTMLDivElement | null>(null);
   const didAutoScrollReadyRef = useRef(false);
@@ -922,6 +962,25 @@ export default function Index() {
           window.location.assign(connectGoogleGa4Url);
         },
       },
+      {
+        key: "merchant",
+        title: "Merchant Center",
+        desc: merchantReady
+          ? "Merchant Center account connected and ready for product intelligence."
+          : merchantNeedsPick
+            ? "Select your Merchant Center account to complete the setup."
+            : "Connect Merchant Center to unlock catalog and product feed insights.",
+        icon: <ShoppingBag className="h-4 w-4 text-[#B55CFF]" />,
+        state: merchantReady ? ("done" as StepState) : ("todo" as StepState),
+        todoLabel: merchantReady ? "Completed" : "Pending",
+        ctaLabel: merchantReady ? "Connected" : merchantNeedsPick ? "Select" : "Connect",
+        ctaDisabled: merchantReady,
+        onCta: () => {
+          if (merchantReady) return;
+          if (merchantNeedsPick) return openSelectorFor("merchant", { merchant: true }, true);
+          window.location.assign(connectGoogleMerchantUrl);
+        },
+      },
     ];
   }, [
     metaConnected,
@@ -946,6 +1005,10 @@ export default function Index() {
     googleConvConfirmed,
     metaReadyToContinue,
     adsReadyToContinue,
+    merchantConnected,
+    merchantReady,
+    merchantNeedsPick,
+    connectGoogleMerchantUrl,
   ]);
 
   return (
@@ -1176,6 +1239,11 @@ export default function Index() {
       </div>
     </DashboardLayout>
     <PixelSetupWizard open={pixelWizardOpen} onOpenChange={setPixelWizardOpen} />
+    <GoogleMerchantSelectorDialog
+      open={merchantSelectorOpen}
+      onOpenChange={setMerchantSelectorOpen}
+      onSaved={() => { void refreshConnections(); }}
+    />
   </>
   );
 }
