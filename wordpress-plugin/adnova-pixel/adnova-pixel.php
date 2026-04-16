@@ -3,7 +3,7 @@
  * Plugin Name: Adnova Pixel
  * Plugin URI: https://adnova.ai
  * Description: Instala automaticamente el pixel de Adnova en tu sitio WordPress y usa el dominio como Site ID.
- * Version: 1.2.5
+ * Version: 1.2.6
  * Author: Adnova
  * License: GPL-2.0-or-later
  * License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -15,7 +15,7 @@ if (!defined('ABSPATH')) {
 }
 
 final class Adnova_Pixel_Plugin {
-    const VERSION = '1.2.5';
+    const VERSION = '1.2.6';
     const OPTION_SCRIPT_URL = 'adnova_pixel_script_url';
     const OPTION_SITE_ID = 'adnova_pixel_site_id';
     const OPTION_CLARITY_ID = 'adnova_pixel_clarity_id';
@@ -57,6 +57,8 @@ final class Adnova_Pixel_Plugin {
         add_action('adnova_pixel_backfill_orders', array(__CLASS__, 'backfill_recent_orders'), 10, 1);
         // Migrate stored URLs from staging to production on every load (cheap, exits early once done)
         add_action('plugins_loaded', array(__CLASS__, 'maybe_migrate_to_production'));
+        // Direct backfill trigger from admin (no WP-Cron dependency)
+        add_action('admin_post_adnova_run_backfill', array(__CLASS__, 'handle_admin_run_backfill'));
         self::maybe_schedule_backfill();
     }
 
@@ -1093,6 +1095,45 @@ final class Adnova_Pixel_Plugin {
 
     // ── Admin settings page ───────────────────────────────────────────
 
+    /**
+     * Handles the "Force Backfill Now" button from admin settings.
+     * Runs directly (no WP-Cron dependency) so it works even on hosts
+     * with DISABLE_WP_CRON or no frontend traffic to trigger cron.
+     */
+    public static function handle_admin_run_backfill() {
+        if (!current_user_can('manage_options')) {
+            wp_die('Sin permisos');
+        }
+        if (!check_admin_referer('adnova_run_backfill')) {
+            wp_die('Nonce inválido');
+        }
+
+        // Reset so backfill runs fresh regardless of previous state.
+        delete_option(self::OPTION_BACKFILL_DONE);
+        wp_clear_scheduled_hook('adnova_pixel_backfill_orders');
+
+        // Increase PHP execution time for this admin request.
+        if (function_exists('set_time_limit')) {
+            @set_time_limit(300);
+        }
+
+        // Run directly — bypasses WP-Cron entirely.
+        self::backfill_recent_orders(1);
+
+        // If the function hit its internal time limit it will have scheduled
+        // the next page via WP-Cron. Spawn cron now so it fires immediately
+        // without waiting for a frontend visit.
+        if (function_exists('spawn_cron')) {
+            spawn_cron();
+        }
+
+        wp_safe_redirect(add_query_arg(
+            array('page' => 'adnova-pixel-settings', 'adnova_backfill_ok' => '1'),
+            admin_url('options-general.php')
+        ));
+        exit;
+    }
+
     public static function register_admin_menu() {
         add_options_page(
             'Adnova Pixel',
@@ -1122,9 +1163,19 @@ final class Adnova_Pixel_Plugin {
         }
         $clarity_id = get_option(self::OPTION_CLARITY_ID, '');
         $script_url = get_option(self::OPTION_SCRIPT_URL, self::DEFAULT_SCRIPT_URL);
+        $backfill_done  = get_option(self::OPTION_BACKFILL_DONE, '');
+        $backfill_target = self::get_backfill_marker();
+        $backfill_ok = isset($_GET['adnova_backfill_ok']);
         ?>
         <div class="wrap">
             <h1>Adnova Pixel — Configuración</h1>
+
+            <?php if ($backfill_ok): ?>
+            <div class="notice notice-success is-dismissible">
+                <p><strong>Backfill iniciado.</strong> Los pedidos históricos se están sincronizando con AdRay. Refresca la dashboard de producción en 60 segundos.</p>
+            </div>
+            <?php endif; ?>
+
             <form method="post" action="options.php">
                 <?php settings_fields('adnova_pixel_settings_group'); ?>
                 <table class="form-table" role="presentation">
@@ -1169,6 +1220,7 @@ final class Adnova_Pixel_Plugin {
                 </table>
                 <?php submit_button('Guardar cambios'); ?>
             </form>
+
             <hr/>
             <h2>Estado</h2>
             <ul>
@@ -1176,7 +1228,27 @@ final class Adnova_Pixel_Plugin {
                 <li><strong>Clarity ID:</strong> <?php echo $clarity_id ? esc_html($clarity_id) : '<em>No configurado</em>'; ?></li>
                 <li><strong>Pixel URL:</strong> <?php echo esc_html($script_url); ?></li>
                 <li><strong>Versión:</strong> <?php echo esc_html(self::VERSION); ?></li>
+                <li>
+                    <strong>Backfill histórico:</strong>
+                    <?php if ($backfill_done === $backfill_target): ?>
+                        <span style="color:green;">✓ Completado (<code><?php echo esc_html($backfill_done); ?></code>)</span>
+                    <?php else: ?>
+                        <span style="color:orange;">⏳ Pendiente</span>
+                        <?php if ($backfill_done): ?>
+                            — último run: <code><?php echo esc_html($backfill_done); ?></code>
+                        <?php endif; ?>
+                    <?php endif; ?>
+                </li>
             </ul>
+
+            <hr/>
+            <h2>Sincronización de pedidos históricos</h2>
+            <p>Sincroniza los últimos <?php echo esc_html(self::get_backfill_days() > 0 ? self::get_backfill_days() . ' días' : 'todos'); ?> de pedidos de WooCommerce con AdRay de forma inmediata, sin depender de WP-Cron.</p>
+            <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
+                <input type="hidden" name="action" value="adnova_run_backfill">
+                <?php wp_nonce_field('adnova_run_backfill'); ?>
+                <?php submit_button('Forzar Backfill Ahora', 'secondary', 'submit', false); ?>
+            </form>
         </div>
         <?php
     }
