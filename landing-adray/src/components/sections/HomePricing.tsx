@@ -119,8 +119,19 @@ export default function HomePricing() {
                                             </span>
                                         </div>
                                     ) : (
-                                        <div className="mt-3">
-                                            <p className="t-h4 text-gradient">Custom</p>
+                                        <div className="mt-3 space-y-2">
+                                            <div>
+                                                <p className="t-p-sm text-ad-muted">Signal Enterprise</p>
+                                                <p className="t-p text-white-90 font-semibold">
+                                                    $499<span className="text-ad-muted font-normal">/month</span>
+                                                </p>
+                                            </div>
+                                            <div>
+                                                <p className="t-p-sm text-ad-muted">Core Enterprise</p>
+                                                <p className="t-p text-white-90 font-semibold">
+                                                    1%<span className="text-ad-muted font-normal"> of ad spend, min $1,500/mo</span>
+                                                </p>
+                                            </div>
                                         </div>
                                     )}
 
@@ -133,7 +144,7 @@ export default function HomePricing() {
                                         <div className="mt-2 t-p-sm">&nbsp;</div>
                                     )}
 
-                                    <div className={`${plan.monthlyPrice === null ? "mt-8" : "mt-6"} mb-8`}>
+                                    <div className="mt-6 mb-8">
                                         <Button
                                             variant="primary"
                                             href={plan.ctaHref}
