@@ -1,6 +1,6 @@
 // dashboard-src/src/components/Sidebar.tsx
 import React, { useEffect, useMemo, useState } from "react";
-import { Settings, ChevronLeft, ChevronRight, LogOut, Compass } from "lucide-react";
+import { Settings, ChevronLeft, ChevronRight, LogOut, Compass, ChartColumn } from "lucide-react";
 import { Link, useLocation } from "react-router-dom";
 
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -20,10 +20,14 @@ type NavItem = {
 };
 
 const START_PATH = "/";
+const ATTRIBUTION_PATH = "/attribution";
 const SETTINGS_PATH = "/settings";
 const LOGOUT_PATH = "/logout";
 
-const PRIMARY: NavItem[] = [{ icon: <Compass className="h-5 w-5" />, label: "Get started", path: START_PATH }];
+const PRIMARY: NavItem[] = [
+  { icon: <Compass className="h-5 w-5" />, label: "Get started", path: START_PATH },
+  { icon: <ChartColumn className="h-5 w-5" />, label: "Attribution", path: ATTRIBUTION_PATH },
+];
 
 const SECONDARY: NavItem[] = [{ icon: <Settings className="h-5 w-5" />, label: "Settings", path: SETTINGS_PATH }];
 

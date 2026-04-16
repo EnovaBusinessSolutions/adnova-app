@@ -5738,18 +5738,26 @@
                         <span class="journey-chip" data-tooltip="Initial landing page captured for this stitched journey."><i class="fa-solid fa-door-open"></i>${escapeHtml(journeyData.summary?.landing || 'No landing captured')}</span>
                         <span class="journey-chip" data-tooltip="How many stitched sessions currently support this purchase path."><i class="fa-solid fa-layer-group"></i>${sessionCount} sessions</span>
                     </div>
+                    ${renderBehavioralSignalsBadge(purchase.behavioralSignals, purchase.recordingStatus, purchase.recordingDurationMs)}
                     <div>
                         <p class="font-medium text-gray-900 mb-1">UTM URL history for this journey</p>
                         ${renderTrackedUtmHistory(purchaseUtmHistory, { emptyMessage: 'No UTM URLs have been captured yet for this selected journey.' })}
                     </div>
                     <div class="flex items-center justify-end gap-2 flex-wrap">
-                        ${purchase.clarityPlaybackUrl ? `
-                        <a href="${escapeHtml(purchase.clarityPlaybackUrl)}" target="_blank" rel="noopener noreferrer"
-                           class="journey-export-btn"
-                           style="background:#5c2d91;color:#fff;text-decoration:none;display:inline-flex;align-items:center;gap:6px;">
+                        ${purchase.rrwebRecordingId ? `
+                        <button type="button" class="journey-export-btn"
+                           style="background:#7c3aed;color:#fff;display:inline-flex;align-items:center;gap:6px;"
+                           onclick="adrayOpenPlayer('${escapeInlineSingleQuotedJs(purchase.rrwebRecordingId)}','${escapeInlineSingleQuotedJs(purchase.sessionId || '')}')">
                             <i class="fa-solid fa-circle-play"></i>
                             Ver grabación
-                        </a>` : ''}
+                        </button>` :
+                        (typeof purchase.clarityPlaybackUrl === 'string' && purchase.clarityPlaybackUrl.startsWith('http')) ? `
+                        <button type="button" class="journey-export-btn"
+                           style="background:#5c2d91;color:#fff;display:inline-flex;align-items:center;gap:6px;"
+                           onclick="adrayOpenClarityModal('${escapeInlineSingleQuotedJs(purchase.clarityPlaybackUrl)}')">
+                            <i class="fa-solid fa-circle-play"></i>
+                            Ver grabación
+                        </button>` : ''}
                         <button type="button" class="journey-export-btn" onclick="downloadSingleJourneyCsv('${escapeInlineSingleQuotedJs(selectionKey)}')">
                             <i class="fa-solid fa-file-arrow-down"></i>
                             Download CSV
@@ -5759,6 +5767,52 @@
                     ${renderJourneyVerticalTimeline(journeyData.timelineEvents)}
                 </div>
             `;
+        }
+
+        function renderBehavioralSignalsBadge(signals, recordingStatus, durationMs) {
+            if (!signals || typeof signals !== 'object') {
+                // No rrweb recording yet — nothing to show
+                return '';
+            }
+            const riskScore    = signals.riskScore ?? null;
+            const rageClicks   = signals.rageClickCount || 0;
+            const exitIntents  = signals.exitIntentCount || 0;
+            const formAbandon  = signals.formAbandonCount || 0;
+            const pattern      = signals.abandonmentPattern || null;
+            const hesitationMs = signals.totalHesitationMs || 0;
+
+            // Risk color
+            const riskColor = riskScore === null ? '#9ca3af'
+                : riskScore >= 70 ? '#f87171'
+                : riskScore >= 40 ? '#fbbf24'
+                : '#4ade80';
+
+            const patternLabel = {
+                shipping_shock:        '🚢 Shipping shock',
+                form_friction:         '📝 Form friction',
+                rage_exit:             '😤 Rage exit',
+                passive_browse:        '👀 Passive browse',
+                high_value_hesitation: '💭 High-value hesitation',
+                exit_intent:           '🚪 Exit intent',
+                unknown:               null,
+            }[pattern] || null;
+
+            const dur = durationMs ? `${Math.round(durationMs / 1000)}s` : null;
+
+            const chips = [];
+            if (riskScore !== null) chips.push(`<span style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:12px;font-size:11px;font-weight:600;background:${riskColor}22;color:${riskColor};border:1px solid ${riskColor}44;" data-tooltip="Abandonment risk score extracted from session recording."><i class="fa-solid fa-gauge-high" style="font-size:10px;"></i> Risk ${riskScore}/100</span>`);
+            if (patternLabel) chips.push(`<span style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:12px;font-size:11px;background:#312e81;color:#c4b5fd;border:1px solid #4c1d9544;" data-tooltip="Detected behavioral pattern from the session recording.">${escapeHtml(patternLabel)}</span>`);
+            if (rageClicks > 0) chips.push(`<span style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:12px;font-size:11px;background:#4c1d1d;color:#fca5a5;border:1px solid #7f1d1d44;" data-tooltip="Number of rage-click clusters detected."><i class="fa-solid fa-hand-fist" style="font-size:10px;"></i> ${rageClicks} rage click${rageClicks > 1 ? 's' : ''}</span>`);
+            if (exitIntents > 0) chips.push(`<span style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:12px;font-size:11px;background:#1c2e1c;color:#86efac;border:1px solid #14532d44;" data-tooltip="Exit-intent movements detected (cursor moving toward browser chrome)."><i class="fa-solid fa-arrow-right-from-bracket" style="font-size:10px;"></i> ${exitIntents} exit intent${exitIntents > 1 ? 's' : ''}</span>`);
+            if (formAbandon > 0) chips.push(`<span style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:12px;font-size:11px;background:#1c1c2e;color:#a5b4fc;border:1px solid #312e8144;" data-tooltip="Form fields that were touched but left empty."><i class="fa-solid fa-file-pen" style="font-size:10px;"></i> ${formAbandon} form abandon</span>`);
+            if (hesitationMs > 5000) chips.push(`<span style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:12px;font-size:11px;background:#1c1c1c;color:#d1d5db;border:1px solid #37415144;" data-tooltip="Total time spent hesitating (cursor idle) during checkout."><i class="fa-solid fa-clock" style="font-size:10px;"></i> ${Math.round(hesitationMs / 1000)}s hesitation</span>`);
+            if (dur) chips.push(`<span style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:12px;font-size:11px;background:#111827;color:#6b7280;border:1px solid #37415144;" data-tooltip="Total recorded session duration."><i class="fa-solid fa-video" style="font-size:10px;"></i> ${dur}</span>`);
+
+            if (!chips.length) return '';
+
+            return `<div style="display:flex;flex-wrap:wrap;gap:6px;padding:8px 0 4px;">
+                ${chips.join('')}
+            </div>`;
         }
 
         function renderJourneyVerticalTimeline(events = []) {
@@ -6361,6 +6415,222 @@
                 alert('Could not download this journey.');
             }
         }
+
+        // ─── Recording Modal Player ───────────────────────────────────────────────
+        var _adrayPlayerLibLoaded = false;
+
+        function adrayCloseModal() {
+            const modal = document.getElementById('adray-recording-modal');
+            if (modal) modal.style.display = 'none';
+            // Destroy any running player to free memory
+            const content = document.getElementById('adray-modal-content');
+            if (content) content.innerHTML = '';
+        }
+
+        // Close on Escape key
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'Escape') adrayCloseModal();
+        });
+
+        function _adrayShowModal(titleText) {
+            const modal = document.getElementById('adray-recording-modal');
+            const title = document.getElementById('adray-modal-title');
+            const content = document.getElementById('adray-modal-content');
+            const signals = document.getElementById('adray-modal-signals');
+            title.textContent = titleText || 'Grabación de sesión';
+            content.innerHTML = '<p style="color:#9ca3af;font-size:13px;padding:40px 0;text-align:center;">Cargando grabación…</p>';
+            signals.style.display = 'none';
+            signals.innerHTML = '';
+            modal.style.display = 'flex';
+        }
+
+        async function adrayOpenPlayer(recordingId, sessionId) {
+            _adrayShowModal('Grabación de sesión');
+            const content = document.getElementById('adray-modal-content');
+            const signals = document.getElementById('adray-modal-signals');
+            const title = document.getElementById('adray-modal-title');
+
+            try {
+                // 1. Fetch recording metadata + presigned URL
+                const resp = await fetch(`/api/recording/${encodeURIComponent(currentShopId)}/${encodeURIComponent(recordingId)}`);
+                const data = await resp.json();
+                console.log('[adrayOpenPlayer] recording data:', data);
+
+                if (!data.ok) {
+                    content.innerHTML = `<p style="color:#f87171;font-size:13px;padding:40px;text-align:center;">Error: ${data.error || 'Recording not found'}</p>`;
+                    return;
+                }
+
+                if (!data.presignedUrl) {
+                    const status = data.recording?.status || 'unknown';
+                    const msgs = {
+                        RECORDING: 'Grabando… el cliente aún está en la página.',
+                        FINALIZING: 'Procesando grabación… espera unos segundos e intenta de nuevo.',
+                        ERROR: 'Error al procesar la grabación.',
+                        unknown: `Estado: ${status}`,
+                    };
+                    content.innerHTML = `<p style="color:#fbbf24;font-size:13px;padding:40px;text-align:center;">${msgs[status] || msgs.unknown}</p>`;
+                    return;
+                }
+
+                // Update title with cart + duration info
+                const rec = data.recording;
+                if (rec) {
+                    const cart = rec.cartValue ? ` · $${Number(rec.cartValue).toFixed(2)}` : '';
+                    const dur = rec.durationMs ? ` · ${Math.round(rec.durationMs / 1000)}s` : '';
+                    const outcome = rec.outcome ? ` · ${rec.outcome === 'PURCHASED' ? '✓ Compró' : rec.outcome === 'ABANDONED' ? '✗ Abandonó' : ''}` : '';
+                    title.textContent = `Grabación de sesión${cart}${dur}${outcome}`;
+                }
+
+                // 2. Lazy-load rrweb-player (self-hosted, ad-blocker safe)
+                if (!_adrayPlayerLibLoaded) {
+                    content.innerHTML = '<p style="color:#9ca3af;font-size:13px;padding:40px 0;text-align:center;">Cargando reproductor…</p>';
+                    await new Promise((resolve, reject) => {
+                        const css = document.createElement('link');
+                        css.rel = 'stylesheet';
+                        css.href = '/static/rp.css';
+                        document.head.appendChild(css);
+                        const s = document.createElement('script');
+                        s.src = '/static/rp.js';
+                        s.onload = resolve;
+                        s.onerror = reject;
+                        document.head.appendChild(s);
+                    });
+                    _adrayPlayerLibLoaded = true;
+                }
+
+                // 3. Fetch events from R2 presigned URL
+                content.innerHTML = '<p style="color:#9ca3af;font-size:13px;padding:40px 0;text-align:center;">Descargando eventos…</p>';
+                const eventsResp = await fetch(data.presignedUrl);
+                const eventsRaw = await eventsResp.json();
+                const eventsArr = Array.isArray(eventsRaw) ? eventsRaw : (eventsRaw?.events || []);
+
+                // ── Diagnostic logs ──────────────────────────────────────────
+                // rrweb event types: 0=DomContentLoaded 1=Load 2=FullSnapshot
+                //                   3=IncrementalSnapshot 4=Meta 5=Custom
+                // IncrementalSnapshot sources: 0=Mutation 1=MouseMove 2=MouseInteraction
+                //   3=Scroll 4=ViewportResize 5=Input 8=StyleSheetRule
+                const typeCount = {};
+                let mouseMovCount = 0, mutationCount = 0, stylesheetRuleCount = 0;
+                let fullSnapshotNode = null, metaEvent = null;
+                for (const ev of eventsArr) {
+                    typeCount[ev.type] = (typeCount[ev.type] || 0) + 1;
+                    if (ev.type === 2) fullSnapshotNode = ev;   // FullSnapshot
+                    if (ev.type === 4) metaEvent = ev;          // Meta (viewport)
+                    if (ev.type === 3) {
+                        if (ev.data?.source === 1) mouseMovCount++;
+                        if (ev.data?.source === 0) mutationCount++;
+                        if (ev.data?.source === 8) stylesheetRuleCount++;
+                    }
+                }
+                console.group('[adrayOpenPlayer] Event diagnostics ─ ' + eventsArr.length + ' total');
+                console.log('Type breakdown:', typeCount);
+                console.log('Mouse move events (source=1):', mouseMovCount);
+                console.log('DOM mutation events (source=0):', mutationCount);
+                console.log('StyleSheetRule events (source=8):', stylesheetRuleCount);
+                console.log('Meta (viewport):', metaEvent?.data || 'MISSING');
+                if (fullSnapshotNode) {
+                    const snap = fullSnapshotNode.data;
+                    const hasInitialOffset = snap?.initialOffset != null;
+                    const nodeType = snap?.node?.type;
+                    const childCount = snap?.node?.childNodes?.length || 0;
+                    const cssNodes = [];
+                    (function walkCss(node) {
+                        if (!node) return;
+                        if (node.type === 8 /* Comment */ || node.type === 1 /* DocumentType */) return;
+                        if (node.tagName === 'style' || node.tagName === 'link') cssNodes.push({ tag: node.tagName, attrs: node.attributes });
+                        (node.childNodes || []).forEach(walkCss);
+                    })(snap?.node);
+                    console.log('FullSnapshot: node type=' + nodeType + ' children=' + childCount + ' initialOffset=' + hasInitialOffset);
+                    console.log('FullSnapshot: CSS nodes found (style/link tags):', cssNodes.length, cssNodes.slice(0, 5));
+                    console.log('FullSnapshot: inlineStylesheet flag (from snap):', snap?.node?.attributes?.['data-rrweb-id'] ? 'has rrweb id' : 'no rrweb id');
+                } else {
+                    console.error('FullSnapshot MISSING — player will show blank');
+                }
+                console.groupEnd();
+                // ── End diagnostics ──────────────────────────────────────────
+
+                if (!eventsArr.length) {
+                    content.innerHTML = '<p style="color:#f87171;font-size:13px;padding:40px;text-align:center;">Sin eventos de grabación (0 eventos).</p>';
+                    return;
+                }
+
+                if (!fullSnapshotNode) {
+                    const diagMsg = `Sin FullSnapshot en la grabación (${eventsArr.length} eventos: ${JSON.stringify(typeCount)}). La grabación no puede reproducirse.`;
+                    console.error('[adrayOpenPlayer]', diagMsg);
+                    content.innerHTML = `<p style="color:#f87171;font-size:13px;padding:40px;text-align:center;">${diagMsg}</p>`;
+                    return;
+                }
+
+                // 4. Render rrweb player — size to fit modal
+                content.innerHTML = '';
+                content.style.cssText = 'flex:1;overflow:hidden;background:#000;border-radius:0 0 12px 12px;';
+                const playerWidth  = Math.min(940, Math.floor(window.innerWidth  * 0.94));
+                const playerHeight = Math.min(580, Math.floor(window.innerHeight * 0.72));
+
+                try {
+                    new window.rrwebPlayer({
+                        target: content,
+                        props: {
+                            events: eventsArr,
+                            width:  playerWidth,
+                            height: playerHeight,
+                            autoPlay: true,
+                            showController: true,
+                            skipInactive: true,
+                            speed: 1,
+                        },
+                    });
+                    console.log('[adrayOpenPlayer] player rendered:', eventsArr.length, 'events @', playerWidth, 'x', playerHeight,
+                        '| mouseMoves:', mouseMovCount, '| mutations:', mutationCount);
+                } catch (playerErr) {
+                    console.error('[adrayOpenPlayer] player init error:', playerErr);
+                    content.innerHTML = `<p style="color:#f87171;font-size:13px;padding:40px;text-align:center;">Error al inicializar player: ${playerErr.message}</p>`;
+                    return;
+                }
+
+                // 5. Behavioral signals strip
+                if (rec?.behavioralSignals) {
+                    const sig = rec.behavioralSignals;
+                    const archetype = sig.archetype ? `<strong>${sig.archetype.replace(/_/g, ' ')}</strong> · ` : '';
+                    const score     = sig.riskScore != null ? `Riesgo: ${sig.riskScore}/100 · ` : '';
+                    const narrative = sig.narrative ? `<br><span style="color:#e2e8f0;font-style:italic;">${sig.narrative}</span>` : '';
+                    signals.innerHTML = `<span style="font-size:12px;color:#c4b5fd;"><i class="fa-solid fa-brain"></i> ${archetype}${score}${sig.abandonmentPattern || ''}${narrative}</span>`;
+                    signals.style.display = 'block';
+                }
+
+            } catch (err) {
+                console.error('[adrayOpenPlayer] Error:', err);
+                content.innerHTML = '<p style="color:#f87171;font-size:13px;padding:40px;text-align:center;">Error cargando grabación.</p>';
+            }
+        }
+
+        function adrayOpenClarityModal(url) {
+            _adrayShowModal('Grabación de sesión · Microsoft Clarity');
+            const content = document.getElementById('adray-modal-content');
+            content.style.cssText = 'flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:40px;background:#111827;border-radius:0 0 12px 12px;';
+
+            const isValidUrl = typeof url === 'string' && url.startsWith('http');
+            if (!isValidUrl) {
+                content.innerHTML = `
+                    <i class="fa-solid fa-link-slash" style="font-size:36px;color:#6b7280;margin-bottom:16px;"></i>
+                    <p style="color:#e5e7eb;font-size:14px;font-weight:600;margin-bottom:6px;">Grabación no disponible</p>
+                    <p style="color:#9ca3af;font-size:12px;text-align:center;max-width:300px;">El enlace de esta grabación no es válido o expiró.</p>`;
+                return;
+            }
+
+            const safeUrl = url.replace(/"/g, '&quot;');
+            content.innerHTML = `
+                <i class="fa-solid fa-circle-play" style="font-size:40px;color:#7c3aed;margin-bottom:16px;"></i>
+                <p style="color:#e5e7eb;font-size:14px;font-weight:600;margin-bottom:6px;">Grabación en Microsoft Clarity</p>
+                <p style="color:#9ca3af;font-size:12px;margin-bottom:24px;text-align:center;max-width:320px;">Esta grabación está almacenada en Clarity y no puede reproducirse aquí.<br>Ábrela en una nueva pestaña.</p>
+                <a href="${safeUrl}" target="_blank" rel="noopener noreferrer"
+                   onclick="adrayCloseModal()"
+                   style="display:inline-flex;align-items:center;gap:8px;padding:10px 22px;background:#5c2d91;color:#fff;border-radius:8px;text-decoration:none;font-size:13px;font-weight:600;">
+                    <i class="fa-solid fa-arrow-up-right-from-square"></i> Abrir en Clarity
+                </a>`;
+        }
+        // ─── End Recording Modal Player ───────────────────────────────────────────
 
         function rebuildJourneyProfileLookup(profiles = []) {
             const byCustomerId = new Map();
@@ -7437,14 +7707,15 @@
                 <p><strong>GA4 Session Source:</strong> ${session.ga4SessionSource || '-'}</p>
                 <p><strong>Referrer:</strong> ${session.referrer || '-'}</p>
                 <p><strong>IP Hash:</strong> ${session.ipHash ? `${String(session.ipHash).slice(0, 10)}...` : '-'}</p>
-                ${session.clarityPlaybackUrl ? `
+                ${(typeof session.clarityPlaybackUrl === 'string' && session.clarityPlaybackUrl.startsWith('http')) ? `
                 <div class="mt-3">
-                    <a href="${session.clarityPlaybackUrl}" target="_blank" rel="noopener noreferrer"
+                    <button type="button"
                        class="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium"
-                       style="background:#5c2d91;color:#fff;text-decoration:none;">
+                       style="background:#5c2d91;color:#fff;border:none;cursor:pointer;"
+                       onclick="adrayOpenClarityModal('${escapeInlineSingleQuotedJs(session.clarityPlaybackUrl)}')">
                         ▶ Ver grabación de sesión
-                    </a>
-                    <p class="text-xs text-gray-400 mt-1">Abre Microsoft Clarity · ID: ${session.claritySessionId || '-'}</p>
+                    </button>
+                    <p class="text-xs text-gray-400 mt-1">Microsoft Clarity · ID: ${session.claritySessionId || '-'}</p>
                 </div>` : `
                 <div class="mt-3">
                     <span class="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs text-gray-400"
@@ -10124,6 +10395,30 @@ function renderUserExplorer(data) {
             </div>
         </div>
     </div>
+
+    <!-- ─── Recording Modal ─────────────────────────────────────────────────── -->
+    <div id="adray-recording-modal"
+         style="display:none;position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,0.82);align-items:center;justify-content:center;"
+         onclick="if(event.target===this)adrayCloseModal()">
+        <div style="position:relative;background:#111827;border-radius:12px;width:min(980px,96vw);max-height:92vh;display:flex;flex-direction:column;box-shadow:0 25px 60px rgba(0,0,0,.7);">
+            <!-- header -->
+            <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 20px;border-bottom:1px solid #1f2937;flex-shrink:0;">
+                <span id="adray-modal-title" style="color:#e5e7eb;font-size:13px;font-weight:600;letter-spacing:.02em;">Grabación de sesión</span>
+                <button onclick="adrayCloseModal()"
+                        style="background:none;border:none;color:#6b7280;cursor:pointer;font-size:22px;line-height:1;padding:2px 6px;border-radius:4px;"
+                        onmouseover="this.style.color='#e5e7eb'" onmouseout="this.style.color='#6b7280'">×</button>
+            </div>
+            <!-- player area -->
+            <div id="adray-modal-content"
+                 style="flex:1;overflow:hidden;min-height:120px;background:#000;border-radius:0 0 0 0;display:flex;align-items:center;justify-content:center;">
+            </div>
+            <!-- behavioral signals strip -->
+            <div id="adray-modal-signals"
+                 style="display:none;padding:10px 20px;background:#1e1b4b;border-top:1px solid #312e81;border-radius:0 0 12px 12px;flex-shrink:0;">
+            </div>
+        </div>
+    </div>
+    <!-- ─── End Recording Modal ──────────────────────────────────────────────── -->
 </body>
 </html>
 

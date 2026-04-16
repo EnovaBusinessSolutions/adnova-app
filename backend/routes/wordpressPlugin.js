@@ -57,23 +57,24 @@ function streamPluginZip(res) {
   });
 }
 
-router.get('/adnova-pixel/update.json', (_req, res) => {
+router.get('/adnova-pixel/update.json', (req, res) => {
   const version = getPluginVersion();
   const lastUpdated = getLatestPluginMtime(pluginDir);
+  const appBase = (process.env.APP_URL || `${req.protocol}://${req.get('host')}`).replace(/\/$/, '');
 
   res.json({
     name: 'Adnova Pixel',
     slug: 'adnova-pixel',
     version,
-    homepage: 'https://adray-app-staging-german.onrender.com',
-    download_url: `https://adray-app-staging-german.onrender.com/wp-plugin/adnova-pixel/download/adnova-pixel.zip?v=${version}`,
+    homepage: appBase,
+    download_url: `${appBase}/wp-plugin/adnova-pixel/download/adnova-pixel.zip?v=${version}`,
     requires: '6.0',
     tested: '6.7',
     requires_php: '7.4',
     last_updated: lastUpdated,
     sections: {
-      description: 'Adnova Pixel for WooCommerce with automatic sync to AdRay staging.',
-      installation: 'Install once manually. Future updates are served from AdRay staging through the WordPress updater.',
+      description: 'Adnova Pixel for WooCommerce with automatic sync to AdRay.',
+      installation: 'Install once manually. Future updates are served automatically through the WordPress updater.',
       changelog: `Current version: ${version}`,
     },
     banners: {},

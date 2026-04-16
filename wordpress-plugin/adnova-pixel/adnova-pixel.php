@@ -3,7 +3,7 @@
  * Plugin Name: Adnova Pixel
  * Plugin URI: https://adnova.ai
  * Description: Instala automaticamente el pixel de Adnova en tu sitio WordPress y usa el dominio como Site ID.
- * Version: 1.2.4
+ * Version: 1.2.5
  * Author: Adnova
  * License: GPL-2.0-or-later
  * License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -15,15 +15,16 @@ if (!defined('ABSPATH')) {
 }
 
 final class Adnova_Pixel_Plugin {
-    const VERSION = '1.2.4';
+    const VERSION = '1.2.5';
     const OPTION_SCRIPT_URL = 'adnova_pixel_script_url';
     const OPTION_SITE_ID = 'adnova_pixel_site_id';
     const OPTION_CLARITY_ID = 'adnova_pixel_clarity_id';
     const OPTION_BACKFILL_DONE = 'adnova_pixel_backfill_done';
-    const DEFAULT_SCRIPT_URL = 'https://adray-app-staging-german.onrender.com/adray-pixel.js';
-    const DEFAULT_COLLECT_URL = 'https://adray-app-staging-german.onrender.com/collect';
-    const DEFAULT_ORDER_SYNC_URL = 'https://adray-app-staging-german.onrender.com/api/woo/orders-sync';
-    const DEFAULT_UPDATE_METADATA_URL = 'https://adray-app-staging-german.onrender.com/wp-plugin/adnova-pixel/update.json';
+    const OPTION_MIGRATED_VERSION = 'adnova_pixel_migrated_version';
+    const DEFAULT_SCRIPT_URL = 'https://adray.ai/adray-pixel.js';
+    const DEFAULT_COLLECT_URL = 'https://adray.ai/collect';
+    const DEFAULT_ORDER_SYNC_URL = 'https://adray.ai/api/woo/orders-sync';
+    const DEFAULT_UPDATE_METADATA_URL = 'https://adray.ai/wp-plugin/adnova-pixel/update.json';
     private static $processed_orders = array();
 
     public static function init() {
@@ -54,7 +55,28 @@ final class Adnova_Pixel_Plugin {
         // Fallback for custom checkout flows/themes where woocommerce_thankyou is bypassed.
         add_action('wp_footer', array(__CLASS__, 'maybe_track_woo_order_received_fallback'), 1000);
         add_action('adnova_pixel_backfill_orders', array(__CLASS__, 'backfill_recent_orders'), 10, 1);
+        // Migrate stored URLs from staging to production on every load (cheap, exits early once done)
+        add_action('plugins_loaded', array(__CLASS__, 'maybe_migrate_to_production'));
         self::maybe_schedule_backfill();
+    }
+
+    /**
+     * One-time migration: update any stored staging URLs to production.
+     * Runs on every plugins_loaded but exits early once version-keyed migration is done.
+     */
+    public static function maybe_migrate_to_production() {
+        if (get_option(self::OPTION_MIGRATED_VERSION) === self::VERSION) {
+            return;
+        }
+
+        $staging = 'https://adray-app-staging-german.onrender.com';
+
+        $stored_script = get_option(self::OPTION_SCRIPT_URL);
+        if ($stored_script && strpos($stored_script, $staging) !== false) {
+            update_option(self::OPTION_SCRIPT_URL, str_replace($staging, 'https://adray.ai', $stored_script));
+        }
+
+        update_option(self::OPTION_MIGRATED_VERSION, self::VERSION);
     }
 
     public static function on_activate() {

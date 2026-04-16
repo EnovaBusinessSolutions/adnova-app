@@ -3055,17 +3055,42 @@ router.get('/:account_id', async (req, res) => {
       if (purchaseSessionIds.length) {
         const claritySessions = await prisma.session.findMany({
           where: { accountId: account_id, sessionId: { in: purchaseSessionIds } },
-          select: { sessionId: true, claritySessionId: true, clarityPlaybackUrl: true },
+          select: { sessionId: true, claritySessionId: true, clarityPlaybackUrl: true, rrwebRecordingId: true },
         });
         const clarityMap = new Map(claritySessions.map((s) => [s.sessionId, s]));
         for (const p of recentPurchases) {
           const c = p.sessionId ? clarityMap.get(p.sessionId) : null;
           p.claritySessionId = c?.claritySessionId || null;
-          p.clarityPlaybackUrl = c?.clarityPlaybackUrl || null;
+          // Guard: only keep clarity URL if it looks like a real URL (avoid [object Object] values)
+          const rawClarityUrl = c?.clarityPlaybackUrl || null;
+          p.clarityPlaybackUrl = (typeof rawClarityUrl === 'string' && rawClarityUrl.startsWith('http'))
+            ? rawClarityUrl : null;
+          p.rrwebRecordingId = c?.rrwebRecordingId || null;
         }
       }
     } catch (_clarityEnrichErr) {
       // Columns not yet migrated — dashboard continues working without clarity URLs.
+    }
+
+    // Enrich recentPurchases with behavioral signals from SessionRecording.
+    try {
+      const recordingIds = recentPurchases.map((p) => p.rrwebRecordingId).filter(Boolean);
+      if (recordingIds.length) {
+        const recordings = await prisma.sessionRecording.findMany({
+          where: { recordingId: { in: recordingIds }, accountId: account_id },
+          select: { recordingId: true, behavioralSignals: true, status: true, outcome: true, durationMs: true },
+        });
+        const recMap = new Map(recordings.map((r) => [r.recordingId, r]));
+        for (const p of recentPurchases) {
+          const r = p.rrwebRecordingId ? recMap.get(p.rrwebRecordingId) : null;
+          p.behavioralSignals = r?.behavioralSignals || null;
+          p.recordingStatus  = r?.status || null;
+          p.recordingOutcome = r?.outcome || null;
+          p.recordingDurationMs = r?.durationMs || null;
+        }
+      }
+    } catch (_sigErr) {
+      // SessionRecording table may not exist in all envs.
     }
 
     // Recompute channel stats by selected attribution model over resolved conversions.
