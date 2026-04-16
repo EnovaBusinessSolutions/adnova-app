@@ -187,7 +187,7 @@ async function enqueueMcpCollectBestEffort(input = {}) {
 
 async function enqueueMetaCollectBestEffort({
   userId,
-  rangeDays = 60,
+  rangeDays = 30,
   reason = 'meta_connect',
   trigger = 'meta',
   metaAccountId = null,
@@ -210,7 +210,7 @@ async function enqueueMetaCollectBestEffort({
 async function enqueueGoogleAdsCollectBestEffort({
   userId,
   accountId = null,
-  rangeDays = 60,
+  rangeDays = 30,
   reason = 'google_ads_connect',
   trigger = 'googleAds',
   forceFull = false,
@@ -232,7 +232,7 @@ async function enqueueGoogleAdsCollectBestEffort({
 async function enqueueGa4CollectBestEffort({
   userId,
   propertyId = null,
-  rangeDays = 60,
+  rangeDays = 30,
   reason = 'ga4_connect',
   trigger = 'ga4',
   forceFull = false,
