@@ -783,6 +783,8 @@ app.use('/wp-plugin', wordpressPluginRoutes);
 
 // AdRay collect ya estĂĄ montado arriba (con rateLimitCollect). SeĂąal interna y plataformas (main):
 app.use('/api/internal/daily-signal', require('./routes/internalDailySignal'));
+// IMPORTANT: /api/secure uses JWT session token (not cookie session) — must be before sessionGuard
+app.use("/api/secure", verifySessionToken, secureRoutes);
 app.use("/api", sessionGuard, adrayPlatformRoutes);
 /* =========================
  * Pixel auditor (usa JSON)
@@ -1547,7 +1549,6 @@ app.use("/api", eventsRoutes);
 // â NEW: admin analytics (panel interno)
 app.use("/api/admin/analytics", adminAnalyticsRoutes);
 
-app.use("/api/secure", verifySessionToken, secureRoutes);
 app.use("/api/dashboard", dashboardRoute);
 app.use("/api/shopConnection", require("./routes/shopConnection"));
 app.use("/api", subscribeRouter);

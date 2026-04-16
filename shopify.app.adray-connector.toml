@@ -1,0 +1,40 @@
+# Learn more about configuring your app at https://shopify.dev/docs/apps/tools/cli/configuration
+
+client_id = "116be5fccac0891355a948bc16e22cb1"
+name = "Adray Connector"
+application_url = "https://adray-app-staging-german.onrender.com/connector"
+embedded = true
+
+[webhooks]
+api_version = "2026-04"
+
+  [[webhooks.subscriptions]]
+  topics = [ "app/uninstalled" ]
+  uri = "/connector/webhooks/app/uninstalled"
+
+  # orders/create, orders/updated, checkouts/create require Protected Customer Data approval
+  # Add these back after approval in Partners dashboard
+
+  [[webhooks.subscriptions]]
+  uri = "/connector/webhooks/customers/data_request"
+  compliance_topics = [ "customers/data_request" ]
+
+  [[webhooks.subscriptions]]
+  uri = "/connector/webhooks/customers/redact"
+  compliance_topics = [ "customers/redact" ]
+
+  [[webhooks.subscriptions]]
+  uri = "/connector/webhooks/shop/redact"
+  compliance_topics = [ "shop/redact" ]
+
+[access_scopes]
+# Learn more at https://shopify.dev/docs/apps/tools/cli/configuration#access_scopes
+scopes = "read_customers,read_orders,read_products,write_script_tags,read_pixels,write_pixels"
+optional_scopes = [ ]
+use_legacy_install_flow = false
+
+[auth]
+redirect_urls = [
+  "https://adray.ai/connector/auth/callback",
+  "https://adray-app-staging-german.onrender.com/connector/auth/callback"
+]
