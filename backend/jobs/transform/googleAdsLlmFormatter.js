@@ -119,7 +119,7 @@ function filterRowsByContextRange(rows, contextRangeDays, explicitRange) {
   const list = Array.isArray(rows) ? rows : [];
   if (!list.length) return [];
 
-  const rangeDays = clampInt(contextRangeDays || 60, 1, 3650);
+  const rangeDays = clampInt(contextRangeDays || 30, 1, 3650);
   const explicitTo = safeDateStr(explicitRange?.to || explicitRange?.until);
   const computedLatest = list
     .map((r) => safeDateStr(r?.date))
@@ -746,7 +746,7 @@ function formatGoogleAdsForLlm({
   const meta = getGoogleHeader(dsMap);
   const normalizedRange = normalizeRange(meta?.range);
   const effectiveContextRangeDays =
-    clampInt(contextRangeDays || meta?.contextRangeDays || normalizedRange?.days || 60, 7, 3650);
+    clampInt(contextRangeDays || meta?.contextRangeDays || normalizedRange?.days || 30, 7, 3650);
 
   const ranked_campaigns = buildRankedCampaigns(rankedData, Math.max(topCampaigns, 12));
   const breakdowns = buildBreakdowns(breakdownsData, topBreakdowns);

@@ -465,7 +465,7 @@ async function enqueueGoogleAdsAfterConnectBestEffort(req, { accountId = null, r
   const result = await enqueueGoogleAdsCollectBestEffort({
     userId,
     accountId: accountId || null,
-    rangeDays: 60,
+    rangeDays: 30,
     reason,
     trigger: 'googleConnect',
     forceFull: true,
@@ -492,7 +492,7 @@ async function enqueueGa4AfterConnectBestEffort(req, { propertyId = null, reason
   const result = await enqueueGa4CollectBestEffort({
     userId,
     propertyId: propertyId || null,
-    rangeDays: 60,
+    rangeDays: 30,
     reason,
     trigger: 'googleConnect',
     forceFull: true,

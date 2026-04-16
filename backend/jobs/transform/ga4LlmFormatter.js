@@ -860,7 +860,7 @@ function formatGa4ForLlm({
 
   const normalizedRange = normalizeRange(meta?.range || {});
   const effectiveContextRangeDays =
-    clampInt(contextRangeDays || meta?.contextRangeDays || normalizedRange?.days || 60, 7, 3650);
+    clampInt(contextRangeDays || meta?.contextRangeDays || normalizedRange?.days || 30, 7, 3650);
 
   const headline_kpis = buildHeadlineKpis(extracted.summary);
 
