@@ -1245,6 +1245,7 @@ export default function Index() {
       onDisconnect={() => {
         try { localStorage.removeItem("adray_analytics_shop"); } catch {}
         setPixelWizardOpen(false);
+        refreshConnections();
       }}
     />
     <GoogleMerchantSelectorDialog
