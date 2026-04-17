@@ -965,6 +965,20 @@ app.get('/.well-known/oauth-authorization-server', (req, res) => {
     grant_types_supported: ['authorization_code', 'refresh_token'],
     code_challenge_methods_supported: ['S256'],
     token_endpoint_auth_methods_supported: ['client_secret_post', 'none'],
+    scopes_supported: ['read:ads_performance', 'read:shopify_orders'],
+  });
+});
+
+// OAuth 2.0 Protected Resource Metadata (RFC 9728)
+// Required by the MCP spec (2025-06-18+) for Claude.ai and other remote MCP
+// clients to discover which authorization server protects this MCP endpoint.
+app.get('/.well-known/oauth-protected-resource', (req, res) => {
+  const base = (process.env.APP_URL || 'https://adray.ai').replace(/\/$/, '');
+  res.json({
+    resource: `${base}/mcp`,
+    authorization_servers: [base],
+    bearer_methods_supported: ['header'],
+    scopes_supported: ['read:ads_performance', 'read:shopify_orders'],
   });
 });
 
