@@ -141,7 +141,7 @@ function readStateToken(token) {
   return { shop, host: host || '' };
 }
 
-// (Opcional) guardamos también en session “best effort”, pero NO dependemos de esto
+// (Opcional) guardamos también en session "best effort", pero NO dependemos de esto
 function pushState(req, { shop, host }) {
   const state = makeStateToken({ shop, host });
 
@@ -234,7 +234,7 @@ function isValidHmacFromRaw(req) {
 /**
  * Salida top-level para contexto embebido (iframe de Shopify admin).
  * Carga App Bridge para establecer el canal postMessage con Shopify admin
- * (evita el error “target origin mismatch”) y redirige via Redirect.Action.REMOTE.
+ * (evita el error "target origin mismatch") y redirige via Redirect.Action.REMOTE.
  * Fallback: window.top.location.href → botón manual.
  */
 function topLevelRedirect(res, url, label = 'Continuar con Shopify', host = '') {
@@ -247,12 +247,12 @@ function topLevelRedirect(res, url, label = 'Continuar con Shopify', host = '') 
     .status(200)
     .type('html')
     .send(`<!doctype html>
-<html lang=”es”>
+<html lang="es">
 <head>
-  <meta charset=”utf-8” />
-  <meta name=”viewport” content=”width=device-width,initial-scale=1” />
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Continuar</title>
-  <meta name=”shopify-api-key” content=”${SHOPIFY_API_KEY || ''}” />
+  <meta name="shopify-api-key" content="${SHOPIFY_API_KEY || ''}" />
   <style>
     :root{color-scheme:dark}
     body{margin:0;min-height:100vh;display:grid;place-items:center;background:#0b0f19;color:#fff;
@@ -265,15 +265,15 @@ function topLevelRedirect(res, url, label = 'Continuar con Shopify', host = '') 
     a{color:#9ecbff}
     code{font-size:12px;opacity:.9}
   </style>
-  <script src=”/connector/vendor/app-bridge.umd.js”></script>
+  <script src="/connector/vendor/app-bridge.umd.js"></script>
 </head>
 <body>
-  <div class=”card”>
-    <h2 style=”margin:0 0 8px 0;”>${label}</h2>
-    <div class=”muted” style=”margin:0 0 14px 0;”>Redirigiendo a Shopify…</div>
-    <a class=”btn” href=”${url}” target=”_top” rel=”noopener noreferrer”>Continuar</a>
-    <div class=”muted” style=”margin-top:10px;”>
-      <a href=”${url}” target=”_top” rel=”noopener noreferrer”>Abrir manualmente</a>
+  <div class="card">
+    <h2 style="margin:0 0 8px 0;">${label}</h2>
+    <div class="muted" style="margin:0 0 14px 0;">Redirigiendo a Shopify…</div>
+    <a class="btn" href="${url}" target="_top" rel="noopener noreferrer">Continuar</a>
+    <div class="muted" style="margin-top:10px;">
+      <a href="${url}" target="_top" rel="noopener noreferrer">Abrir manualmente</a>
     </div>
   </div>
   <script>
@@ -282,12 +282,8 @@ function topLevelRedirect(res, url, label = 'Continuar con Shopify', host = '') 
       var apiKey    = ${safeApiKey};
       var host      = ${safeHost};
 
-      function fallback() {
-        try { window.top.location.href = targetUrl; } catch (e) {}
-      }
-
-      // Intentar App Bridge primero — establece el canal postMessage con Shopify admin
-      // y hace la navegación de forma nativa sin errores de origen.
+      // App Bridge: establece el canal postMessage con Shopify admin y navega correctamente.
+      // El botón manual actúa como fallback si App Bridge no está disponible.
       var AB = window['app-bridge'];
       var createApp = AB ? (AB.default || (typeof AB === 'function' ? AB : null)) : null;
 
@@ -298,12 +294,9 @@ function topLevelRedirect(res, url, label = 'Continuar con Shopify', host = '') 
           var Redirect = actions ? actions.Redirect : null;
           if (Redirect) {
             Redirect.create(app).dispatch(Redirect.Action.REMOTE, targetUrl);
-            return;
           }
-        } catch (e) { /* fall through */ }
+        } catch (e) { /* el botón manual es el fallback */ }
       }
-
-      fallback();
     })();
   </script>
 </body>
