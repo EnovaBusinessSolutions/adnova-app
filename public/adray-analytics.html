@@ -1530,6 +1530,60 @@
             opacity: 1;
         }
 
+        /* Rich HTML tooltip variant */
+        #adray-global-tooltip.is-rich {
+            max-width: min(26rem, calc(100vw - 1rem));
+            background: #0f0f1a;
+            color: #e2e8f0;
+            border: 1px solid rgba(139, 92, 246, 0.25);
+            padding: 0.75rem 0.85rem;
+        }
+        #adray-global-tooltip.is-rich .tip-title {
+            font-size: 0.7rem;
+            font-weight: 700;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            color: #a78bfa;
+            margin-bottom: 0.45rem;
+        }
+        #adray-global-tooltip.is-rich .tip-row {
+            display: flex;
+            align-items: flex-start;
+            gap: 0.4rem;
+            margin-bottom: 0.3rem;
+            font-size: 0.72rem;
+            color: #cbd5e1;
+            line-height: 1.5;
+        }
+        #adray-global-tooltip.is-rich .tip-row .tip-icon { flex-shrink: 0; width: 1rem; text-align: center; }
+        #adray-global-tooltip.is-rich .tip-row .tip-label { color: #94a3b8; min-width: 5rem; flex-shrink: 0; }
+        #adray-global-tooltip.is-rich .tip-row .tip-val { color: #e2e8f0; font-weight: 600; }
+        #adray-global-tooltip.is-rich .tip-divider {
+            border: none;
+            border-top: 1px solid rgba(255,255,255,0.07);
+            margin: 0.45rem 0;
+        }
+        #adray-global-tooltip.is-rich .tip-rec {
+            font-size: 0.7rem;
+            color: #7ef0c8;
+            line-height: 1.5;
+            padding: 0.35rem 0.45rem;
+            background: rgba(126,240,200,0.07);
+            border-radius: 0.35rem;
+            border-left: 2px solid #7ef0c8;
+            margin-top: 0.35rem;
+        }
+        #adray-global-tooltip.is-rich .tip-warn {
+            font-size: 0.7rem;
+            color: #fbbf24;
+            line-height: 1.5;
+            padding: 0.35rem 0.45rem;
+            background: rgba(251,191,36,0.07);
+            border-radius: 0.35rem;
+            border-left: 2px solid #fbbf24;
+            margin-top: 0.35rem;
+        }
+
         .journey-chip.is-google,
         .journey-step.is-google {
             border-color: rgba(251, 191, 36, 0.5);
@@ -3887,11 +3941,18 @@
         }
 
         function showGlobalTooltip(target) {
+            const richHtml = target?.getAttribute('data-tooltip-html') || '';
             const tooltipText = String(target?.getAttribute('data-tooltip') || '').trim();
-            if (!tooltipText) return hideGlobalTooltip();
+            if (!richHtml && !tooltipText) return hideGlobalTooltip();
             activeTooltipTarget = target;
             const tooltip = ensureGlobalTooltipEl();
-            tooltip.textContent = tooltipText;
+            if (richHtml) {
+                tooltip.innerHTML = richHtml;
+                tooltip.classList.add('is-rich');
+            } else {
+                tooltip.textContent = tooltipText;
+                tooltip.classList.remove('is-rich');
+            }
             tooltip.classList.add('is-visible');
             positionGlobalTooltip(target);
         }
@@ -3899,7 +3960,7 @@
         function hideGlobalTooltip() {
             activeTooltipTarget = null;
             if (!globalTooltipEl) return;
-            globalTooltipEl.classList.remove('is-visible');
+            globalTooltipEl.classList.remove('is-visible', 'is-rich');
             globalTooltipEl.style.visibility = 'hidden';
         }
 
@@ -3912,14 +3973,18 @@
             }
 
             document.addEventListener('mouseover', (event) => {
-                const target = event.target instanceof Element ? event.target.closest('[data-tooltip]') : null;
+                const target = event.target instanceof Element
+                    ? (event.target.closest('[data-tooltip-html]') || event.target.closest('[data-tooltip]'))
+                    : null;
                 if (!target) return;
                 showGlobalTooltip(target);
             });
 
             document.addEventListener('mouseout', (event) => {
                 if (!activeTooltipTarget) return;
-                const next = event.relatedTarget instanceof Element ? event.relatedTarget.closest('[data-tooltip]') : null;
+                const next = event.relatedTarget instanceof Element
+                    ? (event.relatedTarget.closest('[data-tooltip-html]') || event.relatedTarget.closest('[data-tooltip]'))
+                    : null;
                 if (next === activeTooltipTarget) return;
                 if (next) {
                     showGlobalTooltip(next);
@@ -5769,50 +5834,112 @@
             `;
         }
 
-        function renderBehavioralSignalsBadge(signals, recordingStatus, durationMs) {
-            if (!signals || typeof signals !== 'object') {
-                // No rrweb recording yet — nothing to show
-                return '';
-            }
-            const riskScore    = signals.riskScore ?? null;
-            const rageClicks   = signals.rageClickCount || 0;
-            const exitIntents  = signals.exitIntentCount || 0;
-            const formAbandon  = signals.formAbandonCount || 0;
-            const pattern      = signals.abandonmentPattern || null;
-            const hesitationMs = signals.totalHesitationMs || 0;
+        function buildRichTooltipHtml(title, rows, rec) {
+            const rowsHtml = rows.map(([icon, label, val]) =>
+                `<div class="tip-row"><span class="tip-icon">${icon}</span><span class="tip-label">${label}</span><span class="tip-val">${val}</span></div>`
+            ).join('');
+            const recHtml = rec ? `<div class="${rec.warn ? 'tip-warn' : 'tip-rec'}">${rec.warn ? '⚠️ ' : '💡 '}${rec.text}</div>` : '';
+            return `<div class="tip-title">${title}</div>${rowsHtml}${recHtml}`;
+        }
 
-            // Risk color
+        function renderBehavioralSignalsBadge(signals, recordingStatus, durationMs) {
+            if (!signals || typeof signals !== 'object') return '';
+
+            const riskScore       = signals.riskScore ?? null;
+            const rageClicks      = signals.rageClickCount || 0;
+            const exitIntents     = signals.exitIntentCount || 0;
+            const formAbandon     = signals.formAbandonCount || 0;
+            const pattern         = signals.abandonmentPattern || null;
+            const hesitationMs    = signals.totalHesitationMs || 0;
+            const scrollDepth     = signals.maxScrollDepth ?? null;
+            const scrollPct       = signals.maxScrollDepthPct ?? null;
+            const timeOnPage      = signals.timeOnPageMs || 0;
+            const cartViewCount   = signals.cartViewCount || 0;
+            const checkoutReach   = signals.reachedCheckout || false;
+            const narrative       = signals.narrative || null;
+            const archetype       = signals.archetype || null;
+            const llmSkipped      = signals.llmSkipped || false;
+            const scrollBackCount = signals.scrollBackCount || 0;
+            const mouseLeaveCount = signals.mouseLeaveCount || 0;
+
             const riskColor = riskScore === null ? '#9ca3af'
                 : riskScore >= 70 ? '#f87171'
                 : riskScore >= 40 ? '#fbbf24'
                 : '#4ade80';
 
-            const patternLabel = {
-                shipping_shock:        '🚢 Shipping shock',
-                form_friction:         '📝 Form friction',
-                rage_exit:             '😤 Rage exit',
-                passive_browse:        '👀 Passive browse',
-                high_value_hesitation: '💭 High-value hesitation',
-                exit_intent:           '🚪 Exit intent',
-                unknown:               null,
-            }[pattern] || null;
+            const patternMeta = {
+                shipping_shock:        { label: '🚢 Shipping shock',        tip: 'El usuario probablemente llegó a checkout y abandonó al ver el costo de envío.',            rec: 'Considera ofrecer envío gratis en órdenes de este valor o mostrar el costo antes del checkout.' },
+                form_friction:         { label: '📝 Form friction',         tip: 'El usuario llenó parcialmente formularios y los abandonó varias veces.',                    rec: 'Simplifica el form de checkout: usa autofill, reduce campos requeridos y muestra progreso.' },
+                rage_exit:             { label: '😤 Rage exit',            tip: 'Múltiples rage-clicks detectados seguidos de abandono — posible frustración con la UI.',     rec: 'Revisa qué elementos estaba clickeando; puede ser un botón que no responde o un error visual.' },
+                passive_browse:        { label: '👀 Passive browse',        tip: 'Sesión larga sin interacciones de checkout. El usuario exploró pero nunca tuvo intención clara de comprar.', rec: 'Este perfil responde bien a retargeting y remarketing con urgencia (stock limitado, descuento).' },
+                high_value_hesitation: { label: '💭 High-value hesitation', tip: 'Carrito de alto valor con mucho tiempo de hesitación — quiere comprar pero duda.',         rec: 'Un email de seguimiento con social proof o garantía de devolución puede cerrar esta venta.' },
+                exit_intent:           { label: '🚪 Exit intent',           tip: 'Movimientos repetidos del cursor hacia la barra del navegador antes de abandonar.',          rec: 'Un popup de exit-intent con oferta o recordatorio puede recuperar esta sesión.' },
+            };
+            const pm = patternMeta[pattern] || null;
+            const patternLabel = pm?.label || null;
 
             const dur = durationMs ? `${Math.round(durationMs / 1000)}s` : null;
+            const fmtMs = (ms) => ms >= 60000 ? `${Math.round(ms/60000)}m ${Math.round((ms%60000)/1000)}s` : `${Math.round(ms/1000)}s`;
 
             const chips = [];
-            if (riskScore !== null) chips.push(`<span style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:12px;font-size:11px;font-weight:600;background:${riskColor}22;color:${riskColor};border:1px solid ${riskColor}44;" data-tooltip="Abandonment risk score extracted from session recording."><i class="fa-solid fa-gauge-high" style="font-size:10px;"></i> Risk ${riskScore}/100</span>`);
-            if (patternLabel) chips.push(`<span style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:12px;font-size:11px;background:#312e81;color:#c4b5fd;border:1px solid #4c1d9544;" data-tooltip="Detected behavioral pattern from the session recording.">${escapeHtml(patternLabel)}</span>`);
-            if (rageClicks > 0) chips.push(`<span style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:12px;font-size:11px;background:#4c1d1d;color:#fca5a5;border:1px solid #7f1d1d44;" data-tooltip="Number of rage-click clusters detected."><i class="fa-solid fa-hand-fist" style="font-size:10px;"></i> ${rageClicks} rage click${rageClicks > 1 ? 's' : ''}</span>`);
-            if (exitIntents > 0) chips.push(`<span style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:12px;font-size:11px;background:#1c2e1c;color:#86efac;border:1px solid #14532d44;" data-tooltip="Exit-intent movements detected (cursor moving toward browser chrome)."><i class="fa-solid fa-arrow-right-from-bracket" style="font-size:10px;"></i> ${exitIntents} exit intent${exitIntents > 1 ? 's' : ''}</span>`);
-            if (formAbandon > 0) chips.push(`<span style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:12px;font-size:11px;background:#1c1c2e;color:#a5b4fc;border:1px solid #312e8144;" data-tooltip="Form fields that were touched but left empty."><i class="fa-solid fa-file-pen" style="font-size:10px;"></i> ${formAbandon} form abandon</span>`);
-            if (hesitationMs > 5000) chips.push(`<span style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:12px;font-size:11px;background:#1c1c1c;color:#d1d5db;border:1px solid #37415144;" data-tooltip="Total time spent hesitating (cursor idle) during checkout."><i class="fa-solid fa-clock" style="font-size:10px;"></i> ${Math.round(hesitationMs / 1000)}s hesitation</span>`);
-            if (dur) chips.push(`<span style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:12px;font-size:11px;background:#111827;color:#6b7280;border:1px solid #37415144;" data-tooltip="Total recorded session duration."><i class="fa-solid fa-video" style="font-size:10px;"></i> ${dur}</span>`);
+
+            // ── Risk Score chip ──
+            if (riskScore !== null) {
+                const riskLabel = riskScore >= 70 ? 'Alto — recuperable con acción inmediata'
+                    : riskScore >= 40 ? 'Medio — requiere seguimiento'
+                    : 'Bajo — comprador comprometido';
+                const riskRows = [['🎯', 'Score', `${riskScore} / 100`], ['📊', 'Nivel', riskLabel]];
+                if (pattern) riskRows.push(['🔍', 'Patrón', pm?.label || pattern]);
+                if (archetype && archetype !== pattern) riskRows.push(['🧠', 'Arquetipo', archetype.replace(/_/g, ' ')]);
+                if (narrative) riskRows.push(['💬', 'Insight', narrative]);
+                const riskRec = riskScore >= 40
+                    ? { text: pm?.rec || 'Envía un email de recuperación en las próximas 2 horas mientras la sesión está fresca.' }
+                    : { text: 'Baja probabilidad de abandono. Monitorea si vuelve antes de tomar acción.' };
+                chips.push(`<span style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:12px;font-size:11px;font-weight:600;background:${riskColor}22;color:${riskColor};border:1px solid ${riskColor}44;cursor:default;" data-tooltip-html="${escapeHtml(buildRichTooltipHtml('Abandonment Risk Score', riskRows, riskRec))}"><i class="fa-solid fa-gauge-high" style="font-size:10px;"></i> Risk ${riskScore}/100</span>`);
+            }
+
+            // ── Pattern chip ──
+            if (patternLabel) {
+                const patRows = [['🔍', 'Patrón', patternLabel], ['💡', 'Qué pasó', pm.tip]];
+                if (rageClicks > 0) patRows.push(['👊', 'Rage clicks', String(rageClicks)]);
+                if (exitIntents > 0) patRows.push(['🚪', 'Exit intents', String(exitIntents)]);
+                if (formAbandon > 0) patRows.push(['📝', 'Form abandons', String(formAbandon)]);
+                chips.push(`<span style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:12px;font-size:11px;background:#312e81;color:#c4b5fd;border:1px solid #4c1d9544;cursor:default;" data-tooltip-html="${escapeHtml(buildRichTooltipHtml('Behavioral Pattern', patRows, { text: pm.rec }))}"><span style="font-size:11px;">${escapeHtml(patternLabel)}</span></span>`);
+            }
+
+            // ── Duration chip — rich with session summary ──
+            if (dur) {
+                const durRows = [['⏱️', 'Duración', dur]];
+                if (timeOnPage > 0) durRows.push(['📖', 'Tiempo activo', fmtMs(timeOnPage)]);
+                if (hesitationMs > 2000) durRows.push(['⏳', 'Hesitación', fmtMs(hesitationMs)]);
+                if (scrollDepth !== null) durRows.push(['📜', 'Scroll depth', scrollPct != null ? `${Math.round(scrollPct)}%` : `${scrollDepth}px`]);
+                if (scrollBackCount > 0) durRows.push(['↕️', 'Scroll backs', String(scrollBackCount)]);
+                if (cartViewCount > 0) durRows.push(['🛒', 'Vistas de carrito', String(cartViewCount)]);
+                durRows.push(['✅', 'Llegó a checkout', checkoutReach ? 'Sí' : 'No']);
+                if (mouseLeaveCount > 0) durRows.push(['🖱️', 'Cursor fuera', `${mouseLeaveCount}× salió de ventana`]);
+                const durRec = !checkoutReach
+                    ? { warn: true, text: 'Nunca llegó al checkout — el abandono fue antes de ver precios de envío o total.' }
+                    : hesitationMs > 15000
+                        ? { text: `${fmtMs(hesitationMs)} de hesitación en checkout — alto potencial de recuperación con email inmediato.` }
+                        : null;
+                chips.push(`<span style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:12px;font-size:11px;background:#111827;color:#6b7280;border:1px solid #37415144;cursor:default;" data-tooltip-html="${escapeHtml(buildRichTooltipHtml('Session Recording', durRows, durRec))}"><i class="fa-solid fa-video" style="font-size:10px;"></i> ${dur}</span>`);
+            }
+
+            // ── Rage clicks chip ──
+            if (rageClicks > 0 && !patternLabel) {
+                const rcRows = [['👊', 'Clusters', String(rageClicks)], ['💡', 'Qué son', 'Clics repetidos y rápidos en el mismo elemento — señal de frustración.']];
+                chips.push(`<span style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:12px;font-size:11px;background:#4c1d1d;color:#fca5a5;border:1px solid #7f1d1d44;cursor:default;" data-tooltip-html="${escapeHtml(buildRichTooltipHtml('Rage Clicks', rcRows, { text: 'Revisa el elemento clickeado — puede ser un botón desactivado, un link roto o un precio confuso.' }))}"><i class="fa-solid fa-hand-fist" style="font-size:10px;"></i> ${rageClicks} rage click${rageClicks > 1 ? 's' : ''}</span>`);
+            }
+
+            // ── Exit intent chip ──
+            if (exitIntents > 0 && !patternLabel) {
+                const eiRows = [['🚪', 'Detecciones', String(exitIntents)], ['💡', 'Qué son', 'El cursor se movió repetidamente hacia la barra superior del navegador.']];
+                chips.push(`<span style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:12px;font-size:11px;background:#1c2e1c;color:#86efac;border:1px solid #14532d44;cursor:default;" data-tooltip-html="${escapeHtml(buildRichTooltipHtml('Exit Intent', eiRows, { text: 'Considera mostrar un popup de "¿Te vas?" con un descuento o garantía de devolución.' }))}"><i class="fa-solid fa-arrow-right-from-bracket" style="font-size:10px;"></i> ${exitIntents} exit intent${exitIntents > 1 ? 's' : ''}</span>`);
+            }
 
             if (!chips.length) return '';
 
-            return `<div style="display:flex;flex-wrap:wrap;gap:6px;padding:8px 0 4px;">
-                ${chips.join('')}
-            </div>`;
+            return `<div style="display:flex;flex-wrap:wrap;gap:6px;padding:8px 0 4px;">${chips.join('')}</div>`;
         }
 
         function renderJourneyVerticalTimeline(events = []) {
