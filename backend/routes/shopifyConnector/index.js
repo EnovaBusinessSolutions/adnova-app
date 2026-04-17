@@ -232,19 +232,27 @@ function isValidHmacFromRaw(req) {
 }
 
 /**
- * ✅ SALIDA TOP-LEVEL (CLICK ONLY)
- * - NO auto-redirect (evita “pantalla gris”/bloqueos)
+ * Salida top-level para contexto embebido (iframe de Shopify admin).
+ * Carga App Bridge para establecer el canal postMessage con Shopify admin
+ * (evita el error “target origin mismatch”) y redirige via Redirect.Action.REMOTE.
+ * Fallback: window.top.location.href → botón manual.
  */
-function topLevelRedirect(res, url, label = 'Continuar con Shopify') {
+function topLevelRedirect(res, url, label = 'Continuar con Shopify', host = '') {
+  // JSON.stringify escapa correctamente para uso inline en <script>
+  const safeUrl    = JSON.stringify(url);
+  const safeApiKey = JSON.stringify(SHOPIFY_API_KEY || '');
+  const safeHost   = JSON.stringify(host || '');
+
   return res
     .status(200)
     .type('html')
     .send(`<!doctype html>
-<html lang="es">
+<html lang=”es”>
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <meta charset=”utf-8” />
+  <meta name=”viewport” content=”width=device-width,initial-scale=1” />
   <title>Continuar</title>
+  <meta name=”shopify-api-key” content=”${SHOPIFY_API_KEY || ''}” />
   <style>
     :root{color-scheme:dark}
     body{margin:0;min-height:100vh;display:grid;place-items:center;background:#0b0f19;color:#fff;
@@ -257,22 +265,47 @@ function topLevelRedirect(res, url, label = 'Continuar con Shopify') {
     a{color:#9ecbff}
     code{font-size:12px;opacity:.9}
   </style>
+  <script src=”/connector/vendor/app-bridge.umd.js”></script>
 </head>
 <body>
-  <div class="card">
-    <h2 style="margin:0 0 8px 0;">${label}</h2>
-    <div class="muted" style="margin:0 0 14px 0;">
-      Shopify requiere abrir esta página <b>fuera del iframe</b>. Da clic para continuar.
-      <br/>Si no avanza, desactiva Brave Shields / AdBlock para <code>admin.shopify.com</code> y <code>${BASE_URL.replace(
-        /^https?:\/\//,
-        ''
-      )}</code> en esta prueba.
-    </div>
-    <a class="btn" href="${url}" target="_top" rel="noopener noreferrer">Continuar</a>
-    <div class="muted" style="margin-top:10px;">
-      <a href="${url}" target="_top" rel="noopener noreferrer">Abrir manualmente</a>
+  <div class=”card”>
+    <h2 style=”margin:0 0 8px 0;”>${label}</h2>
+    <div class=”muted” style=”margin:0 0 14px 0;”>Redirigiendo a Shopify…</div>
+    <a class=”btn” href=”${url}” target=”_top” rel=”noopener noreferrer”>Continuar</a>
+    <div class=”muted” style=”margin-top:10px;”>
+      <a href=”${url}” target=”_top” rel=”noopener noreferrer”>Abrir manualmente</a>
     </div>
   </div>
+  <script>
+    (function () {
+      var targetUrl = ${safeUrl};
+      var apiKey    = ${safeApiKey};
+      var host      = ${safeHost};
+
+      function fallback() {
+        try { window.top.location.href = targetUrl; } catch (e) {}
+      }
+
+      // Intentar App Bridge primero — establece el canal postMessage con Shopify admin
+      // y hace la navegación de forma nativa sin errores de origen.
+      var AB = window['app-bridge'];
+      var createApp = AB ? (AB.default || (typeof AB === 'function' ? AB : null)) : null;
+
+      if (createApp && apiKey && host) {
+        try {
+          var app = createApp({ apiKey: apiKey, host: host, forceRedirect: false });
+          var actions = (AB.default && AB.default.actions) || AB.actions || null;
+          var Redirect = actions ? actions.Redirect : null;
+          if (Redirect) {
+            Redirect.create(app).dispatch(Redirect.Action.REMOTE, targetUrl);
+            return;
+          }
+        } catch (e) { /* fall through */ }
+      }
+
+      fallback();
+    })();
+  </script>
 </body>
 </html>`);
 }
@@ -310,7 +343,7 @@ router.use((req, res, next) => {
 
   console.log('[SHOPIFY_CONNECTOR][OAUTH_REDIRECT][GUARD]', { shop, path: req.path });
 
-  if (isIframeRequest(req)) return topLevelRedirect(res, authorizeUrl, 'Continuar con Shopify');
+  if (isIframeRequest(req)) return topLevelRedirect(res, authorizeUrl, 'Continuar con Shopify', host);
   return res.redirect(302, authorizeUrl);
 });
 
@@ -346,7 +379,7 @@ router.get('/auth', (req, res) => {
 
   console.log('[SHOPIFY_CONNECTOR][AUTH_START]', { shop });
 
-  if (isIframeRequest(req)) return topLevelRedirect(res, authorizeUrl, 'Continuar con Shopify');
+  if (isIframeRequest(req)) return topLevelRedirect(res, authorizeUrl, 'Continuar con Shopify', host);
   return res.redirect(302, authorizeUrl);
 });
 
@@ -463,7 +496,7 @@ router.get('/interface', async (req, res) => {
       const state = pushState(req, { shop, host });
       const authorizeUrl = buildAuthorizeUrl(shop, state);
 
-      if (isIframeRequest(req)) return topLevelRedirect(res, authorizeUrl, 'Conectar Shopify');
+      if (isIframeRequest(req)) return topLevelRedirect(res, authorizeUrl, 'Conectar Shopify', host);
       return res.redirect(302, authorizeUrl);
     }
 
