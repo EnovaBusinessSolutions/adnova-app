@@ -590,6 +590,16 @@ router.post('/finalize-now', async (req, res) => {
           continue;
         }
 
+        // rrweb requires a FullSnapshot (type 2) to replay — reject recordings missing it
+        const hasFullSnapshot = allEvents.some((e) => e.type === 2);
+        if (!hasFullSnapshot) {
+          await prisma.sessionRecording.update({ where: { recordingId: rec.recordingId }, data: { status: 'ERROR' } });
+          result.status = 'ERROR_no_fullsnapshot';
+          result.eventTypeCounts = allEvents.reduce((acc, e) => { acc[e.type] = (acc[e.type] || 0) + 1; return acc; }, {});
+          results.push(result);
+          continue;
+        }
+
         allEvents.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
         const fKey = buildFinalKey(rec.accountId, rec.recordingId);
         const gzipped = zlib.gzipSync(Buffer.from(JSON.stringify(allEvents)));
@@ -663,6 +673,66 @@ router.post('/relink-sessions', async (req, res) => {
     }
 
     return res.json({ ok: true, readyRecordings: readyRecs.length, linkable: linkable.length, sessionsLinked: linked });
+  } catch (err) {
+    return res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * POST /collect/x/cleanup-broken
+ * Scans READY recordings for missing FullSnapshot (type 2) and marks them ERROR.
+ * Run once after deploy to purge unplayable recordings from the panel.
+ * Protected by x-adray-internal header.
+ * ───────────────────────────────────────────────────────────────────────────── */
+router.post('/cleanup-broken', async (req, res) => {
+  const secret = req.headers['x-adray-internal'] || req.body?.secret;
+  if (secret !== (process.env.INTERNAL_CRON_SECRET || 'adray-internal')) {
+    return res.status(403).json({ ok: false });
+  }
+
+  const { downloadChunk: dl, listChunkKeys: listKeys } = require('../utils/r2Client');
+
+  try {
+    const readyRecs = await prisma.sessionRecording.findMany({
+      where: { status: 'READY', rawErasedAt: null },
+      select: { recordingId: true, accountId: true, r2Key: true, r2ChunksPrefix: true },
+      take: 100,
+    });
+
+    let broken = 0;
+    let ok = 0;
+    const results = [];
+
+    for (const rec of readyRecs) {
+      try {
+        // Try final key first (assembled recording)
+        let events = [];
+        if (rec.r2Key) {
+          events = await dl(rec.r2Key).catch(() => []);
+        }
+        // If no final key, check chunks
+        if (!events.length && rec.r2ChunksPrefix) {
+          const keys = await listKeys(rec.r2ChunksPrefix).catch(() => []);
+          for (const k of keys.slice(0, 3)) { // only check first 3 chunks
+            const chunk = await dl(k).catch(() => []);
+            events.push(...chunk);
+            if (events.some((e) => e.type === 2)) break;
+          }
+        }
+        const hasFs = events.some((e) => e.type === 2);
+        if (!hasFs) {
+          await prisma.sessionRecording.update({ where: { recordingId: rec.recordingId }, data: { status: 'ERROR' } });
+          broken++;
+          results.push({ recordingId: rec.recordingId, status: 'marked_ERROR' });
+        } else {
+          ok++;
+        }
+      } catch (_) {
+        results.push({ recordingId: rec.recordingId, status: 'check_failed' });
+      }
+    }
+
+    return res.json({ ok: true, checked: readyRecs.length, broken, playable: ok, results });
   } catch (err) {
     return res.status(500).json({ ok: false, error: err.message });
   }
