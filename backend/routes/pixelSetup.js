@@ -301,25 +301,57 @@ router.post('/confirm-shop', async (req, res) => {
   }
 });
 
-// Informative pixel verification — checks if adray-pixel.js is present on the storefront homepage
+// Informative pixel verification — checks if the Adray pixel is present on the storefront homepage
 router.get('/verify', async (req, res) => {
   const domain = normalizeHostname(req.query.shop || req.query.domain);
   if (!domain) return res.status(400).json({ ok: false, error: 'shop is required' });
 
   const url = `https://${domain}`;
+  const logs = [];
+
   try {
+    logs.push(`Fetching ${url} …`);
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
-    const response = await fetch(url, {
-      signal: controller.signal,
-      headers: { 'User-Agent': 'AdrayPixelVerifier/1.0' },
-    }).finally(() => clearTimeout(timer));
+    let response;
+    try {
+      response = await fetch(url, {
+        signal: controller.signal,
+        headers: { 'User-Agent': 'Mozilla/5.0 (compatible; AdrayVerifier/1.0)' },
+        redirect: 'follow',
+      });
+    } finally {
+      clearTimeout(timer);
+    }
 
+    logs.push(`HTTP ${response.status} — final URL: ${response.url}`);
     const text = await response.text().catch(() => '');
-    const detected = /adray[-_]pixel\.js/i.test(text) || /adray\.ai\/pixel/i.test(text);
-    return res.json({ ok: true, detected, shop: domain });
+    logs.push(`Downloaded ${text.length} bytes of HTML`);
+
+    // All patterns that indicate the Adray pixel is installed
+    const checks = [
+      { label: 'adray-pixel.js script src',      hit: /adray[-_]pixel\.js/i.test(text) },
+      { label: 'adray.ai/pixel URL',             hit: /adray\.ai\/pixel/i.test(text) },
+      { label: 'adnova-pixel.js script src',     hit: /adnova[-_]pixel\.js/i.test(text) },
+      { label: 'window.__adray__ object',        hit: /window\.__adray__/i.test(text) },
+      { label: 'adray collect endpoint',         hit: /adray\.ai\/collect/i.test(text) },
+      { label: 'adnova pixel script tag',        hit: /adnova.*pixel/i.test(text) },
+    ];
+
+    const matched = checks.filter(c => c.hit);
+    const missed  = checks.filter(c => !c.hit);
+
+    matched.forEach(c => logs.push(`✅ Found: ${c.label}`));
+    missed.forEach(c =>  logs.push(`❌ Not found: ${c.label}`));
+
+    const detected = matched.length > 0;
+    logs.push(detected ? '🟢 Pixel detected.' : '🟡 Pixel not detected on homepage.');
+
+    return res.json({ ok: true, detected, shop: domain, logs, checkedUrl: response.url });
   } catch (err) {
-    return res.json({ ok: true, detected: false, shop: domain, fetchError: err?.message });
+    const msg = err?.name === 'AbortError' ? 'Request timed out after 8s' : (err?.message || String(err));
+    logs.push(`⚠️ Fetch error: ${msg}`);
+    return res.json({ ok: true, detected: false, shop: domain, logs, fetchError: msg });
   }
 });
 

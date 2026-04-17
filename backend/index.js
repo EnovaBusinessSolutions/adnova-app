@@ -938,6 +938,8 @@ app.use("/api/onboarding/status", sessionGuard, require("./routes/onboardingStat
 
 app.use('/api/onboarding', require('./routes/onboardingReset'));
 
+app.use('/api/pixel-setup', sessionGuard, require('./routes/pixelSetup'));
+
 app.use('/api/mcpjobs', sessionGuard, require('./routes/mcpjobs'));
 
 app.use('/api/mcp/context', require('./routes/mcpContext'));

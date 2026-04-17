@@ -124,6 +124,59 @@ function initialStep(currentShop?: string): WizardStep {
   return currentShop ? "manage" : "domain";
 }
 
+type VerifyResult = { detected: boolean; logs?: string[]; checkedUrl?: string };
+
+function VerifyResultPanel({ result }: { result: VerifyResult }) {
+  const [logsOpen, setLogsOpen] = useState(false);
+  return (
+    <div className={cn(
+      "w-full rounded-2xl border p-3 text-sm",
+      result.detected
+        ? "border-[#4FE3C1]/25 bg-[#4FE3C1]/[0.06]"
+        : "border-yellow-400/25 bg-yellow-400/[0.06]"
+    )}>
+      <div className="flex items-center gap-2">
+        {result.detected
+          ? <ShieldCheck className="h-4 w-4 shrink-0 text-[#4FE3C1]" />
+          : <ShieldX className="h-4 w-4 shrink-0 text-yellow-400" />}
+        <span className={result.detected ? "text-[#E8FFF8]" : "text-yellow-100"}>
+          {result.detected
+            ? "Pixel detected on your site — you're all set!"
+            : "Pixel not detected yet. Make sure you activated the plugin, then try again."}
+        </span>
+        {result.logs?.length ? (
+          <button
+            type="button"
+            onClick={() => setLogsOpen(o => !o)}
+            className="ml-auto shrink-0 rounded-lg border border-white/10 bg-white/[0.04] px-2 py-0.5 text-[11px] text-white/50 hover:text-white/80"
+          >
+            {logsOpen ? "Hide logs" : "View logs"}
+          </button>
+        ) : null}
+      </div>
+      {logsOpen && result.logs?.length ? (
+        <div className="mt-3 rounded-xl border border-white/[0.06] bg-black/30 p-3 font-mono text-[11px] leading-5 text-white/60">
+          {result.checkedUrl && (
+            <div className="mb-2 text-white/40">Checked: {result.checkedUrl}</div>
+          )}
+          {result.logs.map((line, i) => (
+            <div key={i} className={cn(
+              line.startsWith("✅") ? "text-[#4FE3C1]" :
+              line.startsWith("❌") ? "text-white/38" :
+              line.startsWith("🟢") ? "text-[#4FE3C1] font-semibold" :
+              line.startsWith("🟡") ? "text-yellow-300" :
+              line.startsWith("⚠️") ? "text-red-300" :
+              "text-white/55"
+            )}>
+              {line}
+            </div>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 export function PixelSetupWizard({ open, onOpenChange, currentShop, onDisconnect }: PixelSetupWizardProps) {
   const navigate = useNavigate();
   const [step, setStep] = useState<WizardStep>(() => initialStep(currentShop));
@@ -132,7 +185,7 @@ export function PixelSetupWizard({ open, onOpenChange, currentShop, onDisconnect
   const [isConfirming, setIsConfirming] = useState(false);
   const [isDisconnecting, setIsDisconnecting] = useState(false);
   const [isVerifying, setIsVerifying] = useState(false);
-  const [verifyResult, setVerifyResult] = useState<{ detected: boolean } | null>(null);
+  const [verifyResult, setVerifyResult] = useState<VerifyResult | null>(null);
   const [error, setError] = useState("");
   const [detection, setDetection] = useState<StoreDetectionResult | null>(null);
   const [selectedType, setSelectedType] = useState<StoreType>("woocommerce");
@@ -238,7 +291,7 @@ export function PixelSetupWizard({ open, onOpenChange, currentShop, onDisconnect
     try {
       const r = await fetch(`/api/pixel-setup/verify?shop=${encodeURIComponent(shop)}`, { credentials: "include" });
       const data = await r.json().catch(() => ({}));
-      setVerifyResult({ detected: !!data.detected });
+      setVerifyResult({ detected: !!data.detected, logs: data.logs, checkedUrl: data.checkedUrl });
     } catch {
       setVerifyResult({ detected: false });
     } finally {
@@ -341,17 +394,7 @@ export function PixelSetupWizard({ open, onOpenChange, currentShop, onDisconnect
                     </Button>
 
                     {verifyResult !== null && (
-                      <div className={cn(
-                        "flex items-center gap-2 rounded-xl border px-3 py-1.5 text-sm",
-                        verifyResult.detected
-                          ? "border-[#4FE3C1]/25 bg-[#4FE3C1]/10 text-[#E8FFF8]"
-                          : "border-yellow-400/25 bg-yellow-400/10 text-yellow-100"
-                      )}>
-                        {verifyResult.detected
-                          ? <><ShieldCheck className="h-4 w-4 text-[#4FE3C1]" /> Pixel detected on site</>
-                          : <><ShieldX className="h-4 w-4 text-yellow-400" /> Pixel not detected yet — may take a few minutes</>
-                        }
-                      </div>
+                      <VerifyResultPanel result={verifyResult} />
                     )}
                   </div>
                 </div>
@@ -580,17 +623,7 @@ export function PixelSetupWizard({ open, onOpenChange, currentShop, onDisconnect
                   </Button>
 
                   {verifyResult !== null && (
-                    <div className={cn(
-                      "flex w-full items-center gap-2 rounded-xl border px-3 py-2 text-sm",
-                      verifyResult.detected
-                        ? "border-[#4FE3C1]/25 bg-[#4FE3C1]/10 text-[#E8FFF8]"
-                        : "border-yellow-400/25 bg-yellow-400/10 text-yellow-100"
-                    )}>
-                      {verifyResult.detected
-                        ? <><ShieldCheck className="h-4 w-4 shrink-0 text-[#4FE3C1]" /> Pixel detected on your site — you're all set!</>
-                        : <><ShieldX className="h-4 w-4 shrink-0 text-yellow-400" /> Pixel not detected yet. Make sure you activated the plugin, then try again in a minute.</>
-                      }
-                    </div>
+                    <VerifyResultPanel result={verifyResult} />
                   )}
                 </div>
 
