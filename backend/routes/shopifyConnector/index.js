@@ -422,7 +422,7 @@ router.get('/auth/callback', async (req, res) => {
 
     // ✅ Redirigir usando admin.shopify.com (evita pasar por el storefront y su password page).
     // Patrón moderno: https://admin.shopify.com/store/{subdomain}/apps/{handle}
-    const APP_HANDLE = process.env.SHOPIFY_APP_HANDLE || 'adnova-ai-connector-1';
+    const APP_HANDLE = process.env.SHOPIFY_APP_HANDLE || 'adray-connector';
     const storeSubdomain = normalizedShop.replace(/\.myshopify\.com$/, '');
     const embeddedUrl = `https://admin.shopify.com/store/${storeSubdomain}/apps/${APP_HANDLE}`;
 

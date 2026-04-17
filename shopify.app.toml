@@ -4,7 +4,7 @@ client_id = "168d118e58d5e1bd2bd787957e136f2b"
 name = "Adray AI Connector"
 application_url = "https://adray.ai/connector"
 embedded = true
-handle = "adnova-ai-connector-1"
+handle = "adray-connector"
 
 [webhooks]
 api_version = "2025-10"
