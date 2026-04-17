@@ -108,11 +108,21 @@ router.post('/init', async (req, res) => {
       },
     });
 
-    // Link session → recording
-    await prisma.session.updateMany({
+    // Link session → recording (session row may not exist yet if /collect is still processing)
+    const linked = await prisma.session.updateMany({
       where: { sessionId: session_id, accountId: account_id },
       data: { rrwebRecordingId: recording_id },
-    }).catch(() => {});
+    }).catch(() => ({ count: 0 }));
+
+    // If session didn't exist yet, retry once after a short delay
+    if (!linked.count) {
+      setTimeout(async () => {
+        await prisma.session.updateMany({
+          where: { sessionId: session_id, accountId: account_id },
+          data: { rrwebRecordingId: recording_id },
+        }).catch(() => {});
+      }, 3000);
+    }
 
     return res.json({ ok: true, recording_id });
   } catch (err) {
@@ -142,15 +152,46 @@ router.post('/buf', async (req, res) => {
 
     const idx = parseInt(chunk_index, 10) || 0;
 
-    // Fetch the recording to get r2ChunksPrefix
-    const rec = await prisma.sessionRecording.findUnique({
+    // Fetch the recording to get r2ChunksPrefix — auto-create if /init hasn't arrived yet (race condition)
+    let rec = await prisma.sessionRecording.findUnique({
       where: { recordingId: recording_id },
       select: { r2ChunksPrefix: true, accountId: true, chunkCount: true },
     });
 
     if (!rec) {
-      // Recording not found — create a minimal one so chunks are not lost
-      return res.status(404).json({ ok: false, error: 'Recording not found — send /start first' });
+      // /init may still be in-flight — check if account exists then auto-create
+      const accountExists = await prisma.account.findUnique({
+        where: { accountId: account_id }, select: { accountId: true },
+      }).catch(() => null);
+
+      if (!accountExists) {
+        return res.status(404).json({ ok: false, error: 'Account not found' });
+      }
+
+      const r2Prefix = chunksPrefix(account_id, recording_id);
+      try {
+        await prisma.sessionRecording.create({
+          data: {
+            recordingId: recording_id,
+            accountId: account_id,
+            sessionId: session_id || 'unknown',
+            userKey: 'anonymous',
+            triggerEvent: 'add_to_cart',
+            triggerAt: new Date(),
+            r2ChunksPrefix: r2Prefix,
+            r2Bucket: process.env.R2_BUCKET || 'adray-recordings',
+            status: 'RECORDING',
+            maskingEnabled: true,
+          },
+        });
+      } catch (createErr) {
+        if (!createErr.message?.includes('Unique constraint')) {
+          console.error('[recording/buf] auto-create failed:', createErr.message);
+          return res.status(503).json({ ok: false, error: 'Could not initialize recording' });
+        }
+      }
+      rec = { r2ChunksPrefix: r2Prefix, accountId: account_id };
+      console.log(`[recording/buf] auto-created recording ${recording_id} for account ${account_id}`);
     }
 
     const prefix = rec.r2ChunksPrefix || chunksPrefix(account_id, recording_id);

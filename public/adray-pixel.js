@@ -1725,15 +1725,8 @@
     });
     var endpoint = _ADRAY_REC_BASE + '/collect/x/buf';
     _adraySaveRecState();
-    // sendBeacon for page-unload reliability (best-effort, no retry possible)
-    var beaconSent = false;
-    try {
-      if (navigator.sendBeacon) {
-        beaconSent = navigator.sendBeacon(endpoint, new Blob([body], { type: 'application/json' }));
-        if (beaconSent) { console.log('[ADRAY-REC] chunk', idx, 'sent via sendBeacon'); return; }
-      }
-    } catch(_) {}
-    // fetch with retry for normal mid-session flushes
+    // Always use fetch+retry for mid-session chunks so we can detect and retry 404/503.
+    // sendBeacon is only used in _adrayHandleUnload (page-unload path).
     _adraySendChunkWithRetry(endpoint, body, 0);
   }
 
