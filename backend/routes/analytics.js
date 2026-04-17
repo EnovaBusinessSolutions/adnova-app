@@ -3934,6 +3934,7 @@ router.get('/:account_id/session-explorer', async (req, res) => {
           emailHash: true,
           phoneHash: true,
           attributionSnapshot: true,
+          rawPayload: true,
           orderId: true,
           orderNumber: true,
           revenue: true,
@@ -3944,7 +3945,7 @@ router.get('/:account_id/session-explorer', async (req, res) => {
           attributedChannel: true
         },
         orderBy: [{ platformCreatedAt: 'desc' }, { createdAt: 'desc' }],
-        take: 250,
+        take: 500,
       }),
     ]);
 
