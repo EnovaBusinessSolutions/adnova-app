@@ -55,6 +55,16 @@ router.post('/init', async (req, res) => {
       return res.status(400).json({ ok: false, error: 'Missing required fields' });
     }
 
+    // Verify account exists (prevent FK violation for unknown/non-onboarded accounts)
+    const accountExists = await prisma.account.findUnique({
+      where: { accountId: account_id },
+      select: { accountId: true },
+    }).catch(() => null);
+
+    if (!accountExists) {
+      return res.status(404).json({ ok: false, error: 'Account not found' });
+    }
+
     // Resolve user_key from session
     let userKey = 'anonymous';
     try {
