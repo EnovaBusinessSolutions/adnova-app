@@ -145,29 +145,31 @@ router.post('/buf', async (req, res) => {
 
     const prefix = rec.r2ChunksPrefix || chunksPrefix(account_id, recording_id);
 
-    // Upload chunk to R2 (durable)
-    uploadChunk(prefix, idx, events).catch((err) =>
-      console.error(`[recording/chunk] R2 upload failed for ${recording_id}:${idx}:`, err.message)
-    );
-
-    // Append chunk index to Redis list (fast index for worker)
-    if (redisClient) {
-      const listKey = `adray:rec:${recording_id}:chunk_indexes`;
-      await redisClient.rpush(listKey, String(idx));
-      await redisClient.expire(listKey, CHUNK_INDEX_TTL);
+    // Upload chunk to R2 — await so pixel gets a real failure signal and can retry
+    try {
+      await uploadChunk(prefix, idx, events);
+    } catch (r2Err) {
+      console.error(`[recording/chunk] R2 upload failed for ${recording_id}:${idx}:`, r2Err.message);
+      return res.status(503).json({ ok: false, error: 'Storage unavailable — please retry' });
     }
 
-    // Increment chunk count
+    // Append chunk index to Redis list (fast index for worker) — best-effort
+    if (redisClient) {
+      const listKey = `adray:rec:${recording_id}:chunk_indexes`;
+      await redisClient.rpush(listKey, String(idx)).catch(() => {});
+      await redisClient.expire(listKey, CHUNK_INDEX_TTL).catch(() => {});
+    }
+
+    // Increment chunk count + update last_chunk_at for stuck-recording detection
     await prisma.sessionRecording.update({
       where: { recordingId: recording_id },
-      data: { chunkCount: { increment: 1 } },
+      data: { chunkCount: { increment: 1 }, lastChunkAt: new Date() },
     }).catch(() => {});
 
     return res.json({ ok: true });
   } catch (err) {
     console.error('[recording/chunk] Error:', err.message);
-    // Return 200 even on error to avoid retries flooding the server
-    return res.json({ ok: false, error: 'Internal error' });
+    return res.status(500).json({ ok: false, error: 'Internal error' });
   }
 });
 
@@ -318,6 +320,59 @@ router.get('/:account_id/session/:session_id', async (req, res) => {
   } catch (err) {
     console.error('[recording/session GET] Error:', err.message);
     return res.status(500).json({ ok: false, error: 'Internal error' });
+  }
+});
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * POST /recording/sweep  (internal — called by cron)
+ * Finds recordings stuck in RECORDING/FINALIZING and re-enqueues finalize.
+ * ───────────────────────────────────────────────────────────────────────────── */
+router.post('/sweep', async (req, res) => {
+  // Simple secret check so it's not publicly abusable
+  const secret = req.headers['x-adray-internal'] || req.body?.secret;
+  if (secret !== (process.env.INTERNAL_CRON_SECRET || 'adray-internal')) {
+    return res.status(403).json({ ok: false });
+  }
+
+  try {
+    const cutoff = new Date(Date.now() - 10 * 60 * 1000); // 10 min ago
+
+    const stuck = await prisma.sessionRecording.findMany({
+      where: {
+        status: { in: ['RECORDING', 'FINALIZING'] },
+        createdAt: { lt: cutoff },
+      },
+      select: { recordingId: true, accountId: true, sessionId: true, status: true },
+      take: 50,
+    });
+
+    let enqueued = 0;
+    for (const rec of stuck) {
+      if (recordingQueue) {
+        await recordingQueue.add('recording:finalize', {
+          recordingId: rec.recordingId,
+          accountId: rec.accountId,
+          sessionId: rec.sessionId,
+          reason: 'sweep',
+        }, {
+          attempts: 3,
+          backoff: { type: 'exponential', delay: 5000 },
+          jobId: `sweep:${rec.recordingId}`, // deduplicates if already queued
+        }).catch(() => {});
+
+        await prisma.sessionRecording.update({
+          where: { recordingId: rec.recordingId },
+          data: { status: 'FINALIZING' },
+        }).catch(() => {});
+        enqueued++;
+      }
+    }
+
+    console.log(`[recording/sweep] Enqueued ${enqueued}/${stuck.length} stuck recordings`);
+    return res.json({ ok: true, swept: enqueued });
+  } catch (err) {
+    console.error('[recording/sweep] Error:', err.message);
+    return res.status(500).json({ ok: false, error: err.message });
   }
 });
 

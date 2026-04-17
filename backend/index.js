@@ -311,6 +311,8 @@ app.use(
   rateLimitRecording,
   recordingRoutes
 );
+// Sweep also accessible internally via /collect/x/sweep (no sessionGuard)
+// The route handler itself validates x-adray-internal header
 
 app.get("/adray-pixel.js", (req, res) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
@@ -1907,6 +1909,31 @@ app.use((err, _req, res, _next) => {
 app.listen(PORT, () => {
   console.log(`✓ Servidor corriendo en http://localhost:${PORT}`);
 });
+
+// ── Recording sweep: auto-finalize recordings stuck in RECORDING/FINALIZING ──
+// Runs every 10 minutes internally so no manual dashboard visit is required.
+(function startRecordingSweep() {
+  const SWEEP_INTERVAL_MS = 10 * 60 * 1000;
+  const sweepUrl = `http://localhost:${PORT}/collect/x/sweep`;
+  const secret = process.env.INTERNAL_CRON_SECRET || 'adray-internal';
+
+  async function runSweep() {
+    try {
+      const r = await fetch(sweepUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-adray-internal': secret },
+        body: JSON.stringify({}),
+      });
+      const data = await r.json().catch(() => ({}));
+      if (data.swept > 0) console.log(`[recordingSweep] Swept ${data.swept} stuck recordings`);
+    } catch (e) {
+      console.warn('[recordingSweep] Sweep failed:', e.message);
+    }
+  }
+
+  // First sweep after 2 minutes (let server fully boot), then every 10 min
+  setTimeout(() => { runSweep(); setInterval(runSweep, SWEEP_INTERVAL_MS); }, 2 * 60 * 1000);
+})();
 
 // ── Inline Recording Worker ────────────────────────────────────────
 // Runs the recording worker in the same process as the web server.
