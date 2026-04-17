@@ -23,6 +23,13 @@ const {
   enqueueGa4CollectBestEffort,
 } = require('../queues/mcpQueue');
 
+let markContextStale = null;
+try {
+  ({ markContextStale } = require('../services/mcpContextBuilder'));
+} catch (_) {
+  markContextStale = null;
+}
+
 /* =========================
  * Analytics Events
  * ========================= */
@@ -462,6 +469,17 @@ async function enqueueGoogleAdsAfterConnectBestEffort(req, { accountId = null, r
   const userId = req?.user?._id;
   if (!userId) return { ok: false, error: 'NO_USER' };
 
+  // Mark signal stale immediately so frontend stops showing old signal as valid
+  if (markContextStale) {
+    try {
+      await markContextStale(userId, 'source_connected', {
+        source: 'googleAds',
+        reason,
+        triggeredAt: new Date().toISOString(),
+      });
+    } catch (_) { /* best effort */ }
+  }
+
   const result = await enqueueGoogleAdsCollectBestEffort({
     userId,
     accountId: accountId || null,
@@ -488,6 +506,17 @@ async function enqueueGoogleAdsAfterConnectBestEffort(req, { accountId = null, r
 async function enqueueGa4AfterConnectBestEffort(req, { propertyId = null, reason = 'ga4_connect' } = {}) {
   const userId = req?.user?._id;
   if (!userId) return { ok: false, error: 'NO_USER' };
+
+  // Mark signal stale immediately so frontend stops showing old signal as valid
+  if (markContextStale) {
+    try {
+      await markContextStale(userId, 'source_connected', {
+        source: 'ga4',
+        reason,
+        triggeredAt: new Date().toISOString(),
+      });
+    } catch (_) { /* best effort */ }
+  }
 
   const result = await enqueueGa4CollectBestEffort({
     userId,
