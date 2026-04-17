@@ -83,7 +83,7 @@ function chunkKey(prefix, index) {
  * @returns {Promise<string>} the R2 key of the uploaded chunk
  */
 async function uploadChunk(prefix, index, events) {
-  if (!r2) return null;
+  if (!r2) throw new Error('R2 storage not configured — missing R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY');
   const key = chunkKey(prefix, index);
   const body = zlib.gzipSync(Buffer.from(JSON.stringify(events)));
   await r2.send(new PutObjectCommand({
@@ -103,7 +103,7 @@ async function uploadChunk(prefix, index, events) {
  * @returns {Promise<void>}
  */
 async function uploadFinal(key, gzipBuffer) {
-  if (!r2) return;
+  if (!r2) throw new Error('R2 storage not configured — missing R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY');
   await r2.send(new PutObjectCommand({
     Bucket: R2_BUCKET,
     Key: key,

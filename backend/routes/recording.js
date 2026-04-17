@@ -427,4 +427,67 @@ router.post('/sweep', async (req, res) => {
   }
 });
 
+/* ─────────────────────────────────────────────────────────────────────────────
+ * GET /collect/x/health
+ * Pipeline diagnostic — no auth required, safe to hit from browser.
+ * ───────────────────────────────────────────────────────────────────────────── */
+router.get('/health', async (req, res) => {
+  const { uploadChunk: testUpload, getPresignedUrl: testPresign } = require('../utils/r2Client');
+  const redisClient = require('../utils/redisClient');
+
+  const checks = {};
+
+  // R2 storage
+  try {
+    await testUpload('_health_check', 999999, [{ t: Date.now() }]);
+    checks.r2 = { ok: true };
+  } catch (e) {
+    checks.r2 = { ok: false, error: e.message };
+  }
+
+  // Redis
+  try {
+    if (redisClient) {
+      await redisClient.ping();
+      checks.redis = { ok: true };
+    } else {
+      checks.redis = { ok: false, error: 'redisClient not initialized' };
+    }
+  } catch (e) {
+    checks.redis = { ok: false, error: e.message };
+  }
+
+  // Postgres
+  try {
+    await prisma.$queryRaw`SELECT 1`;
+    checks.postgres = { ok: true };
+  } catch (e) {
+    checks.postgres = { ok: false, error: e.message };
+  }
+
+  // Queue
+  let queueOk = false;
+  try {
+    const { getRecordingQueue } = require('../queues/recordingQueue');
+    const q = getRecordingQueue();
+    queueOk = !!q;
+  } catch (_) {}
+  checks.queue = { ok: queueOk };
+
+  // Recent recordings
+  try {
+    const recent = await prisma.sessionRecording.findMany({
+      orderBy: { createdAt: 'desc' },
+      take: 5,
+      select: { recordingId: true, accountId: true, status: true, chunkCount: true, createdAt: true },
+    });
+    checks.recentRecordings = recent;
+  } catch (e) {
+    checks.recentRecordings = { error: e.message };
+  }
+
+  const allOk = checks.r2?.ok && checks.redis?.ok && checks.postgres?.ok && checks.queue?.ok;
+  return res.status(allOk ? 200 : 503).json({ ok: allOk, checks });
+});
+
 module.exports = router;
