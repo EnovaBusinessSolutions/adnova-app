@@ -67,8 +67,9 @@ export default function AttributionEmbed() {
   const [storedShop, setStoredShop] = useState(() => readStoredShop());
   const [sessionShop, setSessionShop] = useState("");
   const [iframeLoaded, setIframeLoaded] = useState(false);
-  // null = resolving, "" = no shop, "domain" = has shop
+  // null = resolving, "" = no shop/not connected, "domain" = pixel setup completed
   const [resolvedShop, setResolvedShop] = useState<string | null>(null);
+  const [pixelConnected, setPixelConnected] = useState<boolean | null>(null);
   const [wizardOpen, setWizardOpen] = useState(false);
 
   const shopFromUrl = useMemo(
@@ -86,15 +87,38 @@ export default function AttributionEmbed() {
     let cancelled = false;
 
     async function loadSessionShop() {
-      let nextShop = "";
-
+      // ── Step 1: gate — check if pixel setup was completed ──
+      let connected = false;
+      let pixelShop = "";
       try {
-        const response = await fetch("/api/session", { credentials: "include" });
-        const data = (await response.json().catch(() => ({}))) as SessionResponse;
-        if (cancelled) return;
-        nextShop = normalizeShop(data?.user?.shop || data?.user?.resolvedShop);
-      } catch {
-        nextShop = "";
+        const r = await fetch("/api/onboarding/status", { credentials: "include" });
+        const data = await r.json().catch(() => ({}));
+        connected = !!data?.pixel?.connected;
+        pixelShop = normalizeShop(data?.pixel?.shop);
+      } catch { }
+
+      if (cancelled) return;
+
+      if (!connected) {
+        // Clear any stale localStorage shop so it doesn't leak into future sessions
+        clearStoredShop();
+        setPixelConnected(false);
+        setResolvedShop("");
+        return;
+      }
+
+      setPixelConnected(true);
+
+      // ── Step 2: resolve which shop to show ──
+      let nextShop = pixelShop;
+
+      if (!nextShop) {
+        try {
+          const response = await fetch("/api/session", { credentials: "include" });
+          const data = (await response.json().catch(() => ({}))) as SessionResponse;
+          if (cancelled) return;
+          nextShop = normalizeShop(data?.user?.shop || data?.user?.resolvedShop);
+        } catch { }
       }
 
       if (!nextShop) {
@@ -105,9 +129,7 @@ export default function AttributionEmbed() {
           nextShop = normalizeShop(
             data?.defaultShop || data?.shops?.find((item) => item?.isDefault)?.shop || data?.shops?.[0]?.shop
           );
-        } catch {
-          nextShop = "";
-        }
+        } catch { }
       }
 
       if (cancelled) return;
@@ -121,7 +143,6 @@ export default function AttributionEmbed() {
         }
       }
 
-      // Resolve is complete — set final shop (empty string = no shop)
       const final = shopFromUrl || readStoredShop() || nextShop;
       setResolvedShop(final);
     }
@@ -157,7 +178,7 @@ export default function AttributionEmbed() {
   }, [iframeSrc]);
 
   // Still resolving
-  if (resolvedShop === null) {
+  if (resolvedShop === null || pixelConnected === null) {
     return (
       <DashboardLayout>
         <div className="flex h-screen items-center justify-center bg-[#050508]">
@@ -170,8 +191,8 @@ export default function AttributionEmbed() {
     );
   }
 
-  // No shop connected — gate
-  if (!resolvedShop) {
+  // Pixel not set up — gate
+  if (pixelConnected === false) {
     return (
       <DashboardLayout>
         <div className="flex min-h-screen items-center justify-center bg-[radial-gradient(circle_at_top,_rgba(181,92,255,0.14),_transparent_52%),linear-gradient(180deg,#09070d_0%,#050508_100%)] p-6">
@@ -199,12 +220,21 @@ export default function AttributionEmbed() {
 
           <PixelSetupWizard
             open={wizardOpen}
-            onOpenChange={setWizardOpen}
+            onOpenChange={(open) => {
+              setWizardOpen(open);
+              // Re-check pixel status when wizard closes (may have just connected)
+              if (!open) {
+                setPixelConnected(null);
+                setResolvedShop(null);
+              }
+            }}
             onDisconnect={() => {
               clearStoredShop();
               setStoredShop("");
               setSessionShop("");
+              setPixelConnected(false);
               setResolvedShop("");
+              setWizardOpen(false);
             }}
           />
         </div>
