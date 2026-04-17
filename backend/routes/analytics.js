@@ -3934,7 +3934,6 @@ router.get('/:account_id/session-explorer', async (req, res) => {
           emailHash: true,
           phoneHash: true,
           attributionSnapshot: true,
-          rawPayload: true,
           orderId: true,
           orderNumber: true,
           revenue: true,
@@ -3945,7 +3944,7 @@ router.get('/:account_id/session-explorer', async (req, res) => {
           attributedChannel: true
         },
         orderBy: [{ platformCreatedAt: 'desc' }, { createdAt: 'desc' }],
-        take: 500,
+        take: 250,
       }),
     ]);
 
@@ -4252,6 +4251,33 @@ router.get('/:account_id/session-explorer', async (req, res) => {
           customerIds: wooCustomerIds.length,
           error: error?.message || String(error),
         });
+      }
+    }
+
+    // For WooCommerce profiles without a name yet, pull billing info from rawPayload
+    // in a targeted query (only orders for nameless profiles — avoids OOM on full select)
+    if (storePlatform === 'WOOCOMMERCE') {
+      const namelessCustomerIds = allProfiles
+        .filter((p) => p.profileType === 'woocommerce_customer' && !p.customerDisplayName)
+        .map((p) => String(p.customerId || '').trim())
+        .filter(Boolean)
+        .slice(0, 100); // cap to avoid huge query
+
+      if (namelessCustomerIds.length) {
+        try {
+          const nameOrders = await prisma.order.findMany({
+            where: { accountId: account_id, customerId: { in: namelessCustomerIds } },
+            select: { customerId: true, rawPayload: true },
+            orderBy: { createdAt: 'desc' },
+            take: namelessCustomerIds.length * 2,
+          });
+          for (const o of nameOrders) {
+            const cid = String(o.customerId || '').trim();
+            if (!cid || customerDisplayNames[cid]) continue;
+            const name = extractOrderCustomerDisplayName(o.rawPayload);
+            if (name) customerDisplayNames[cid] = name;
+          }
+        } catch (_) {}
       }
     }
 

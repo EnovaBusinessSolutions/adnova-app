@@ -506,4 +506,91 @@ router.get('/health', async (req, res) => {
   return res.status(allOk ? 200 : 503).json({ ok: allOk, checks });
 });
 
+/* ─────────────────────────────────────────────────────────────────────────────
+ * POST /collect/x/finalize-now
+ * Directly finalizes stuck recordings WITHOUT going through BullMQ.
+ * Useful when the worker is not consuming jobs.
+ * Protected by x-adray-internal header.
+ * ───────────────────────────────────────────────────────────────────────────── */
+router.post('/finalize-now', async (req, res) => {
+  const secret = req.headers['x-adray-internal'] || req.body?.secret;
+  if (secret !== (process.env.INTERNAL_CRON_SECRET || 'adray-internal')) {
+    return res.status(403).json({ ok: false });
+  }
+
+  const { listChunkKeys, downloadChunk, uploadFinal, finalKey: buildFinalKey, deleteObject, deletePrefix } = require('../utils/r2Client');
+  const zlib = require('zlib');
+
+  const cutoff = new Date(Date.now() - 5 * 60 * 1000);
+  const targetId = req.body?.recordingId || null;
+
+  try {
+    const where = targetId
+      ? { recordingId: targetId }
+      : { status: { in: ['RECORDING', 'FINALIZING', 'ERROR'] }, createdAt: { lt: cutoff }, rawErasedAt: null };
+
+    const recs = await prisma.sessionRecording.findMany({
+      where,
+      select: { recordingId: true, accountId: true, sessionId: true, r2ChunksPrefix: true, chunkCount: true },
+      take: 10,
+    });
+
+    const results = [];
+    for (const rec of recs) {
+      const result = { recordingId: rec.recordingId, status: null, events: 0, error: null };
+      try {
+        const prefix = rec.r2ChunksPrefix || `recordings/${rec.accountId}/${rec.recordingId}/chunks`;
+        const chunkKeys = await listChunkKeys(prefix);
+        result.chunksFound = chunkKeys.length;
+
+        if (chunkKeys.length === 0) {
+          await prisma.sessionRecording.update({ where: { recordingId: rec.recordingId }, data: { status: 'ERROR' } });
+          result.status = 'ERROR_no_chunks';
+          results.push(result);
+          continue;
+        }
+
+        const allEvents = [];
+        for (const key of chunkKeys) {
+          try { allEvents.push(...await downloadChunk(key)); } catch (_) {}
+        }
+
+        if (allEvents.length === 0) {
+          await prisma.sessionRecording.update({ where: { recordingId: rec.recordingId }, data: { status: 'ERROR' } });
+          result.status = 'ERROR_no_events';
+          results.push(result);
+          continue;
+        }
+
+        allEvents.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
+        const fKey = buildFinalKey(rec.accountId, rec.recordingId);
+        const gzipped = zlib.gzipSync(Buffer.from(JSON.stringify(allEvents)));
+        await uploadFinal(fKey, gzipped);
+
+        const durationMs = allEvents.length >= 2
+          ? (allEvents[allEvents.length - 1].timestamp || 0) - (allEvents[0].timestamp || 0)
+          : null;
+
+        await prisma.sessionRecording.update({
+          where: { recordingId: rec.recordingId },
+          data: { status: 'READY', r2Key: fKey, sizeBytes: BigInt(gzipped.length), durationMs },
+        });
+
+        result.status = 'READY';
+        result.events = allEvents.length;
+        result.bytes = gzipped.length;
+        result.durationMs = durationMs;
+      } catch (err) {
+        result.error = err.message;
+        result.status = 'FAILED';
+      }
+      results.push(result);
+    }
+
+    return res.json({ ok: true, processed: results.length, results });
+  } catch (err) {
+    return res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
 module.exports = router;
