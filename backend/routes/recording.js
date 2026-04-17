@@ -387,11 +387,15 @@ router.post('/sweep', async (req, res) => {
 
   try {
     const cutoff = new Date(Date.now() - 10 * 60 * 1000); // 10 min ago
+    // ERROR recordings get 1 retry chance (in case failure was transient)
+    const errorCutoff = new Date(Date.now() - 30 * 60 * 1000); // 30 min ago for ERROR
 
     const stuck = await prisma.sessionRecording.findMany({
       where: {
-        status: { in: ['RECORDING', 'FINALIZING'] },
-        createdAt: { lt: cutoff },
+        OR: [
+          { status: { in: ['RECORDING', 'FINALIZING'] }, createdAt: { lt: cutoff } },
+          { status: 'ERROR', chunkCount: { gt: 0 }, createdAt: { lt: errorCutoff }, rawErasedAt: null },
+        ],
       },
       select: { recordingId: true, accountId: true, sessionId: true, status: true },
       take: 50,
@@ -400,6 +404,16 @@ router.post('/sweep', async (req, res) => {
     let enqueued = 0;
     for (const rec of stuck) {
       if (recordingQueue) {
+        // Remove any previously failed job with the same dedupe ID so we can re-enqueue
+        const dedupId = `sweep:${rec.recordingId}`;
+        try {
+          const existing = await recordingQueue.getJob(dedupId);
+          if (existing) {
+            const state = await existing.getState();
+            if (state === 'failed' || state === 'completed') await existing.remove();
+          }
+        } catch (_) {}
+
         await recordingQueue.add('recording:finalize', {
           recordingId: rec.recordingId,
           accountId: rec.accountId,
@@ -407,8 +421,10 @@ router.post('/sweep', async (req, res) => {
           reason: 'sweep',
         }, {
           attempts: 3,
-          backoff: { type: 'exponential', delay: 5000 },
-          jobId: `sweep:${rec.recordingId}`, // deduplicates if already queued
+          backoff: { type: 'exponential', delay: 2000 },
+          removeOnComplete: true,
+          removeOnFail: true,
+          jobId: dedupId,
         }).catch(() => {});
 
         await prisma.sessionRecording.update({
@@ -420,7 +436,7 @@ router.post('/sweep', async (req, res) => {
     }
 
     console.log(`[recording/sweep] Enqueued ${enqueued}/${stuck.length} stuck recordings`);
-    return res.json({ ok: true, swept: enqueued });
+    return res.json({ ok: true, swept: enqueued, recordingIds: stuck.map(r => r.recordingId) });
   } catch (err) {
     console.error('[recording/sweep] Error:', err.message);
     return res.status(500).json({ ok: false, error: err.message });
