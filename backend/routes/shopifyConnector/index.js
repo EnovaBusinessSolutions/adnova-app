@@ -446,17 +446,16 @@ router.get('/auth/callback', async (req, res) => {
       { upsert: true, new: true }
     );
 
-    // ✅ Redirigir usando admin.shopify.com (evita pasar por el storefront y su password page).
-    // Patrón moderno: https://admin.shopify.com/store/{subdomain}/apps/{handle}
-    const APP_HANDLE = process.env.SHOPIFY_APP_HANDLE || 'adray-connector';
-    const storeSubdomain = normalizedShop.replace(/\.myshopify\.com$/, '');
-    const embeddedUrl = `https://admin.shopify.com/store/${storeSubdomain}/apps/${APP_HANDLE}`;
+    // Redirigir a nuestra propia interfaz: token ya está guardado, carga directamente
+    // el botón "Ir a ADRAY AI" sin depender del handle de la app en Shopify Partners.
+    const interfaceUrl =
+      `${BASE_URL}/connector/interface` +
+      `?shop=${encodeURIComponent(normalizedShop)}` +
+      (host ? `&host=${encodeURIComponent(host)}` : '');
 
-    console.log('[SHOPIFY_CONNECTOR] 🚀 Auth completada → redirigiendo a Shopify admin embedded');
-    console.log(`[SHOPIFY_CONNECTOR] ℹ️  Shop: ${normalizedShop}`);
-    console.log(`[SHOPIFY_CONNECTOR] 🎯 [TARGET_URL]: ${embeddedUrl}`);
+    console.log('[SHOPIFY_CONNECTOR] Auth completada -> redirigiendo a interface', { shop: normalizedShop });
 
-    return res.redirect(embeddedUrl);
+    return res.redirect(302, interfaceUrl);
   } catch (err) {
     console.error('[SHOPIFY_CONNECTOR] ❌ Error token exchange:', err?.message || err);
     if (err?.response) {
