@@ -71,6 +71,7 @@ export default function AttributionEmbed() {
   const [resolvedShop, setResolvedShop] = useState<string | null>(null);
   const [pixelConnected, setPixelConnected] = useState<boolean | null>(null);
   const [wizardOpen, setWizardOpen] = useState(false);
+  const [refreshKey, setRefreshKey] = useState(0);
 
   const shopFromUrl = useMemo(
     () => normalizeShop(searchParams.get("shop") || searchParams.get("shopId") || searchParams.get("store")),
@@ -149,7 +150,7 @@ export default function AttributionEmbed() {
 
     loadSessionShop();
     return () => { cancelled = true; };
-  }, [searchParams, setSearchParams, shopFromUrl]);
+  }, [searchParams, setSearchParams, shopFromUrl, refreshKey]);
 
   useEffect(() => {
     function handleMessage(event: MessageEvent<AnalyticsShopChangedMessage>) {
@@ -222,10 +223,10 @@ export default function AttributionEmbed() {
             open={wizardOpen}
             onOpenChange={(open) => {
               setWizardOpen(open);
-              // Re-check pixel status when wizard closes (may have just connected)
               if (!open) {
                 setPixelConnected(null);
                 setResolvedShop(null);
+                setRefreshKey((k) => k + 1);
               }
             }}
             onDisconnect={() => {
