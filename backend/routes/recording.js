@@ -266,6 +266,34 @@ router.post('/fin', async (req, res) => {
 });
 
 /* ─────────────────────────────────────────────────────────────────────────────
+ * GET /api/recording/:account_id/list
+ * Returns all READY recordings for an account (most recent first).
+ * Used by the dashboard Recordings panel.
+ * ───────────────────────────────────────────────────────────────────────────── */
+router.get('/:account_id/list', async (req, res) => {
+  try {
+    const { account_id } = req.params;
+    const take = Math.min(Number(req.query.limit) || 50, 100);
+
+    const recs = await prisma.sessionRecording.findMany({
+      where: { accountId: account_id, status: 'READY', rawErasedAt: null },
+      select: {
+        recordingId: true, sessionId: true, status: true,
+        durationMs: true, triggerAt: true, createdAt: true,
+        behavioralSignals: true, outcome: true, cartValue: true,
+        r2Key: true,
+      },
+      orderBy: { createdAt: 'desc' },
+      take,
+    });
+
+    return res.json({ ok: true, recordings: recs });
+  } catch (err) {
+    return res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+/* ─────────────────────────────────────────────────────────────────────────────
  * GET /api/recording/:account_id/:recording_id
  * Returns recording metadata + presigned R2 URL for dashboard playback.
  * Requires session auth (enforced by sessionGuard in index.js).
