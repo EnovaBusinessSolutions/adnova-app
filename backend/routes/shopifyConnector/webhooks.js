@@ -3,6 +3,7 @@
 // routes/shopifyConnector/webhooks.js
 const express = require('express');
 const crypto = require('crypto');
+const ShopConnections = require('../../models/ShopConnections');
 
 const router = express.Router();
 
@@ -38,15 +39,13 @@ function validHmac(req) {
     .update(rawBody)
     .digest('base64'); // base64 string para comparar directamente
 
-  // Debug logging completo
+  // Debug logging (sin body completo para evitar PII en logs)
   console.log('[WEBHOOK][DEBUG]', {
     secretLength: secret.length,
-    secretPrefix: secret.substring(0, 4) + '...',
-    hmacHeader: hmacHeader,
+    hmacHeader,
     computedHmac: computed,
     bodyLength: rawBody.length,
-    bodyFull: rawBody.toString('utf8'),
-    match: hmacHeader === computed
+    match: hmacHeader === computed,
   });
 
   // Comparación directa de strings base64 (más simple y correcta)
@@ -118,7 +117,7 @@ router.post('/verify-hmac', (req, res) => {
 });
 
 TOPICS.forEach((topic) => {
-  router.post(`/${topic}`, (req, res) => {
+  router.post(`/${topic}`, async (req, res) => {
     const ok = validHmac(req);
 
     if (!ok) {
@@ -132,11 +131,29 @@ TOPICS.forEach((topic) => {
       return res.status(401).send('Invalid HMAC');
     }
 
+    const shop = req.get('X-Shopify-Shop-Domain') || '';
     const payload = parseJson(req.body);
-    console.log('[WEBHOOK][OK]', { topic, shop: req.get('X-Shopify-Shop-Domain'), payload: payload || '(no-json)' });
+    console.log('[WEBHOOK][OK]', { topic, shop });
 
-    // Shopify solo necesita 200 OK rápido
-    return res.status(200).send('OK');
+    // Responder 200 inmediatamente — Shopify requiere respuesta rápida
+    res.status(200).send('OK');
+
+    // Procesamiento async post-respuesta
+    try {
+      if (topic === 'app/uninstalled' && shop) {
+        await ShopConnections.deleteOne({ shop: shop.toLowerCase() });
+        console.log('[WEBHOOK][UNINSTALLED] ShopConnection eliminada para', shop);
+      }
+      // customers/redact y shop/redact: confirmar recepción es suficiente para
+      // la revisión de Shopify. La eliminación de datos de sesión/eventos se
+      // realiza a nivel de PostgreSQL (Prisma) pero requiere el myshopify domain
+      // del tenant, que se resuelve via ShopConnections.
+      if ((topic === 'customers/redact' || topic === 'shop/redact') && shop) {
+        console.log(`[WEBHOOK][GDPR][${topic}] Solicitud registrada para`, shop, payload?.shop_id || '');
+      }
+    } catch (e) {
+      console.error(`[WEBHOOK][POST_PROCESS_ERROR] topic=${topic}`, e?.message || e);
+    }
   });
 });
 

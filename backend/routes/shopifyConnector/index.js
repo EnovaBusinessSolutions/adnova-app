@@ -420,10 +420,11 @@ router.get('/auth/callback', async (req, res) => {
       { upsert: true, new: true }
     );
 
-    // ✅ Redirigir al Shopify admin para que re-embeds la app en el iframe.
-    // Patrón correcto: https://{shop}/admin/apps/{API_KEY}
-    // Shopify admin carga nuestra app embebida automáticamente.
-    const embeddedUrl = `https://${normalizedShop}/admin/apps/${SHOPIFY_API_KEY}`;
+    // ✅ Redirigir usando admin.shopify.com (evita pasar por el storefront y su password page).
+    // Patrón moderno: https://admin.shopify.com/store/{subdomain}/apps/{handle}
+    const APP_HANDLE = process.env.SHOPIFY_APP_HANDLE || 'adnova-ai-connector-1';
+    const storeSubdomain = normalizedShop.replace(/\.myshopify\.com$/, '');
+    const embeddedUrl = `https://admin.shopify.com/store/${storeSubdomain}/apps/${APP_HANDLE}`;
 
     console.log('[SHOPIFY_CONNECTOR] 🚀 Auth completada → redirigiendo a Shopify admin embedded');
     console.log(`[SHOPIFY_CONNECTOR] ℹ️  Shop: ${normalizedShop}`);
