@@ -172,20 +172,32 @@ async function handleExtractSignals(job) {
     signals = { error: err.message };
   }
 
-  // LLM narrative for high-risk or abandoned sessions
+  // LLM narrative for high-risk sessions — hard 30s timeout so worker never blocks
   if (signals.riskScore >= 60) {
     try {
       const { generateNarrative } = require('../services/recordingNarrativeService');
       const attribution = rec.attributionSnapshot || {};
-      const narrative = await generateNarrative({
-        signals,
-        cartValue: rec.cartValue,
-        attributedChannel: attribution.utm_source || attribution.attributed_channel || null,
-        sessionDurationMs: signals.totalDurationMs,
-      });
+      const llmTimeout = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('LLM timeout after 30s')), 30_000)
+      );
+      const narrative = await Promise.race([
+        generateNarrative({
+          signals,
+          cartValue: rec.cartValue,
+          attributedChannel: attribution.utm_source || attribution.attributed_channel || null,
+          sessionDurationMs: signals.totalDurationMs,
+        }),
+        llmTimeout,
+      ]);
       if (narrative) Object.assign(signals, narrative);
     } catch (err) {
       console.warn(`[recordingWorker:extract-signals] LLM narrative failed (non-fatal):`, err.message);
+      // Ensure deterministic archetype is always present even without LLM
+      if (!signals.archetype) {
+        signals.archetype = signals.abandonmentPattern || 'unknown';
+        signals.narrative = null;
+        signals.llmSkipped = true;
+      }
     }
   }
 

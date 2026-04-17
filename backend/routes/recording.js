@@ -55,6 +55,16 @@ router.post('/init', async (req, res) => {
       return res.status(400).json({ ok: false, error: 'Missing required fields' });
     }
 
+    // Verify account exists (prevent FK violation for unknown/non-onboarded accounts)
+    const accountExists = await prisma.account.findUnique({
+      where: { accountId: account_id },
+      select: { accountId: true },
+    }).catch(() => null);
+
+    if (!accountExists) {
+      return res.status(404).json({ ok: false, error: 'Account not found' });
+    }
+
     // Resolve user_key from session
     let userKey = 'anonymous';
     try {
@@ -98,11 +108,21 @@ router.post('/init', async (req, res) => {
       },
     });
 
-    // Link session → recording
-    await prisma.session.updateMany({
+    // Link session → recording (session row may not exist yet if /collect is still processing)
+    const linked = await prisma.session.updateMany({
       where: { sessionId: session_id, accountId: account_id },
       data: { rrwebRecordingId: recording_id },
-    }).catch(() => {});
+    }).catch(() => ({ count: 0 }));
+
+    // If session didn't exist yet, retry once after a short delay
+    if (!linked.count) {
+      setTimeout(async () => {
+        await prisma.session.updateMany({
+          where: { sessionId: session_id, accountId: account_id },
+          data: { rrwebRecordingId: recording_id },
+        }).catch(() => {});
+      }, 3000);
+    }
 
     return res.json({ ok: true, recording_id });
   } catch (err) {
@@ -132,42 +152,75 @@ router.post('/buf', async (req, res) => {
 
     const idx = parseInt(chunk_index, 10) || 0;
 
-    // Fetch the recording to get r2ChunksPrefix
-    const rec = await prisma.sessionRecording.findUnique({
+    // Fetch the recording to get r2ChunksPrefix — auto-create if /init hasn't arrived yet (race condition)
+    let rec = await prisma.sessionRecording.findUnique({
       where: { recordingId: recording_id },
       select: { r2ChunksPrefix: true, accountId: true, chunkCount: true },
     });
 
     if (!rec) {
-      // Recording not found — create a minimal one so chunks are not lost
-      return res.status(404).json({ ok: false, error: 'Recording not found — send /start first' });
+      // /init may still be in-flight — check if account exists then auto-create
+      const accountExists = await prisma.account.findUnique({
+        where: { accountId: account_id }, select: { accountId: true },
+      }).catch(() => null);
+
+      if (!accountExists) {
+        return res.status(404).json({ ok: false, error: 'Account not found' });
+      }
+
+      const r2Prefix = chunksPrefix(account_id, recording_id);
+      try {
+        await prisma.sessionRecording.create({
+          data: {
+            recordingId: recording_id,
+            accountId: account_id,
+            sessionId: session_id || 'unknown',
+            userKey: 'anonymous',
+            triggerEvent: 'add_to_cart',
+            triggerAt: new Date(),
+            r2ChunksPrefix: r2Prefix,
+            r2Bucket: process.env.R2_BUCKET || 'adray-recordings',
+            status: 'RECORDING',
+            maskingEnabled: true,
+          },
+        });
+      } catch (createErr) {
+        if (!createErr.message?.includes('Unique constraint')) {
+          console.error('[recording/buf] auto-create failed:', createErr.message);
+          return res.status(503).json({ ok: false, error: 'Could not initialize recording' });
+        }
+      }
+      rec = { r2ChunksPrefix: r2Prefix, accountId: account_id };
+      console.log(`[recording/buf] auto-created recording ${recording_id} for account ${account_id}`);
     }
 
     const prefix = rec.r2ChunksPrefix || chunksPrefix(account_id, recording_id);
 
-    // Upload chunk to R2 (durable)
-    uploadChunk(prefix, idx, events).catch((err) =>
-      console.error(`[recording/chunk] R2 upload failed for ${recording_id}:${idx}:`, err.message)
-    );
-
-    // Append chunk index to Redis list (fast index for worker)
-    if (redisClient) {
-      const listKey = `adray:rec:${recording_id}:chunk_indexes`;
-      await redisClient.rpush(listKey, String(idx));
-      await redisClient.expire(listKey, CHUNK_INDEX_TTL);
+    // Upload chunk to R2 — await so pixel gets a real failure signal and can retry
+    try {
+      await uploadChunk(prefix, idx, events);
+    } catch (r2Err) {
+      console.error(`[recording/chunk] R2 upload failed for ${recording_id}:${idx}:`, r2Err.message);
+      return res.status(503).json({ ok: false, error: 'Storage unavailable — please retry' });
     }
 
-    // Increment chunk count
+    // Append chunk index to Redis list (fast index for worker) — best-effort
+    if (redisClient) {
+      const listKey = `adray:rec:${recording_id}:chunk_indexes`;
+      await redisClient.rpush(listKey, String(idx)).catch(() => {});
+      await redisClient.expire(listKey, CHUNK_INDEX_TTL).catch(() => {});
+    }
+
+    // Increment chunk count + update last_chunk_at for stuck-recording detection
     await prisma.sessionRecording.update({
       where: { recordingId: recording_id },
-      data: { chunkCount: { increment: 1 } },
+      data: { chunkCount: { increment: 1 }, lastChunkAt: new Date() },
     }).catch(() => {});
 
     return res.json({ ok: true });
   } catch (err) {
     console.error('[recording/chunk] Error:', err.message);
-    // Return 200 even on error to avoid retries flooding the server
-    return res.json({ ok: false, error: 'Internal error' });
+    return res.status(500).json({ ok: false, error: 'Internal error' });
   }
 });
 
@@ -318,6 +371,225 @@ router.get('/:account_id/session/:session_id', async (req, res) => {
   } catch (err) {
     console.error('[recording/session GET] Error:', err.message);
     return res.status(500).json({ ok: false, error: 'Internal error' });
+  }
+});
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * POST /recording/sweep  (internal — called by cron)
+ * Finds recordings stuck in RECORDING/FINALIZING and re-enqueues finalize.
+ * ───────────────────────────────────────────────────────────────────────────── */
+router.post('/sweep', async (req, res) => {
+  // Simple secret check so it's not publicly abusable
+  const secret = req.headers['x-adray-internal'] || req.body?.secret;
+  if (secret !== (process.env.INTERNAL_CRON_SECRET || 'adray-internal')) {
+    return res.status(403).json({ ok: false });
+  }
+
+  try {
+    const cutoff = new Date(Date.now() - 10 * 60 * 1000); // 10 min ago
+    // ERROR recordings get 1 retry chance (in case failure was transient)
+    const errorCutoff = new Date(Date.now() - 30 * 60 * 1000); // 30 min ago for ERROR
+
+    const stuck = await prisma.sessionRecording.findMany({
+      where: {
+        OR: [
+          { status: { in: ['RECORDING', 'FINALIZING'] }, createdAt: { lt: cutoff } },
+          { status: 'ERROR', chunkCount: { gt: 0 }, createdAt: { lt: errorCutoff }, rawErasedAt: null },
+        ],
+      },
+      select: { recordingId: true, accountId: true, sessionId: true, status: true },
+      take: 50,
+    });
+
+    let enqueued = 0;
+    for (const rec of stuck) {
+      if (recordingQueue) {
+        // Remove any previously failed job with the same dedupe ID so we can re-enqueue
+        const dedupId = `sweep:${rec.recordingId}`;
+        try {
+          const existing = await recordingQueue.getJob(dedupId);
+          if (existing) {
+            const state = await existing.getState();
+            if (state === 'failed' || state === 'completed') await existing.remove();
+          }
+        } catch (_) {}
+
+        await recordingQueue.add('recording:finalize', {
+          recordingId: rec.recordingId,
+          accountId: rec.accountId,
+          sessionId: rec.sessionId,
+          reason: 'sweep',
+        }, {
+          attempts: 3,
+          backoff: { type: 'exponential', delay: 2000 },
+          removeOnComplete: true,
+          removeOnFail: true,
+          jobId: dedupId,
+        }).catch(() => {});
+
+        await prisma.sessionRecording.update({
+          where: { recordingId: rec.recordingId },
+          data: { status: 'FINALIZING' },
+        }).catch(() => {});
+        enqueued++;
+      }
+    }
+
+    console.log(`[recording/sweep] Enqueued ${enqueued}/${stuck.length} stuck recordings`);
+    return res.json({ ok: true, swept: enqueued, recordingIds: stuck.map(r => r.recordingId) });
+  } catch (err) {
+    console.error('[recording/sweep] Error:', err.message);
+    return res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * GET /collect/x/health
+ * Pipeline diagnostic — no auth required, safe to hit from browser.
+ * ───────────────────────────────────────────────────────────────────────────── */
+router.get('/health', async (req, res) => {
+  const { uploadChunk: testUpload, getPresignedUrl: testPresign } = require('../utils/r2Client');
+  const redisClient = require('../utils/redisClient');
+
+  const checks = {};
+
+  // R2 storage
+  try {
+    await testUpload('_health_check', 999999, [{ t: Date.now() }]);
+    checks.r2 = { ok: true };
+  } catch (e) {
+    checks.r2 = { ok: false, error: e.message };
+  }
+
+  // Redis
+  try {
+    if (redisClient) {
+      await redisClient.ping();
+      checks.redis = { ok: true };
+    } else {
+      checks.redis = { ok: false, error: 'redisClient not initialized' };
+    }
+  } catch (e) {
+    checks.redis = { ok: false, error: e.message };
+  }
+
+  // Postgres
+  try {
+    await prisma.$queryRaw`SELECT 1`;
+    checks.postgres = { ok: true };
+  } catch (e) {
+    checks.postgres = { ok: false, error: e.message };
+  }
+
+  // Queue
+  let queueOk = false;
+  try {
+    const { getRecordingQueue } = require('../queues/recordingQueue');
+    const q = getRecordingQueue();
+    queueOk = !!q;
+  } catch (_) {}
+  checks.queue = { ok: queueOk };
+
+  // Recent recordings
+  try {
+    const recent = await prisma.sessionRecording.findMany({
+      orderBy: { createdAt: 'desc' },
+      take: 5,
+      select: { recordingId: true, accountId: true, status: true, chunkCount: true, createdAt: true },
+    });
+    checks.recentRecordings = recent;
+  } catch (e) {
+    checks.recentRecordings = { error: e.message };
+  }
+
+  const allOk = checks.r2?.ok && checks.redis?.ok && checks.postgres?.ok && checks.queue?.ok;
+  return res.status(allOk ? 200 : 503).json({ ok: allOk, checks });
+});
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * POST /collect/x/finalize-now
+ * Directly finalizes stuck recordings WITHOUT going through BullMQ.
+ * Useful when the worker is not consuming jobs.
+ * Protected by x-adray-internal header.
+ * ───────────────────────────────────────────────────────────────────────────── */
+router.post('/finalize-now', async (req, res) => {
+  const secret = req.headers['x-adray-internal'] || req.body?.secret;
+  if (secret !== (process.env.INTERNAL_CRON_SECRET || 'adray-internal')) {
+    return res.status(403).json({ ok: false });
+  }
+
+  const { listChunkKeys, downloadChunk, uploadFinal, finalKey: buildFinalKey, deleteObject, deletePrefix } = require('../utils/r2Client');
+  const zlib = require('zlib');
+
+  const cutoff = new Date(Date.now() - 5 * 60 * 1000);
+  const targetId = req.body?.recordingId || null;
+
+  try {
+    const where = targetId
+      ? { recordingId: targetId }
+      : { status: { in: ['RECORDING', 'FINALIZING', 'ERROR'] }, createdAt: { lt: cutoff }, rawErasedAt: null };
+
+    const recs = await prisma.sessionRecording.findMany({
+      where,
+      select: { recordingId: true, accountId: true, sessionId: true, r2ChunksPrefix: true, chunkCount: true },
+      take: 10,
+    });
+
+    const results = [];
+    for (const rec of recs) {
+      const result = { recordingId: rec.recordingId, status: null, events: 0, error: null };
+      try {
+        const prefix = rec.r2ChunksPrefix || `recordings/${rec.accountId}/${rec.recordingId}/chunks`;
+        const chunkKeys = await listChunkKeys(prefix);
+        result.chunksFound = chunkKeys.length;
+
+        if (chunkKeys.length === 0) {
+          await prisma.sessionRecording.update({ where: { recordingId: rec.recordingId }, data: { status: 'ERROR' } });
+          result.status = 'ERROR_no_chunks';
+          results.push(result);
+          continue;
+        }
+
+        const allEvents = [];
+        for (const key of chunkKeys) {
+          try { allEvents.push(...await downloadChunk(key)); } catch (_) {}
+        }
+
+        if (allEvents.length === 0) {
+          await prisma.sessionRecording.update({ where: { recordingId: rec.recordingId }, data: { status: 'ERROR' } });
+          result.status = 'ERROR_no_events';
+          results.push(result);
+          continue;
+        }
+
+        allEvents.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
+        const fKey = buildFinalKey(rec.accountId, rec.recordingId);
+        const gzipped = zlib.gzipSync(Buffer.from(JSON.stringify(allEvents)));
+        await uploadFinal(fKey, gzipped);
+
+        const durationMs = allEvents.length >= 2
+          ? (allEvents[allEvents.length - 1].timestamp || 0) - (allEvents[0].timestamp || 0)
+          : null;
+
+        await prisma.sessionRecording.update({
+          where: { recordingId: rec.recordingId },
+          data: { status: 'READY', r2Key: fKey, sizeBytes: BigInt(gzipped.length), durationMs },
+        });
+
+        result.status = 'READY';
+        result.events = allEvents.length;
+        result.bytes = gzipped.length;
+        result.durationMs = durationMs;
+      } catch (err) {
+        result.error = err.message;
+        result.status = 'FAILED';
+      }
+      results.push(result);
+    }
+
+    return res.json({ ok: true, processed: results.length, results });
+  } catch (err) {
+    return res.status(500).json({ ok: false, error: err.message });
   }
 });
 

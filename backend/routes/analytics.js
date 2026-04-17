@@ -3073,21 +3073,44 @@ router.get('/:account_id', async (req, res) => {
     }
 
     // Enrich recentPurchases with behavioral signals from SessionRecording.
+    // Falls back to sessionId lookup when rrwebRecordingId is not set on the session.
     try {
       const recordingIds = recentPurchases.map((p) => p.rrwebRecordingId).filter(Boolean);
-      if (recordingIds.length) {
-        const recordings = await prisma.sessionRecording.findMany({
-          where: { recordingId: { in: recordingIds }, accountId: account_id },
-          select: { recordingId: true, behavioralSignals: true, status: true, outcome: true, durationMs: true },
-        });
-        const recMap = new Map(recordings.map((r) => [r.recordingId, r]));
-        for (const p of recentPurchases) {
-          const r = p.rrwebRecordingId ? recMap.get(p.rrwebRecordingId) : null;
-          p.behavioralSignals = r?.behavioralSignals || null;
-          p.recordingStatus  = r?.status || null;
-          p.recordingOutcome = r?.outcome || null;
-          p.recordingDurationMs = r?.durationMs || null;
-        }
+      const sessionIdsWithoutRec = recentPurchases
+        .filter((p) => !p.rrwebRecordingId && p.sessionId)
+        .map((p) => p.sessionId);
+
+      const [recsByRecId, recsBySessionId] = await Promise.all([
+        recordingIds.length
+          ? prisma.sessionRecording.findMany({
+              where: { recordingId: { in: recordingIds }, accountId: account_id },
+              select: { recordingId: true, sessionId: true, behavioralSignals: true, status: true, outcome: true, durationMs: true },
+            })
+          : [],
+        sessionIdsWithoutRec.length
+          ? prisma.sessionRecording.findMany({
+              where: { sessionId: { in: sessionIdsWithoutRec }, accountId: account_id },
+              select: { recordingId: true, sessionId: true, behavioralSignals: true, status: true, outcome: true, durationMs: true },
+              orderBy: { createdAt: 'desc' },
+            })
+          : [],
+      ]);
+
+      const recMap = new Map(recsByRecId.map((r) => [r.recordingId, r]));
+      // sessionId → most recent recording (findMany ordered desc, take first per sessionId)
+      const sessionRecMap = new Map();
+      for (const r of recsBySessionId) {
+        if (!sessionRecMap.has(r.sessionId)) sessionRecMap.set(r.sessionId, r);
+      }
+
+      for (const p of recentPurchases) {
+        const r = (p.rrwebRecordingId ? recMap.get(p.rrwebRecordingId) : null)
+               || (p.sessionId ? sessionRecMap.get(p.sessionId) : null);
+        if (r && !p.rrwebRecordingId) p.rrwebRecordingId = r.recordingId;
+        p.behavioralSignals   = r?.behavioralSignals || null;
+        p.recordingStatus     = r?.status || null;
+        p.recordingOutcome    = r?.outcome || null;
+        p.recordingDurationMs = r?.durationMs || null;
       }
     } catch (_sigErr) {
       // SessionRecording table may not exist in all envs.
@@ -4228,6 +4251,33 @@ router.get('/:account_id/session-explorer', async (req, res) => {
           customerIds: wooCustomerIds.length,
           error: error?.message || String(error),
         });
+      }
+    }
+
+    // For WooCommerce profiles without a name yet, pull billing info from rawPayload
+    // in a targeted query (only orders for nameless profiles — avoids OOM on full select)
+    if (storePlatform === 'WOOCOMMERCE') {
+      const namelessCustomerIds = allProfiles
+        .filter((p) => p.profileType === 'woocommerce_customer' && !p.customerDisplayName)
+        .map((p) => String(p.customerId || '').trim())
+        .filter(Boolean)
+        .slice(0, 100); // cap to avoid huge query
+
+      if (namelessCustomerIds.length) {
+        try {
+          const nameOrders = await prisma.order.findMany({
+            where: { accountId: account_id, customerId: { in: namelessCustomerIds } },
+            select: { customerId: true, rawPayload: true },
+            orderBy: { createdAt: 'desc' },
+            take: namelessCustomerIds.length * 2,
+          });
+          for (const o of nameOrders) {
+            const cid = String(o.customerId || '').trim();
+            if (!cid || customerDisplayNames[cid]) continue;
+            const name = extractOrderCustomerDisplayName(o.rawPayload);
+            if (name) customerDisplayNames[cid] = name;
+          }
+        } catch (_) {}
       }
     }
 

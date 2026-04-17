@@ -34,7 +34,7 @@ const comparisonRows: Array<{
     { feature: "Server-side website data", sigFree: false, sigPaid: false, coreFree: true, corePaid: true, enterprise: true },
     { feature: "Invoicing & credit terms", sigFree: false, sigPaid: false, coreFree: false, corePaid: false, enterprise: true },
     { feature: "White-glove onboarding", sigFree: false, sigPaid: false, coreFree: false, corePaid: false, enterprise: true },
-    { feature: "Dedicated CSM", sigFree: false, sigPaid: false, coreFree: false, corePaid: false, enterprise: true },
+    { feature: "Dedicated support", sigFree: false, sigPaid: false, coreFree: false, corePaid: false, enterprise: true },
     { feature: "SLA", sigFree: false, sigPaid: false, coreFree: false, corePaid: false, enterprise: true },
     { feature: "Additional workspaces", sigFree: false, sigPaid: "$29/mo each", coreFree: false, corePaid: "$49/mo + 1% each", enterprise: "Custom" },
 ];
@@ -67,7 +67,7 @@ const faqs = [
     },
     {
         q: "What is the Enterprise plan?",
-        a: "A sales-assisted plan for advertisers and agencies who need invoicing, credit terms, white-glove setup, and a dedicated support contact. Available on Signal or Core. Contact us to get a proposal.",
+        a: "Available on Signal or Core. Signal Enterprise is $499/month. Core Enterprise is 1% of ad spend, minimum $1,500/month. Both include white-glove onboarding, invoicing and credit terms, dedicated support, and SLA.",
     },
     {
         q: "How fast is setup?",

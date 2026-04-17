@@ -251,8 +251,8 @@ function topLevelRedirect(res, url, label = 'Continuar con Shopify') {
       font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,Arial}
     .card{width:min(560px,92vw);background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);
       border-radius:16px;padding:22px;box-shadow:0 18px 45px rgba(0,0,0,.55)}
-    .btn{width:100%;border:0;border-radius:14px;padding:14px 16px;font-weight:800;cursor:pointer;
-      background:linear-gradient(90deg,#7c3aed,#3b82f6);color:#fff;font-size:15px}
+    .btn{display:block;width:100%;box-sizing:border-box;border:0;border-radius:14px;padding:14px 16px;font-weight:800;cursor:pointer;
+      background:linear-gradient(90deg,#7c3aed,#3b82f6);color:#fff;font-size:15px;text-decoration:none;text-align:center}
     .muted{opacity:.78;font-size:12.5px;line-height:1.5;margin-top:10px}
     a{color:#9ecbff}
     code{font-size:12px;opacity:.9}
@@ -268,21 +268,11 @@ function topLevelRedirect(res, url, label = 'Continuar con Shopify') {
         ''
       )}</code> en esta prueba.
     </div>
-    <button class="btn" id="go">Continuar</button>
+    <a class="btn" href="${url}" target="_top" rel="noopener noreferrer">Continuar</a>
     <div class="muted" style="margin-top:10px;">
       <a href="${url}" target="_top" rel="noopener noreferrer">Abrir manualmente</a>
     </div>
   </div>
-
-  <script>
-    (function(){
-      var url = ${JSON.stringify(url)};
-      document.getElementById('go').addEventListener('click', function(){
-        try { window.top.location.href = url; }
-        catch(e){ window.location.href = url; }
-      });
-    })();
-  </script>
 </body>
 </html>`);
 }
@@ -293,14 +283,16 @@ function topLevelRedirect(res, url, label = 'Continuar con Shopify') {
 router.use((req, res, next) => {
   if (!['GET', 'HEAD'].includes(req.method)) return next();
 
-  const url = req.originalUrl || '';
+  // req.path es relativo al mount point (/connector), sin query string
+  const p = req.path || '/';
   const allow =
-    url === '/connector' ||
-    url === '/connector/' ||
-    url.startsWith('/connector/auth') ||
-    url.startsWith('/connector/webhooks') ||
-    url.startsWith('/connector/interface') ||
-    url.startsWith('/connector/healthz');
+    p === '/' ||
+    p === '' ||
+    p.startsWith('/auth') ||
+    p.startsWith('/webhooks') ||
+    p.startsWith('/interface') ||
+    p.startsWith('/healthz') ||
+    p.startsWith('/ping');
 
   if (allow) return next();
 
@@ -316,7 +308,7 @@ router.use((req, res, next) => {
   const state = pushState(req, { shop, host });
   const authorizeUrl = buildAuthorizeUrl(shop, state);
 
-  console.log('[SHOPIFY_CONNECTOR][OAUTH_REDIRECT][GUARD]', { shop, path: req.originalUrl });
+  console.log('[SHOPIFY_CONNECTOR][OAUTH_REDIRECT][GUARD]', { shop, path: req.path });
 
   if (isIframeRequest(req)) return topLevelRedirect(res, authorizeUrl, 'Continuar con Shopify');
   return res.redirect(302, authorizeUrl);
@@ -428,23 +420,16 @@ router.get('/auth/callback', async (req, res) => {
       { upsert: true, new: true }
     );
 
-    const appUrl =
-      `${BASE_URL}/connector/interface` +
-      `?shop=${encodeURIComponent(normalizedShop)}` +
-      `&host=${encodeURIComponent(host)}`;
+    // ✅ Redirigir al Shopify admin para que re-embeds la app en el iframe.
+    // Patrón correcto: https://{shop}/admin/apps/{API_KEY}
+    // Shopify admin carga nuestra app embebida automáticamente.
+    const embeddedUrl = `https://${normalizedShop}/admin/apps/${SHOPIFY_API_KEY}`;
 
-    console.log('[SHOPIFY_CONNECTOR] 🚀 [REDIRECT_START] Auth completada. Redirigiendo...');
+    console.log('[SHOPIFY_CONNECTOR] 🚀 Auth completada → redirigiendo a Shopify admin embedded');
     console.log(`[SHOPIFY_CONNECTOR] ℹ️  Shop: ${normalizedShop}`);
-    console.log(`[SHOPIFY_CONNECTOR] ℹ️  Host: ${host ? host : '(MISSING! - App Bridge might fail)'}`);
-    console.log(`[SHOPIFY_CONNECTOR] 🎯 [TARGET_URL]: ${appUrl}`);
+    console.log(`[SHOPIFY_CONNECTOR] 🎯 [TARGET_URL]: ${embeddedUrl}`);
 
-    if (!host) {
-      console.warn(
-        '[SHOPIFY_CONNECTOR] ⚠️ ADVERTENCIA CRÍTICA: El parámetro "host" está vacío. App Bridge puede fallar.'
-      );
-    }
-
-    return res.redirect(appUrl);
+    return res.redirect(embeddedUrl);
   } catch (err) {
     console.error('[SHOPIFY_CONNECTOR] ❌ Error token exchange:', err?.message || err);
     if (err?.response) {
@@ -488,10 +473,10 @@ router.get('/interface', async (req, res) => {
     // Inyecciones base
     html = html.replace(/\{\{SHOPIFY_API_KEY\}\}/g, SHOPIFY_API_KEY || '');
     html = html.replace(/\{\{APP_URL\}\}/g, BASE_URL || '');
-
-    // ✅ NUEVO: inyectar shop/host para App Bridge bootstrap (lo que acabamos de agregar en interface.html)
     html = html.replace(/\{\{SHOP\}\}/g, shop);
     html = html.replace(/\{\{HOST\}\}/g, host || '');
+    // ✅ Flag para que el conector no bloquee el CTA si ya hay token OAuth válido en BD
+    html = html.replace(/\{\{CONNECTED\}\}/g, conn?.accessToken ? 'true' : 'false');
 
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
     return res.send(html);
@@ -504,6 +489,19 @@ router.get('/interface', async (req, res) => {
 // Healthcheck simple
 router.get('/healthz', (_req, res) => {
   res.status(200).json({ ok: true, service: 'connector', ts: Date.now() });
+});
+
+// ✅ Ping ligero: verifica si la tienda tiene accessToken en BD (no requiere JWT)
+router.get('/ping', async (req, res) => {
+  const shop = extractShop(req);
+  if (!shop) return res.status(400).json({ ok: false, error: 'missing shop' });
+  try {
+    const conn = await ShopConnections.findOne({ shop }, { accessToken: 1 }).lean();
+    if (conn?.accessToken) return res.json({ ok: true, shop, connected: true });
+    return res.status(401).json({ ok: false, shop, connected: false });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: 'db error' });
+  }
 });
 
 module.exports = router;

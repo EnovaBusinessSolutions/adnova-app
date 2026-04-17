@@ -294,6 +294,7 @@ model SessionRecording {
   r2Bucket            String?           @map("r2_bucket")
   durationMs          Int?              @map("duration_ms")
   chunkCount          Int               @default(0) @map("chunk_count")
+  lastChunkAt         DateTime?         @map("last_chunk_at")
   sizeBytes           BigInt?           @map("size_bytes")
   status              RecordingStatus   @default(RECORDING)
   outcome             RecordingOutcome?

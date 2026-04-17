@@ -1,3 +1,6 @@
+# Claude Code worktrees
+.claude/worktrees/
+
 # Ignora variables de entorno
 .env
 

@@ -3,22 +3,20 @@
 
 /**
  * ADRAY Shopify Connector (Embedded)
- * - Usa App Bridge UMD self-host ( /connector/vendor/app-bridge.umd.js )
- * - Usa App Bridge Utils UMD self-host ( /connector/vendor/app-bridge-utils.umd.js )
- * - Genera Session Token con getSessionToken(app)
- * - Valida token contra backend: GET /api/secure/ping (Authorization: Bearer <token>)
- * - Guarda token en sessionStorage y habilita CTA a /onboarding (top-level)
+ * - Si el backend ya marcó CONNECTED=true (meta tag), habilita CTA inmediatamente.
+ * - Fallback: verifica via GET /connector/ping?shop= (no requiere JWT).
+ * - Usa App Bridge Redirect para navegación embedded dentro de Shopify admin.
  */
 
 (function () {
   const $ = (id) => document.getElementById(id);
 
   const statusPill = $("statusPill");
-  const kvShop = $("kvShop");
-  const kvHost = $("kvHost");
-  const errBox = $("errBox");
-  const btnReload = $("btnReload");
-  const btnGo = $("btnGo");
+  const kvShop     = $("kvShop");
+  const kvHost     = $("kvHost");
+  const errBox     = $("errBox");
+  const btnReload  = $("btnReload");
+  const btnGo      = $("btnGo");
 
   function setStatus(txt) {
     if (statusPill) statusPill.textContent = txt || "";
@@ -37,91 +35,58 @@
   }
 
   function getMeta(name) {
-    const el = document.querySelector(`meta[name="${name}"]`);
+    const el = document.querySelector('meta[name="' + name + '"]');
     return el ? String(el.getAttribute("content") || "") : "";
   }
 
-  function topNavigate(url) {
-    try {
-      if (window.top && window.top !== window.self) {
-        window.top.location.href = url;
-      } else {
-        window.location.href = url;
-      }
-    } catch {
-      window.location.href = url;
-    }
-  }
-
   function sleep(ms) {
-    return new Promise((r) => setTimeout(r, ms));
+    return new Promise(function (r) { setTimeout(r, ms); });
   }
 
-  // ✅ Detectores robustos de UMD globals (dependiendo del build, cambia el nombre)
   function getCreateAppFn() {
-    // Comunes:
-    // - window["app-bridge"].default
-    // - window.appBridge.default
-    // - window.AppBridge (menos común)
-    const ab =
-      window["app-bridge"] ||
-      window.appBridge ||
-      window.AppBridge ||
-      null;
-
+    var ab = window["app-bridge"] || window.appBridge || window.AppBridge || null;
     if (!ab) return null;
-
-    // En UMD de Shopify normalmente viene como default export
-    const createApp = ab.default || ab.createApp || null;
-    return typeof createApp === "function" ? createApp : null;
-  }
-
-  function getGetSessionTokenFn() {
-    const u =
-      window["app-bridge-utils"] ||
-      window.appBridgeUtils ||
-      window.AppBridgeUtils ||
-      null;
-
-    if (!u) return null;
-
-    const fn = u.getSessionToken || null;
+    var fn = ab.default || ab.createApp || null;
     return typeof fn === "function" ? fn : null;
   }
 
-  async function waitForUmdGlobals(timeoutMs = 8000) {
-    const start = Date.now();
+  function getGetSessionTokenFn() {
+    var u = window["app-bridge-utils"] || window.appBridgeUtils || window.AppBridgeUtils || null;
+    if (!u) return null;
+    var fn = u.getSessionToken || null;
+    return typeof fn === "function" ? fn : null;
+  }
+
+  function getRedirectFn() {
+    var ab = window["app-bridge"] || window.appBridge || window.AppBridge || null;
+    if (!ab) return null;
+    // App Bridge v2 exposes actions.Redirect
+    var actions = ab.actions || (ab.default && ab.default.actions) || null;
+    if (actions && actions.Redirect) return actions.Redirect;
+    return null;
+  }
+
+  async function waitForUmdGlobals(timeoutMs) {
+    var start = Date.now();
     while (Date.now() - start < timeoutMs) {
-      const createApp = getCreateAppFn();
-      const getSessionToken = getGetSessionTokenFn();
-      if (createApp && getSessionToken) return { createApp, getSessionToken };
+      var createApp = getCreateAppFn();
+      var getSessionToken = getGetSessionTokenFn();
+      if (createApp && getSessionToken) return { createApp: createApp, getSessionToken: getSessionToken };
       await sleep(60);
     }
     return { createApp: null, getSessionToken: null };
   }
 
-  async function pingBackend(token) {
-    // Requiere verifySessionToken en backend
-    const r = await fetch("/api/secure/ping", {
-      method: "GET",
-      headers: { Authorization: `Bearer ${token}` },
-      credentials: "include",
-    });
-    return r;
-  }
-
-  function saveSession({ token, shop, host }) {
+  function saveSession(opts) {
     try {
-      if (token) {
-        sessionStorage.setItem("sessionToken", token);         // compat general
-        sessionStorage.setItem("shopifySessionToken", token);  // compat conector
+      if (opts.token) {
+        sessionStorage.setItem("sessionToken", opts.token);
+        sessionStorage.setItem("shopifySessionToken", opts.token);
       }
-      if (shop) sessionStorage.setItem("shopifyShop", shop);
-      if (host) sessionStorage.setItem("shopifyHost", host);
+      if (opts.shop) sessionStorage.setItem("shopifyShop", opts.shop);
+      if (opts.host) sessionStorage.setItem("shopifyHost", opts.host);
       sessionStorage.setItem("shopifyConnected", "true");
-    } catch {
-      // ignore
-    }
+    } catch (e) { /* ignore */ }
   }
 
   function setKV(shop, host) {
@@ -129,119 +94,128 @@
     if (kvHost) kvHost.textContent = host || "—";
   }
 
-  async function boot() {
-    hideError();
-    setStatus("Preparando…");
-
-    const cfg = window.__ADRAY_CONNECTOR__ || {};
-    const shop = String(cfg.shop || "").trim();
-    const host = String(cfg.host || "").trim();
-    const apiKey = String(cfg.apiKey || getMeta("shopify-api-key") || "").trim();
-    const appUrl = String(cfg.appUrl || getMeta("app-url") || "").trim();
-
-    setKV(shop, host);
-
-    if (!apiKey || apiKey.includes("{") || apiKey.includes("}")) {
-      setStatus("API key inválida");
-      showError(
-        'No se encontró una "shopify-api-key" válida.\n' +
-          "Verifica que /connector/interface inyecte {{SHOPIFY_API_KEY}}."
-      );
-      return;
-    }
-
-    if (!shop) {
-      setStatus("Falta shop");
-      showError('Missing "shop".\nAbre esta pantalla desde Shopify Admin (Apps).');
-      return;
-    }
-
-    if (!host) {
-      setStatus("Falta host");
-      showError(
-        'Missing "host".\nApp Bridge embedded requiere host. Revisa que /apps/<handle> redirija con host.'
-      );
-      return;
-    }
-
-    setStatus("Cargando App Bridge…");
-
-    const { createApp, getSessionToken } = await waitForUmdGlobals(9000);
-    if (!createApp || !getSessionToken) {
-      setStatus("Error App Bridge");
-      showError(
-        "No se detectaron los UMD globals de App Bridge.\n\n" +
-          "Verifica que estén cargando (Network → filtro vendor):\n" +
-          "- /connector/vendor/app-bridge.umd.js\n" +
-          "- /connector/vendor/app-bridge-utils.umd.js\n\n" +
-          "Y que ambos estén en status 200."
-      );
-      return;
-    }
-
-    setStatus("Inicializando…");
-    let app;
+  // ✅ Navegar usando App Bridge Redirect (embedded) o window.top como fallback
+  function navigateTo(app, url) {
     try {
-      // ✅ createApp requiere apiKey + host
-      app = createApp({ apiKey, host, forceRedirect: true });
-    } catch (e) {
-      setStatus("Error App Bridge");
-      showError("Fallo inicializando App Bridge.\n" + (e?.message || String(e)));
-      return;
-    }
-
-    setStatus("Obteniendo Session Token…");
-    let token = null;
+      var Redirect = getRedirectFn();
+      if (app && Redirect) {
+        var redirect = Redirect.create(app);
+        redirect.dispatch(Redirect.Action.REMOTE, url);
+        return;
+      }
+    } catch (e) { /* fall through */ }
+    // Fallback: salir del iframe hacia el destino
     try {
-      token = await getSessionToken(app);
-      if (!token || typeof token !== "string") throw new Error("Token vacío");
+      if (window.top && window.top !== window.self) {
+        window.top.location.href = url;
+      } else {
+        window.location.href = url;
+      }
     } catch (e) {
-      setStatus("Token falló");
-      showError("No se pudo obtener Session Token.\n" + (e?.message || String(e)));
-      return;
+      window.location.href = url;
     }
+  }
 
-    setStatus("Verificando sesión…");
-    let pingRes;
-    let bodyTxt = "";
-    try {
-      pingRes = await pingBackend(token);
-      bodyTxt = await pingRes.text();
-    } catch (e) {
-      setStatus("Error backend");
-      showError("No se pudo conectar al backend.\n" + (e?.message || String(e)));
-      return;
-    }
-
-    if (!pingRes.ok) {
-      setStatus("Auth falló");
-      showError(`Ping /api/secure/ping falló (${pingRes.status}).\n${bodyTxt || ""}`);
-      return;
-    }
-
-    // ✅ Si backend aceptó, guardamos token y habilitamos CTA
-    saveSession({ token, shop, host });
-
+  function enableCTA(shop, host, appUrl, app) {
     setStatus("Listo ✅");
     hideError();
-
     if (btnGo) {
       btnGo.disabled = false;
-      btnGo.onclick = () => {
-        const base = (appUrl || window.location.origin).replace(/\/$/, "");
-        const url =
-          `${base}/onboarding?from=shopify` +
-          `&shop=${encodeURIComponent(shop)}` +
-          `&host=${encodeURIComponent(host)}`;
-        topNavigate(url);
+      btnGo.onclick = function () {
+        var base = (appUrl || window.location.origin).replace(/\/$/, "");
+        var url =
+          base + "/onboarding?from=shopify" +
+          "&shop=" + encodeURIComponent(shop) +
+          "&host=" + encodeURIComponent(host);
+        navigateTo(app, url);
       };
     }
   }
 
-  if (btnReload) btnReload.onclick = () => window.location.reload();
+  // Verifica via endpoint ligero (no requiere JWT)
+  async function pingConnector(shop) {
+    var r = await fetch("/connector/ping?shop=" + encodeURIComponent(shop), {
+      method: "GET",
+      credentials: "include",
+    });
+    return r;
+  }
 
-  boot().catch((e) => {
+  async function boot() {
+    hideError();
+    setStatus("Preparando…");
+
+    var cfg     = window.__ADRAY_CONNECTOR__ || {};
+    var shop    = String(cfg.shop   || "").trim();
+    var host    = String(cfg.host   || "").trim();
+    var apiKey  = String(cfg.apiKey || getMeta("shopify-api-key") || "").trim();
+    var appUrl  = String(cfg.appUrl || getMeta("app-url") || "").trim();
+    var alreadyConnected = getMeta("shopify-connected") === "true";
+
+    setKV(shop, host);
+
+    if (!shop) {
+      setStatus("Falta shop");
+      showError('Missing "shop". Abre desde Shopify Admin (Apps).');
+      return;
+    }
+
+    // ✅ Ruta rápida: backend ya confirmó conexión al servir el HTML
+    if (alreadyConnected) {
+      // Habilitar CTA INMEDIATAMENTE, sin esperar App Bridge
+      enableCTA(shop, host, appUrl, null);
+      // Inicializar App Bridge en background para mejorar navegación (no bloquea)
+      (async function () {
+        try {
+          var globs = await waitForUmdGlobals(4000);
+          if (globs.createApp && apiKey && host) {
+            var appInst = globs.createApp({ apiKey: apiKey, host: host, forceRedirect: false });
+            if (globs.getSessionToken) {
+              var tok = await globs.getSessionToken(appInst);
+              if (tok) saveSession({ token: tok, shop: shop, host: host });
+            }
+            // Actualizar el onclick con instancia real de App Bridge
+            enableCTA(shop, host, appUrl, appInst);
+          }
+        } catch (e) { /* silent */ }
+      })();
+      return;
+    }
+
+    // ✅ Fallback: verificar via /connector/ping (no requiere JWT)
+    setStatus("Verificando conexión…");
+    try {
+      var pingRes = await pingConnector(shop);
+      if (pingRes.ok) {
+        saveSession({ shop: shop, host: host });
+        var appInst2 = null;
+        try {
+          var globs2 = await waitForUmdGlobals(4000);
+          if (globs2.createApp && apiKey && host) {
+            appInst2 = globs2.createApp({ apiKey: apiKey, host: host, forceRedirect: false });
+            if (globs2.getSessionToken) {
+              var tok2 = await globs2.getSessionToken(appInst2);
+              if (tok2) saveSession({ token: tok2, shop: shop, host: host });
+            }
+          }
+        } catch (e) { /* silent */ }
+        enableCTA(shop, host, appUrl, appInst2);
+        return;
+      }
+    } catch (e) { /* si el ping falla de red, continuamos */ }
+
+    // ✅ Si no está conectado aún, mostrar estado de pendiente (OAuth ya debería haber corrido)
+    setStatus("Sin conexión");
+    showError(
+      "Esta tienda aún no completó la instalación.\n" +
+      "Desinstala y vuelve a instalar la app desde Shopify Admin."
+    );
+  }
+
+  if (btnReload) btnReload.onclick = function () { window.location.reload(); };
+
+  boot().catch(function (e) {
     setStatus("Error");
-    showError(e?.stack || e?.message || String(e));
+    showError((e && e.stack) || (e && e.message) || String(e));
   });
 })();

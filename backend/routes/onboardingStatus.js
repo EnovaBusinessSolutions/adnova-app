@@ -276,8 +276,8 @@ router.get('/', requireAuth, async (req, res) => {
         )
         .lean(),
 
-      ShopConnections.findOne({ $or: [{ user: uid }, { userId: uid }] })
-        .select('_id shop accessToken access_token')
+      ShopConnections.findOne({ $or: [{ user: uid }, { userId: uid }, { matchedToUserId: uid }] })
+        .select('_id shop accessToken access_token matchedToUserId')
         .lean(),
 
       User.findById(uid)
@@ -392,10 +392,8 @@ router.get('/', requireAuth, async (req, res) => {
     );
 
     // ===== ADRAY PIXEL SETUP =====
-    // Connected = user ran the PixelSetupWizard (confirm-shop sets user.shop + ShopConnections)
-    const pixelSetupShop = (shopDoc?.accessToken === 'pixel-setup' && shopDoc?.shop)
-      ? shopDoc.shop
-      : null;
+    // Connected = user ran the PixelSetupWizard (confirm-shop sets user.shop + ShopConnections.matchedToUserId)
+    const pixelSetupShop = shopDoc?.shop || null;
     const pixelConnectedShop = user?.shop || pixelSetupShop || null;
     const pixelConnected = !!pixelConnectedShop;
 

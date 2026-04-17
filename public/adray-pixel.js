@@ -1628,6 +1628,57 @@
   var _ADRAY_REC_BASE = ADRAY_ENDPOINT.replace('/collect', '');
   var _ADRAY_RRWEB_CDN = _ADRAY_REC_BASE + '/static/dom-observer.min.js';
 
+  // ── Session persistence: resume recording across SPA/checkout navigations ──
+  var _SS_REC_KEY  = 'adray_rec_id';
+  var _SS_CIDX_KEY = 'adray_rec_cidx';
+
+  function _adraySaveRecState() {
+    try {
+      if (_adrayRecordingId) {
+        sessionStorage.setItem(_SS_REC_KEY, _adrayRecordingId);
+        sessionStorage.setItem(_SS_CIDX_KEY, String(_adrayChunkIndex));
+      }
+    } catch(_) {}
+  }
+
+  function _adrayRestoreRecState() {
+    try {
+      var id  = sessionStorage.getItem(_SS_REC_KEY);
+      var idx = sessionStorage.getItem(_SS_CIDX_KEY);
+      if (id) { _adrayRecordingId = id; _adrayChunkIndex = idx ? parseInt(idx, 10) : 0; }
+    } catch(_) {}
+  }
+
+  function _adrayClearRecState() {
+    try {
+      sessionStorage.removeItem(_SS_REC_KEY);
+      sessionStorage.removeItem(_SS_CIDX_KEY);
+    } catch(_) {}
+  }
+
+  // ── Chunk retry: fetch with up to 2 retries, exponential backoff ──
+  function _adraySendChunkWithRetry(endpoint, body, attempt) {
+    attempt = attempt || 0;
+    fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      keepalive: true,
+      body: body
+    }).then(function(r) {
+      if (!r.ok && attempt < 2) {
+        setTimeout(function() { _adraySendChunkWithRetry(endpoint, body, attempt + 1); }, 1000 * Math.pow(2, attempt));
+      } else {
+        console.log('[ADRAY-REC] chunk sent →', r.status, attempt > 0 ? '(retry ' + attempt + ')' : '');
+      }
+    }).catch(function(e) {
+      if (attempt < 2) {
+        setTimeout(function() { _adraySendChunkWithRetry(endpoint, body, attempt + 1); }, 1000 * Math.pow(2, attempt));
+      } else {
+        console.error('[ADRAY-REC] chunk FAILED after retries:', e.message || e);
+      }
+    });
+  }
+
   function _adrayLoadRrweb(callback) {
     console.log('[ADRAY-REC] _adrayLoadRrweb called. loaded:', _adrayRrwebLoaded, 'loading:', _adrayRrwebLoading);
     if (_adrayRrwebLoaded) { callback(); return; }
@@ -1673,27 +1724,10 @@
       timestamp: new Date().toISOString()
     });
     var endpoint = _ADRAY_REC_BASE + '/collect/x/buf';
-    // Use sendBeacon for reliability on page unload; fallback to fetch for visibility in DevTools
-    var sent = false;
-    try {
-      if (navigator.sendBeacon) {
-        sent = navigator.sendBeacon(endpoint, new Blob([body], { type: 'application/json' }));
-      }
-    } catch(_) {}
-    if (!sent) {
-      fetch(endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        keepalive: true,
-        body: body
-      }).then(function(r) {
-        console.log('[ADRAY-REC] chunk', idx, 'sent →', r.status);
-      }).catch(function(e) {
-        console.error('[ADRAY-REC] chunk', idx, 'FAILED:', e.message || e);
-      });
-    } else {
-      console.log('[ADRAY-REC] chunk', idx, 'sent via sendBeacon');
-    }
+    _adraySaveRecState();
+    // Always use fetch+retry for mid-session chunks so we can detect and retry 404/503.
+    // sendBeacon is only used in _adrayHandleUnload (page-unload path).
+    _adraySendChunkWithRetry(endpoint, body, 0);
   }
 
   function _adrayStartRecording(cartPayload) {
@@ -1701,9 +1735,14 @@
     if (_adrayStopFn) { console.log('[ADRAY-REC] already recording, skip'); return; }
     if (!window.rrweb || !window.rrweb.record) { console.error('[ADRAY-REC] rrweb.record not available!'); return; }
 
-    _adrayRecordingId = 'rec_' + generateId();
-    _adrayChunkIndex = 0;
+    // Resume existing recording from sessionStorage if this is a mid-flow page navigation
+    _adrayRestoreRecState();
+    if (!_adrayRecordingId) {
+      _adrayRecordingId = 'rec_' + generateId();
+      _adrayChunkIndex = 0;
+    }
     _adrayChunkBuffer = [];
+    _adraySaveRecState();
     console.log('[ADRAY-REC] starting recording:', _adrayRecordingId, 'account:', getAccountId(), 'session:', getOrCreateSessionId());
 
     // Notify backend: recording started
@@ -1775,6 +1814,7 @@
       timestamp: new Date().toISOString()
     });
     var endpoint = _ADRAY_REC_BASE + '/collect/x/fin';
+    _adrayClearRecState();
     try {
       if (navigator.sendBeacon) {
         navigator.sendBeacon(endpoint, new Blob([body], { type: 'application/json' }));
@@ -1790,9 +1830,26 @@
     }).catch(function(){});
   }
 
-  // Flush remaining events on page unload
-  window.addEventListener('pagehide', function() { _adrayFlushChunk(); });
-  window.addEventListener('beforeunload', function() { _adrayFlushChunk(); });
+  // On page unload: flush any buffered events AND send fin if recording is active
+  // (covers the case where user closes tab or navigates away without a purchase event)
+  function _adrayHandleUnload() {
+    _adrayFlushChunk();
+    if (_adrayRecordingId && _adrayStopFn) {
+      // Recording is still active — signal backend to finalize
+      var body = JSON.stringify({
+        account_id: getAccountId(),
+        recording_id: _adrayRecordingId,
+        session_id: getOrCreateSessionId(),
+        reason: 'page_unload',
+        final_chunk_index: _adrayChunkIndex,
+        timestamp: new Date().toISOString()
+      });
+      try { navigator.sendBeacon(_ADRAY_REC_BASE + '/collect/x/fin', new Blob([body], { type: 'application/json' })); } catch(_) {}
+      // Keep sessionStorage so a checkout redirect can resume
+    }
+  }
+  window.addEventListener('pagehide', _adrayHandleUnload);
+  window.addEventListener('beforeunload', _adrayHandleUnload);
 
   // Hook into sendEvent: trigger recording on add_to_cart, stop on purchase
   console.log('[ADRAY-REC] BRI recording module initialized. Hooking sendEvent...');

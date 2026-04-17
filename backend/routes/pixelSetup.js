@@ -301,4 +301,85 @@ router.post('/confirm-shop', async (req, res) => {
   }
 });
 
+// Informative pixel verification — checks if the Adray pixel is present on the storefront homepage
+router.get('/verify', async (req, res) => {
+  const domain = normalizeHostname(req.query.shop || req.query.domain);
+  if (!domain) return res.status(400).json({ ok: false, error: 'shop is required' });
+
+  const url = `https://${domain}`;
+  const logs = [];
+
+  try {
+    logs.push(`Fetching ${url} …`);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+    let response;
+    try {
+      response = await fetch(url, {
+        signal: controller.signal,
+        headers: { 'User-Agent': 'Mozilla/5.0 (compatible; AdrayVerifier/1.0)' },
+        redirect: 'follow',
+      });
+    } finally {
+      clearTimeout(timer);
+    }
+
+    logs.push(`HTTP ${response.status} — final URL: ${response.url}`);
+    const text = await response.text().catch(() => '');
+    logs.push(`Downloaded ${text.length} bytes of HTML`);
+
+    // All patterns that indicate the Adray pixel is installed
+    const checks = [
+      { label: 'adray-pixel.js script src',      hit: /adray[-_]pixel\.js/i.test(text) },
+      { label: 'adray.ai/pixel URL',             hit: /adray\.ai\/pixel/i.test(text) },
+      { label: 'adnova-pixel.js script src',     hit: /adnova[-_]pixel\.js/i.test(text) },
+      { label: 'window.__adray__ object',        hit: /window\.__adray__/i.test(text) },
+      { label: 'adray collect endpoint',         hit: /adray\.ai\/collect/i.test(text) },
+      { label: 'adnova pixel script tag',        hit: /adnova.*pixel/i.test(text) },
+    ];
+
+    const matched = checks.filter(c => c.hit);
+    const missed  = checks.filter(c => !c.hit);
+
+    matched.forEach(c => logs.push(`✅ Found: ${c.label}`));
+    missed.forEach(c =>  logs.push(`❌ Not found: ${c.label}`));
+
+    const detected = matched.length > 0;
+    logs.push(detected ? '🟢 Pixel detected.' : '🟡 Pixel not detected on homepage.');
+
+    return res.json({ ok: true, detected, shop: domain, logs, checkedUrl: response.url });
+  } catch (err) {
+    const msg = err?.name === 'AbortError' ? 'Request timed out after 8s' : (err?.message || String(err));
+    logs.push(`⚠️ Fetch error: ${msg}`);
+    return res.json({ ok: true, detected: false, shop: domain, logs, fetchError: msg });
+  }
+});
+
+// Disconnect: unlink the user's current shop
+router.post('/disconnect', async (req, res) => {
+  const userId = req.user?._id;
+  if (!userId) return res.status(401).json({ ok: false, error: 'Unauthorized' });
+
+  try {
+    const user = await User.findById(userId).lean();
+    const shop = user?.shop;
+
+    if (shop && ShopConnections) {
+      await ShopConnections.findOneAndUpdate(
+        { shop, matchedToUserId: userId },
+        { $unset: { matchedToUserId: '' } }
+      ).catch(() => {});
+    }
+
+    if (User) {
+      await User.findByIdAndUpdate(userId, { $unset: { shop: '' } }).catch(() => {});
+    }
+
+    return res.json({ ok: true });
+  } catch (error) {
+    console.error('[pixelSetup] disconnect error:', error?.message || error);
+    return res.status(500).json({ ok: false, error: 'Internal server error' });
+  }
+});
+
 module.exports = router;
