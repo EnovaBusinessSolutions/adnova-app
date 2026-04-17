@@ -576,10 +576,22 @@ router.post('/finalize-now', async (req, res) => {
           data: { status: 'READY', r2Key: fKey, sizeBytes: BigInt(gzipped.length), durationMs },
         });
 
+        // Link recording back to its session so the playback button appears
+        if (rec.sessionId && rec.sessionId !== 'unknown') {
+          await prisma.session.updateMany({
+            where: { sessionId: rec.sessionId, accountId: rec.accountId },
+            data: { rrwebRecordingId: rec.recordingId },
+          }).catch(() => {});
+        }
+
+        // Clean up per-chunk R2 objects
+        deletePrefix(prefix).catch(() => {});
+
         result.status = 'READY';
         result.events = allEvents.length;
         result.bytes = gzipped.length;
         result.durationMs = durationMs;
+        result.sessionId = rec.sessionId || null;
       } catch (err) {
         result.error = err.message;
         result.status = 'FAILED';
@@ -588,6 +600,41 @@ router.post('/finalize-now', async (req, res) => {
     }
 
     return res.json({ ok: true, processed: results.length, results });
+  } catch (err) {
+    return res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * POST /collect/x/relink-sessions
+ * For all READY recordings with a valid sessionId, updates Session.rrwebRecordingId
+ * so playback buttons appear on orders without needing a re-finalize.
+ * Protected by x-adray-internal header.
+ * ───────────────────────────────────────────────────────────────────────────── */
+router.post('/relink-sessions', async (req, res) => {
+  const secret = req.headers['x-adray-internal'] || req.body?.secret;
+  if (secret !== (process.env.INTERNAL_CRON_SECRET || 'adray-internal')) {
+    return res.status(403).json({ ok: false });
+  }
+
+  try {
+    const readyRecs = await prisma.sessionRecording.findMany({
+      where: { status: 'READY', rawErasedAt: null },
+      select: { recordingId: true, accountId: true, sessionId: true },
+      take: 500,
+    });
+
+    const linkable = readyRecs.filter((r) => r.sessionId && r.sessionId !== 'unknown');
+    let linked = 0;
+    for (const rec of linkable) {
+      const { count } = await prisma.session.updateMany({
+        where: { sessionId: rec.sessionId, accountId: rec.accountId, rrwebRecordingId: null },
+        data: { rrwebRecordingId: rec.recordingId },
+      }).catch(() => ({ count: 0 }));
+      linked += count;
+    }
+
+    return res.json({ ok: true, readyRecordings: readyRecs.length, linkable: linkable.length, sessionsLinked: linked });
   } catch (err) {
     return res.status(500).json({ ok: false, error: err.message });
   }
