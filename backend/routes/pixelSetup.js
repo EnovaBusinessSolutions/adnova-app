@@ -301,4 +301,53 @@ router.post('/confirm-shop', async (req, res) => {
   }
 });
 
+// Informative pixel verification — checks if adray-pixel.js is present on the storefront homepage
+router.get('/verify', async (req, res) => {
+  const domain = normalizeHostname(req.query.shop || req.query.domain);
+  if (!domain) return res.status(400).json({ ok: false, error: 'shop is required' });
+
+  const url = `https://${domain}`;
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+    const response = await fetch(url, {
+      signal: controller.signal,
+      headers: { 'User-Agent': 'AdrayPixelVerifier/1.0' },
+    }).finally(() => clearTimeout(timer));
+
+    const text = await response.text().catch(() => '');
+    const detected = /adray[-_]pixel\.js/i.test(text) || /adray\.ai\/pixel/i.test(text);
+    return res.json({ ok: true, detected, shop: domain });
+  } catch (err) {
+    return res.json({ ok: true, detected: false, shop: domain, fetchError: err?.message });
+  }
+});
+
+// Disconnect: unlink the user's current shop
+router.post('/disconnect', async (req, res) => {
+  const userId = req.user?._id;
+  if (!userId) return res.status(401).json({ ok: false, error: 'Unauthorized' });
+
+  try {
+    const user = await User.findById(userId).lean();
+    const shop = user?.shop;
+
+    if (shop && ShopConnections) {
+      await ShopConnections.findOneAndUpdate(
+        { shop, matchedToUserId: userId },
+        { $unset: { matchedToUserId: '' } }
+      ).catch(() => {});
+    }
+
+    if (User) {
+      await User.findByIdAndUpdate(userId, { $unset: { shop: '' } }).catch(() => {});
+    }
+
+    return res.json({ ok: true });
+  } catch (error) {
+    console.error('[pixelSetup] disconnect error:', error?.message || error);
+    return res.status(500).json({ ok: false, error: 'Internal server error' });
+  }
+});
+
 module.exports = router;

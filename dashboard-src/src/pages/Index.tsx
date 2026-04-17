@@ -1238,7 +1238,15 @@ export default function Index() {
         </div>
       </div>
     </DashboardLayout>
-    <PixelSetupWizard open={pixelWizardOpen} onOpenChange={setPixelWizardOpen} />
+    <PixelSetupWizard
+      open={pixelWizardOpen}
+      onOpenChange={setPixelWizardOpen}
+      currentShop={pixelConnected && pixelShop ? pixelShop : undefined}
+      onDisconnect={() => {
+        try { localStorage.removeItem("adray_analytics_shop"); } catch {}
+        setPixelWizardOpen(false);
+      }}
+    />
     <GoogleMerchantSelectorDialog
       open={merchantSelectorOpen}
       onOpenChange={setMerchantSelectorOpen}
