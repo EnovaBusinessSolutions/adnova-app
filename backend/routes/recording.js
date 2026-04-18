@@ -155,8 +155,8 @@ router.post('/buf', async (req, res) => {
     // Fetch the recording to get r2ChunksPrefix — auto-create if /init hasn't arrived yet (race condition)
     let rec = await prisma.sessionRecording.findUnique({
       where: { recordingId: recording_id },
-      select: { r2ChunksPrefix: true, accountId: true, chunkCount: true },
-    });
+      select: { r2ChunksPrefix: true, accountId: true },
+    }).catch(() => null);
 
     if (!rec) {
       // /init may still be in-flight — check if account exists then auto-create
@@ -262,6 +262,34 @@ router.post('/fin', async (req, res) => {
   } catch (err) {
     console.error('[recording/end] Error:', err.message);
     return res.json({ ok: false, error: 'Internal error' });
+  }
+});
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * GET /api/recording/:account_id/list
+ * Returns all READY recordings for an account (most recent first).
+ * Used by the dashboard Recordings panel.
+ * ───────────────────────────────────────────────────────────────────────────── */
+router.get('/:account_id/list', async (req, res) => {
+  try {
+    const { account_id } = req.params;
+    const take = Math.min(Number(req.query.limit) || 50, 100);
+
+    const recs = await prisma.sessionRecording.findMany({
+      where: { accountId: account_id, status: 'READY', rawErasedAt: null },
+      select: {
+        recordingId: true, sessionId: true, status: true,
+        durationMs: true, triggerAt: true, createdAt: true,
+        behavioralSignals: true, outcome: true, cartValue: true,
+        r2Key: true,
+      },
+      orderBy: { createdAt: 'desc' },
+      take,
+    });
+
+    return res.json({ ok: true, recordings: recs });
+  } catch (err) {
+    return res.status(500).json({ ok: false, error: err.message });
   }
 });
 
@@ -562,6 +590,16 @@ router.post('/finalize-now', async (req, res) => {
           continue;
         }
 
+        // rrweb requires a FullSnapshot (type 2) to replay — reject recordings missing it
+        const hasFullSnapshot = allEvents.some((e) => e.type === 2);
+        if (!hasFullSnapshot) {
+          await prisma.sessionRecording.update({ where: { recordingId: rec.recordingId }, data: { status: 'ERROR' } });
+          result.status = 'ERROR_no_fullsnapshot';
+          result.eventTypeCounts = allEvents.reduce((acc, e) => { acc[e.type] = (acc[e.type] || 0) + 1; return acc; }, {});
+          results.push(result);
+          continue;
+        }
+
         allEvents.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
         const fKey = buildFinalKey(rec.accountId, rec.recordingId);
         const gzipped = zlib.gzipSync(Buffer.from(JSON.stringify(allEvents)));
@@ -576,10 +614,22 @@ router.post('/finalize-now', async (req, res) => {
           data: { status: 'READY', r2Key: fKey, sizeBytes: BigInt(gzipped.length), durationMs },
         });
 
+        // Link recording back to its session so the playback button appears
+        if (rec.sessionId && rec.sessionId !== 'unknown') {
+          await prisma.session.updateMany({
+            where: { sessionId: rec.sessionId, accountId: rec.accountId },
+            data: { rrwebRecordingId: rec.recordingId },
+          }).catch(() => {});
+        }
+
+        // Clean up per-chunk R2 objects
+        deletePrefix(prefix).catch(() => {});
+
         result.status = 'READY';
         result.events = allEvents.length;
         result.bytes = gzipped.length;
         result.durationMs = durationMs;
+        result.sessionId = rec.sessionId || null;
       } catch (err) {
         result.error = err.message;
         result.status = 'FAILED';
@@ -588,6 +638,101 @@ router.post('/finalize-now', async (req, res) => {
     }
 
     return res.json({ ok: true, processed: results.length, results });
+  } catch (err) {
+    return res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * POST /collect/x/relink-sessions
+ * For all READY recordings with a valid sessionId, updates Session.rrwebRecordingId
+ * so playback buttons appear on orders without needing a re-finalize.
+ * Protected by x-adray-internal header.
+ * ───────────────────────────────────────────────────────────────────────────── */
+router.post('/relink-sessions', async (req, res) => {
+  const secret = req.headers['x-adray-internal'] || req.body?.secret;
+  if (secret !== (process.env.INTERNAL_CRON_SECRET || 'adray-internal')) {
+    return res.status(403).json({ ok: false });
+  }
+
+  try {
+    const readyRecs = await prisma.sessionRecording.findMany({
+      where: { status: 'READY', rawErasedAt: null },
+      select: { recordingId: true, accountId: true, sessionId: true },
+      take: 500,
+    });
+
+    const linkable = readyRecs.filter((r) => r.sessionId && r.sessionId !== 'unknown');
+    let linked = 0;
+    for (const rec of linkable) {
+      const { count } = await prisma.session.updateMany({
+        where: { sessionId: rec.sessionId, accountId: rec.accountId, rrwebRecordingId: null },
+        data: { rrwebRecordingId: rec.recordingId },
+      }).catch(() => ({ count: 0 }));
+      linked += count;
+    }
+
+    return res.json({ ok: true, readyRecordings: readyRecs.length, linkable: linkable.length, sessionsLinked: linked });
+  } catch (err) {
+    return res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * POST /collect/x/cleanup-broken
+ * Scans READY recordings for missing FullSnapshot (type 2) and marks them ERROR.
+ * Run once after deploy to purge unplayable recordings from the panel.
+ * Protected by x-adray-internal header.
+ * ───────────────────────────────────────────────────────────────────────────── */
+router.post('/cleanup-broken', async (req, res) => {
+  const secret = req.headers['x-adray-internal'] || req.body?.secret;
+  if (secret !== (process.env.INTERNAL_CRON_SECRET || 'adray-internal')) {
+    return res.status(403).json({ ok: false });
+  }
+
+  const { downloadChunk: dl, listChunkKeys: listKeys } = require('../utils/r2Client');
+
+  try {
+    const readyRecs = await prisma.sessionRecording.findMany({
+      where: { status: 'READY', rawErasedAt: null },
+      select: { recordingId: true, accountId: true, r2Key: true, r2ChunksPrefix: true },
+      take: 100,
+    });
+
+    let broken = 0;
+    let ok = 0;
+    const results = [];
+
+    for (const rec of readyRecs) {
+      try {
+        // Try final key first (assembled recording)
+        let events = [];
+        if (rec.r2Key) {
+          events = await dl(rec.r2Key).catch(() => []);
+        }
+        // If no final key, check chunks
+        if (!events.length && rec.r2ChunksPrefix) {
+          const keys = await listKeys(rec.r2ChunksPrefix).catch(() => []);
+          for (const k of keys.slice(0, 3)) { // only check first 3 chunks
+            const chunk = await dl(k).catch(() => []);
+            events.push(...chunk);
+            if (events.some((e) => e.type === 2)) break;
+          }
+        }
+        const hasFs = events.some((e) => e.type === 2);
+        if (!hasFs) {
+          await prisma.sessionRecording.update({ where: { recordingId: rec.recordingId }, data: { status: 'ERROR' } });
+          broken++;
+          results.push({ recordingId: rec.recordingId, status: 'marked_ERROR' });
+        } else {
+          ok++;
+        }
+      } catch (_) {
+        results.push({ recordingId: rec.recordingId, status: 'check_failed' });
+      }
+    }
+
+    return res.json({ ok: true, checked: readyRecs.length, broken, playable: ok, results });
   } catch (err) {
     return res.status(500).json({ ok: false, error: err.message });
   }

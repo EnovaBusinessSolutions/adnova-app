@@ -1,5 +1,7 @@
-# Claude Code worktrees
+# Claude Code — local-only files
 .claude/worktrees/
+.claude/settings.local.json
+.claude/scheduled_tasks.lock
 
 # Ignora variables de entorno
 .env

@@ -3197,6 +3197,22 @@
             </div>
         </div>
 
+        <!-- Recordings Panel -->
+        <div class="mt-8 ops-panel p-6" id="recordings-panel">
+            <div class="flex items-center justify-between mb-4 flex-wrap gap-3">
+                <div>
+                    <p class="panel-kicker">Session Replay</p>
+                    <h3 class="panel-title text-base leading-6 font-medium text-gray-900">Grabaciones de sesiones</h3>
+                </div>
+                <button onclick="loadRecordingsList()" class="ops-secondary-btn inline-flex items-center gap-2 px-4 py-2 text-sm font-medium">
+                    <i class="fa-solid fa-rotate-right"></i> Actualizar
+                </button>
+            </div>
+            <div id="recordings-list" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
+                <p class="text-sm text-gray-400 col-span-full">Cargando grabaciones...</p>
+            </div>
+        </div>
+
         <section id="session-detail-panel" class="hidden" aria-hidden="true">
             <div class="ops-panel overflow-hidden border border-gray-200">
                 <div class="px-6 py-4 border-b border-gray-200 flex items-center justify-between gap-4 flex-wrap">
@@ -8567,6 +8583,7 @@
             renderRecentPurchases(data.recentPurchases || []);
             renderDataEnrichment(data.recentPurchases || []);
             renderAttributionJourneyPanel();
+            loadRecordingsList();
         }
 
         function renderTopProducts(products) {
@@ -9492,6 +9509,50 @@ function renderRecentPurchases(purchases) {
                     </tr>
                 `;
             }).join('');
+        }
+
+        async function loadRecordingsList() {
+            const container = document.getElementById('recordings-list');
+            if (!container) return;
+            if (!currentShopId) {
+                container.innerHTML = '<p class="text-sm text-gray-400 col-span-full">Selecciona una tienda primero.</p>';
+                return;
+            }
+            container.innerHTML = '<p class="text-sm text-gray-400 col-span-full">Cargando...</p>';
+            try {
+                const res = await fetch(`/api/recording/${encodeURIComponent(currentShopId)}/list`);
+                const data = await res.json();
+                if (!data.ok || !Array.isArray(data.recordings) || data.recordings.length === 0) {
+                    container.innerHTML = '<p class="text-sm text-gray-400 col-span-full">No hay grabaciones disponibles aún.</p>';
+                    return;
+                }
+                container.innerHTML = data.recordings.map((r) => {
+                    const dur = r.durationMs ? `${Math.round(r.durationMs / 1000)}s` : '-';
+                    const date = r.createdAt ? formatDateTimeMx(new Date(r.createdAt)) : '-';
+                    const signals = r.behavioralSignals;
+                    const risk = signals?.riskLevel || null;
+                    const riskColor = risk === 'high' ? '#f87171' : risk === 'medium' ? '#fb923c' : '#4ade80';
+                    const riskLabel = risk ? risk.charAt(0).toUpperCase() + risk.slice(1) : null;
+                    return `
+                    <div style="background:#111827;border:1px solid #1f2937;border-radius:10px;padding:14px;display:flex;flex-direction:column;gap:10px;">
+                        <div style="display:flex;align-items:center;justify-content:space-between;gap:6px;">
+                            <span style="color:#9ca3af;font-size:11px;">${date}</span>
+                            ${riskLabel ? `<span style="font-size:10px;font-weight:600;padding:2px 7px;border-radius:9px;background:${riskColor}22;color:${riskColor};">${riskLabel} risk</span>` : ''}
+                        </div>
+                        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                            <span style="color:#6b7280;font-size:11px;"><i class="fa-solid fa-clock" style="margin-right:3px;"></i>${dur}</span>
+                            ${signals?.pattern ? `<span style="color:#a78bfa;font-size:11px;">${signals.pattern.replace(/_/g,' ')}</span>` : ''}
+                        </div>
+                        <button type="button"
+                            style="background:#7c3aed;color:#fff;border:none;border-radius:7px;padding:7px 12px;font-size:12px;font-weight:600;cursor:pointer;display:inline-flex;align-items:center;gap:6px;width:100%;justify-content:center;"
+                            onclick="adrayOpenPlayer('${escapeInlineSingleQuotedJs(r.recordingId)}','${escapeInlineSingleQuotedJs(r.sessionId || '')}')">
+                            <i class="fa-solid fa-circle-play"></i> Ver grabación
+                        </button>
+                    </div>`;
+                }).join('');
+            } catch (e) {
+                container.innerHTML = `<p class="text-sm text-red-400 col-span-full">Error al cargar grabaciones: ${e.message}</p>`;
+            }
         }
 
         function renderAttributionChart(attributionData, paidMedia = {}) {
