@@ -1656,7 +1656,9 @@
     } catch(_) {}
   }
 
-  // ── Chunk retry: fetch with up to 2 retries, exponential backoff ──
+  // ── Chunk retry: fetch with up to 5 retries, exponential backoff (handles server cold-start) ──
+  // Delays: 2s, 4s, 8s, 16s, 32s — total ~62s max wait
+  var _ADRAY_MAX_RETRIES = 5;
   function _adraySendChunkWithRetry(endpoint, body, attempt) {
     attempt = attempt || 0;
     fetch(endpoint, {
@@ -1665,14 +1667,14 @@
       keepalive: true,
       body: body
     }).then(function(r) {
-      if (!r.ok && attempt < 2) {
-        setTimeout(function() { _adraySendChunkWithRetry(endpoint, body, attempt + 1); }, 1000 * Math.pow(2, attempt));
+      if (!r.ok && attempt < _ADRAY_MAX_RETRIES) {
+        setTimeout(function() { _adraySendChunkWithRetry(endpoint, body, attempt + 1); }, 2000 * Math.pow(2, attempt));
       } else {
         console.log('[ADRAY-REC] chunk sent →', r.status, attempt > 0 ? '(retry ' + attempt + ')' : '');
       }
     }).catch(function(e) {
-      if (attempt < 2) {
-        setTimeout(function() { _adraySendChunkWithRetry(endpoint, body, attempt + 1); }, 1000 * Math.pow(2, attempt));
+      if (attempt < _ADRAY_MAX_RETRIES) {
+        setTimeout(function() { _adraySendChunkWithRetry(endpoint, body, attempt + 1); }, 2000 * Math.pow(2, attempt));
       } else {
         console.error('[ADRAY-REC] chunk FAILED after retries:', e.message || e);
       }
