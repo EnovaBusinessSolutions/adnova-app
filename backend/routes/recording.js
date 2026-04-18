@@ -155,8 +155,8 @@ router.post('/buf', async (req, res) => {
     // Fetch the recording to get r2ChunksPrefix — auto-create if /init hasn't arrived yet (race condition)
     let rec = await prisma.sessionRecording.findUnique({
       where: { recordingId: recording_id },
-      select: { r2ChunksPrefix: true, accountId: true, chunkCount: true },
-    });
+      select: { r2ChunksPrefix: true, accountId: true },
+    }).catch(() => null);
 
     if (!rec) {
       // /init may still be in-flight — check if account exists then auto-create
