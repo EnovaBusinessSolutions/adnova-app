@@ -307,7 +307,7 @@ app.use(
 app.use(
   "/collect/x",
   cookieParser(),
-  express.json({ limit: "2mb" }),
+  express.json({ limit: "10mb" }),
   rateLimitRecording,
   recordingRoutes
 );
