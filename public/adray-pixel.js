@@ -1710,10 +1710,10 @@
   }
 
   function _adrayFlushChunk() {
-    if (!_adrayChunkBuffer.length || !_adrayRecordingId) {
-      console.log('[ADRAY-REC] flush skipped — buffer:', _adrayChunkBuffer.length, 'recId:', _adrayRecordingId);
-      return;
-    }
+    if (!_adrayChunkBuffer.length || !_adrayRecordingId) { return; }
+    // Chunk 0 must contain a FullSnapshot (type 2) — defer until rrweb emits it.
+    // Guards against premature flushes (stale timers, unload handler) before rrweb.record() fires.
+    if (_adrayChunkIndex === 0 && !_adrayChunkBuffer.some(function(e) { return e.type === 2; })) { return; }
     var events = _adrayChunkBuffer.splice(0, _adrayChunkBuffer.length);
     var idx = _adrayChunkIndex++;
     console.log('[ADRAY-REC] flushing chunk', idx, '—', events.length, 'events');
@@ -1777,7 +1777,10 @@
       _adrayStopFn = window.rrweb.record({
         emit: function(event) {
           _adrayChunkBuffer.push(event);
-          if (JSON.stringify(_adrayChunkBuffer).length >= _ADRAY_CHUNK_MAX_BYTES) {
+          // Send FullSnapshot immediately so it's not lost if user navigates before timer fires
+          if (event.type === 2) {
+            _adrayFlushChunk();
+          } else if (JSON.stringify(_adrayChunkBuffer).length >= _ADRAY_CHUNK_MAX_BYTES) {
             _adrayFlushChunk();
           }
         },
