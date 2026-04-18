@@ -59,6 +59,12 @@ function buildEncodedContextText({
   riskFlags = [],
   priorityActions = [],
   existingDetailedText = '',
+  dailyIndex = [],
+  campaignsDailyRows = [],
+  adsDailyRows = [],
+  landingPagesDailyRows = [],
+  anomalies = [],
+  benchmarks = null,
 }) {
   const lines = [
     '[ADRAY_ENCODED_SIGNAL_V1]',
@@ -97,6 +103,104 @@ function buildEncodedContextText({
   addList('SCALING_OPPORTUNITIES', scalingOpportunities);
   addList('RISK_FLAGS', riskFlags);
   addList('PRIORITY_ACTIONS', priorityActions);
+
+  // --- DAILY INDEX (30-day day-by-day snapshot) ---
+  if (Array.isArray(dailyIndex) && dailyIndex.length > 0) {
+    lines.push('');
+    lines.push('[DAILY_INDEX]');
+    for (const row of dailyIndex.slice(0, 30)) {
+      const date = row?.date || row?.day || '?';
+      const parts = [];
+      if (row?.meta_spend != null) parts.push(`meta_spend=${Number(row.meta_spend).toFixed(0)}`);
+      if (row?.meta_roas != null) parts.push(`meta_roas=${Number(row.meta_roas).toFixed(2)}`);
+      if (row?.meta_purchases != null) parts.push(`meta_purchases=${row.meta_purchases}`);
+      if (row?.google_spend != null) parts.push(`google_spend=${Number(row.google_spend).toFixed(0)}`);
+      if (row?.google_roas != null) parts.push(`google_roas=${Number(row.google_roas).toFixed(2)}`);
+      if (row?.google_conversions != null) parts.push(`google_conv=${Number(row.google_conversions).toFixed(0)}`);
+      if (row?.ga4_revenue != null) parts.push(`ga4_revenue=${Number(row.ga4_revenue).toFixed(0)}`);
+      if (row?.ga4_sessions != null) parts.push(`ga4_sessions=${row.ga4_sessions}`);
+      if (row?.ga4_conversions != null) parts.push(`ga4_conv=${row.ga4_conversions}`);
+      if (parts.length > 0) lines.push(`- ${date}: ${parts.join(' | ')}`);
+    }
+  }
+
+  // --- CAMPAIGNS DAILY (per-campaign day-by-day performance) ---
+  if (Array.isArray(campaignsDailyRows) && campaignsDailyRows.length > 0) {
+    lines.push('');
+    lines.push('[CAMPAIGNS_DAILY]');
+    for (const row of campaignsDailyRows.slice(0, 60)) {
+      const name = row?.campaign_name || row?.campaign_id || '?';
+      const source = row?.source ? `[${String(row.source).toUpperCase()}] ` : '';
+      const date = row?.date || '?';
+      const parts = [];
+      if (row?.spend != null) parts.push(`spend=${Number(row.spend).toFixed(0)}`);
+      if (row?.roas != null) parts.push(`roas=${Number(row.roas).toFixed(2)}`);
+      if (row?.conversions != null) parts.push(`conv=${Number(row.conversions).toFixed(0)}`);
+      if (row?.impressions != null) parts.push(`imp=${row.impressions}`);
+      if (row?.clicks != null) parts.push(`clicks=${row.clicks}`);
+      if (parts.length > 0) lines.push(`- ${source}${name} | ${date} | ${parts.join(' | ')}`);
+    }
+  }
+
+  // --- ADS DAILY (per-ad day-by-day performance, top ads) ---
+  if (Array.isArray(adsDailyRows) && adsDailyRows.length > 0) {
+    lines.push('');
+    lines.push('[ADS_DAILY]');
+    for (const row of adsDailyRows.slice(0, 40)) {
+      const name = row?.ad_name || row?.ad_id || '?';
+      const source = row?.source ? `[${String(row.source).toUpperCase()}] ` : '';
+      const date = row?.date || '?';
+      const parts = [];
+      if (row?.spend != null) parts.push(`spend=${Number(row.spend).toFixed(0)}`);
+      if (row?.roas != null) parts.push(`roas=${Number(row.roas).toFixed(2)}`);
+      if (row?.impressions != null) parts.push(`imp=${row.impressions}`);
+      if (row?.clicks != null) parts.push(`clicks=${row.clicks}`);
+      if (row?.ctr != null) parts.push(`ctr=${Number(row.ctr).toFixed(2)}%`);
+      if (parts.length > 0) lines.push(`- ${source}${name} | ${date} | ${parts.join(' | ')}`);
+    }
+  }
+
+  // --- LANDING PAGES DAILY ---
+  if (Array.isArray(landingPagesDailyRows) && landingPagesDailyRows.length > 0) {
+    lines.push('');
+    lines.push('[LANDING_PAGES_DAILY]');
+    for (const row of landingPagesDailyRows.slice(0, 30)) {
+      const page = row?.page || row?.landing_page || '?';
+      const date = row?.date || '?';
+      const parts = [];
+      if (row?.sessions != null) parts.push(`sessions=${row.sessions}`);
+      if (row?.conversions != null) parts.push(`conv=${row.conversions}`);
+      if (row?.revenue != null) parts.push(`revenue=${Number(row.revenue).toFixed(0)}`);
+      if (row?.engagement_rate != null) parts.push(`eng=${Number(row.engagement_rate).toFixed(1)}%`);
+      if (parts.length > 0) lines.push(`- ${page} | ${date} | ${parts.join(' | ')}`);
+    }
+  }
+
+  // --- ANOMALIES ---
+  if (Array.isArray(anomalies) && anomalies.length > 0) {
+    lines.push('');
+    lines.push('[ANOMALIES]');
+    for (const a of anomalies.slice(0, 20)) {
+      const type = a?.type ? `[${String(a.type).toUpperCase()}] ` : '';
+      const metric = a?.metric || a?.field || '?';
+      const desc = a?.description || a?.message || '';
+      lines.push(`- ${type}${metric}: ${desc}`);
+    }
+  }
+
+  // --- BENCHMARKS ---
+  if (benchmarks && typeof benchmarks === 'object') {
+    lines.push('');
+    lines.push('[BENCHMARKS]');
+    for (const [key, val] of Object.entries(benchmarks)) {
+      if (!val || typeof val !== 'object') continue;
+      const curr = val?.current_value != null ? Number(val.current_value).toFixed(2) : 'n/a';
+      const prior = val?.prior_value != null ? Number(val.prior_value).toFixed(2) : 'n/a';
+      const pct = val?.pct_change != null ? `${Number(val.pct_change).toFixed(1)}%` : 'n/a';
+      const trend = val?.trend ? String(val.trend).toUpperCase() : 'n/a';
+      lines.push(`- ${key}: current=${curr} | prior=${prior} | chg=${pct} | trend=${trend}`);
+    }
+  }
 
   if (existingDetailedText) {
     lines.push('');
@@ -169,6 +273,7 @@ function encodeSignalPayload({ signalPayload, unifiedBase, root, user }) {
 
   const workspaceName = pickFirstText(
     payload?.workspaceName,
+    structuredSignal?.meta?.workspace_name,
     root?.workspaceName,
     user?.companyName,
     user?.workspaceName,
@@ -189,6 +294,14 @@ function encodeSignalPayload({ signalPayload, unifiedBase, root, user }) {
     riskFlags: uniqStrings(payload?.risk_flags || negatives || [], 12),
     priorityActions,
     existingDetailedText,
+    dailyIndex: Array.isArray(structuredSignal?.daily_index) ? structuredSignal.daily_index : [],
+    campaignsDailyRows: Array.isArray(structuredSignal?.campaigns_daily) ? structuredSignal.campaigns_daily : [],
+    adsDailyRows: Array.isArray(structuredSignal?.ads_daily) ? structuredSignal.ads_daily : [],
+    landingPagesDailyRows: Array.isArray(structuredSignal?.landing_pages_daily) ? structuredSignal.landing_pages_daily : [],
+    anomalies: Array.isArray(structuredSignal?.anomalies) ? structuredSignal.anomalies : [],
+    benchmarks: structuredSignal?.benchmarks && typeof structuredSignal.benchmarks === 'object'
+      ? structuredSignal.benchmarks
+      : null,
   });
 
   const encodedContextMini = buildEncodedContextMini({
