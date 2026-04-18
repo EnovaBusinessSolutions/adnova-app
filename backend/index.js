@@ -293,6 +293,18 @@ app.options(/.*/, cors(corsOptions));
  * Alto rendimiento: pixel /collect y script pĂşblico antes de sesiĂłn
  * (mantiene rateLimitCollect de main para la seĂąal / anti-abuso)
  * ========================= */
+// BRI: session capture ingest — mounted under /collect/x so ad-blockers treat it
+// the same as the trusted /collect endpoint.
+// Must be registered BEFORE /collect so its 10mb body limit applies first —
+// Express does prefix matching and runs middleware in registration order.
+app.use(
+  "/collect/x",
+  cookieParser(),
+  express.json({ limit: "10mb" }),
+  rateLimitRecording,
+  recordingRoutes
+);
+
 app.use(
   "/collect",
   cookieParser(),
@@ -300,16 +312,6 @@ app.use(
   express.urlencoded({ extended: true }),
   rateLimitCollect,
   collectRoutes
-);
-
-// BRI: session capture ingest — mounted under /collect/x so ad-blockers treat it
-// the same as the trusted /collect endpoint
-app.use(
-  "/collect/x",
-  cookieParser(),
-  express.json({ limit: "10mb" }),
-  rateLimitRecording,
-  recordingRoutes
 );
 // Sweep also accessible internally via /collect/x/sweep (no sessionGuard)
 // The route handler itself validates x-adray-internal header
