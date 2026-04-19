@@ -845,7 +845,7 @@ function buildKpiDefinitions() {
 
 function formatGa4ForLlm({
   datasets = [],
-  contextRangeDays = 60,
+  contextRangeDays = 30,
   topChannels = 8,
   topDevices = 6,
   topLandingPages = 8,
@@ -944,7 +944,7 @@ function formatGa4ForLlm({
 
 function formatGa4ForLlmMini({
   datasets = [],
-  contextRangeDays = 60,
+  contextRangeDays = 30,
   topChannels = 5,
   topDevices = 4,
   topLandingPages = 5,

@@ -447,7 +447,7 @@ function sortRowsByDateAsc(rows) {
     .sort((a, b) => safeStr(a?.date).localeCompare(safeStr(b?.date)));
 }
 
-function buildDailyTrends(dailyData, topCampaignRows = 5, contextRangeDays = 60) {
+function buildDailyTrends(dailyData, topCampaignRows = 5, contextRangeDays = 30) {
   const rawTotalsByDay = sortRowsByDateAsc(dailyData?.totals_by_day || []);
   const rawCampaignsDaily = Array.isArray(dailyData?.campaigns_daily) ? dailyData.campaigns_daily : [];
 
@@ -822,7 +822,7 @@ function buildKpiDefinitions() {
  */
 function formatMetaForLlm({
   datasets = [],
-  contextRangeDays = 60,
+  contextRangeDays = 30,
   topCampaigns = 8,
   topBreakdowns = 5,
   topTrendCampaigns = 5,
@@ -894,7 +894,7 @@ function formatMetaForLlm({
  */
 function formatMetaForLlmMini({
   datasets = [],
-  contextRangeDays = 60,
+  contextRangeDays = 30,
   topCampaigns = 6,
 } = {}) {
   const full = formatMetaForLlm({
