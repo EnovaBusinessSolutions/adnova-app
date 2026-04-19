@@ -954,8 +954,15 @@ app.use('/api/daily-signal-delivery', sessionGuard, require('./routes/dailySigna
 // MCP Server (Phase 1) - protocol endpoint + OAuth + REST mirror
 const { mountMcpRoutes } = require('./mcp/transport');
 mountMcpRoutes(app);
-app.use('/oauth', require('./mcp/auth/oauth-server'));
+const oauthRouter = require('./mcp/auth/oauth-server');
+app.use('/oauth', oauthRouter);
 app.use('/gpt/v1', require('./mcp/rest/router'));
+
+// Some MCP clients probe `/register` at the root before checking
+// `registration_endpoint`, so mount the DCR handler there too.
+if (oauthRouter.dynamicClientRegistrationHandler) {
+  app.post('/register', express.json(), oauthRouter.dynamicClientRegistrationHandler);
+}
 
 // OAuth 2.0 Authorization Server Metadata (RFC 8414)
 // Required by the MCP spec for remote servers so clients (Claude, ChatGPT, etc.)
@@ -967,6 +974,7 @@ app.get('/.well-known/oauth-authorization-server', (req, res) => {
     authorization_endpoint: `${base}/oauth/authorize`,
     token_endpoint: `${base}/oauth/token`,
     revocation_endpoint: `${base}/oauth/revoke`,
+    registration_endpoint: `${base}/oauth/register`,
     response_types_supported: ['code'],
     grant_types_supported: ['authorization_code', 'refresh_token'],
     code_challenge_methods_supported: ['S256'],

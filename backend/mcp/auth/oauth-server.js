@@ -603,4 +603,102 @@ router.post('/revoke', express.urlencoded({ extended: false }), async (req, res)
   }
 });
 
+/**
+ * POST /oauth/register — Dynamic Client Registration (RFC 7591)
+ *
+ * Required by MCP clients (Claude.ai, ChatGPT, Gemini) for custom/user-added
+ * connectors. These clients don't know a pre-registered client_id — they
+ * register themselves dynamically at connect time.
+ *
+ * We accept public clients with token_endpoint_auth_method=none + PKCE,
+ * which is what Claude.ai uses. We generate a fresh client_id (and a
+ * client_secret, even for public clients, for internal bookkeeping) and
+ * persist the redirect_uris the client declared.
+ */
+const dynamicClientRegistrationHandler = async (req, res) => {
+  try {
+    const body = req.body || {};
+    const redirectUris = Array.isArray(body.redirect_uris) ? body.redirect_uris : [];
+
+    if (!redirectUris.length) {
+      return res.status(400).json({
+        error: 'invalid_redirect_uri',
+        error_description: 'redirect_uris is required and must contain at least one URI.',
+      });
+    }
+
+    // Normalize + validate every redirect URI up front so we fail fast on bad input.
+    const normalizedRedirects = [];
+    for (const uri of redirectUris) {
+      const n = normalizeRedirectUri(uri);
+      if (!n.ok) {
+        return res.status(400).json({
+          error: 'invalid_redirect_uri',
+          error_description: `Malformed redirect_uri: ${uri}`,
+        });
+      }
+      normalizedRedirects.push(n.value);
+    }
+
+    const grantTypes = Array.isArray(body.grant_types) && body.grant_types.length
+      ? body.grant_types
+      : ['authorization_code', 'refresh_token'];
+    const responseTypes = Array.isArray(body.response_types) && body.response_types.length
+      ? body.response_types
+      : ['code'];
+    const tokenEndpointAuthMethod =
+      body.token_endpoint_auth_method || 'none';
+    const clientName = (body.client_name && String(body.client_name).slice(0, 120)) || 'MCP Client';
+
+    // Scope: accept only scopes we actually support.
+    const SUPPORTED_SCOPES = ['read:ads_performance', 'read:shopify_orders'];
+    const requestedScopes = parseScopes(body.scope) || SUPPORTED_SCOPES;
+    const scopes = requestedScopes.filter((s) => SUPPORTED_SCOPES.includes(s));
+    const finalScopes = scopes.length ? scopes : SUPPORTED_SCOPES;
+
+    const clientId = `dcr_${crypto.randomBytes(16).toString('hex')}`;
+    const clientSecret = crypto.randomBytes(32).toString('hex');
+
+    const created = await OAuthClient.create({
+      clientId,
+      clientSecret,
+      name: clientName,
+      redirectUris: normalizedRedirects,
+      redirectUriPatterns: [],
+      scopes: finalScopes,
+      grantsAllowed: grantTypes.filter((g) =>
+        ['authorization_code', 'refresh_token'].includes(g)
+      ),
+      active: true,
+    });
+
+    console.log('[oauth/register] created client', {
+      clientId,
+      clientName,
+      redirectUris: normalizedRedirects,
+    });
+
+    // Per RFC 7591 response shape. `token_endpoint_auth_method=none` signals a
+    // public client; client_secret is still returned for clients that opt in.
+    return res.status(201).json({
+      client_id: created.clientId,
+      client_secret: created.clientSecret,
+      client_id_issued_at: Math.floor(created.createdAt?.getTime?.() / 1000) || Math.floor(Date.now() / 1000),
+      client_secret_expires_at: 0, // 0 = never expires
+      redirect_uris: created.redirectUris,
+      grant_types: created.grantsAllowed,
+      response_types: responseTypes,
+      token_endpoint_auth_method: tokenEndpointAuthMethod,
+      client_name: created.name,
+      scope: finalScopes.join(' '),
+    });
+  } catch (err) {
+    console.error('[oauth/register] error:', err);
+    return res.status(500).json({ error: 'server_error' });
+  }
+};
+
+router.post('/register', express.json(), dynamicClientRegistrationHandler);
+
 module.exports = router;
+module.exports.dynamicClientRegistrationHandler = dynamicClientRegistrationHandler;
