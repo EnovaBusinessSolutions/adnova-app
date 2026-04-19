@@ -6965,6 +6965,130 @@
             }
         }
 
+        /**
+         * Stitched player: fetches N recordings, concatenates their rrweb event
+         * streams (offsetting timestamps so time is monotonic), and plays them
+         * as a single continuous session. Each inner FullSnapshot acts as a
+         * natural DOM-reset between segments (different pages / sessions).
+         */
+        async function adrayOpenStitchedPlayer(recordingIds) {
+            if (!Array.isArray(recordingIds) || recordingIds.length === 0) return;
+            if (recordingIds.length === 1) return adrayOpenPlayer(recordingIds[0], '');
+
+            _adrayShowModal(`Timeline combinado · ${recordingIds.length} grabaciones`);
+            const content = document.getElementById('adray-modal-content');
+            const signals = document.getElementById('adray-modal-signals');
+            const title = document.getElementById('adray-modal-title');
+
+            try {
+                content.innerHTML = `<p style="color:#9ca3af;font-size:13px;padding:40px 0;text-align:center;">Descargando ${recordingIds.length} grabaciones…</p>`;
+
+                // 1. Fetch metadata for each recording in parallel
+                const metas = await Promise.all(recordingIds.map(async (id) => {
+                    try {
+                        const resp = await fetch(`/api/recording/${encodeURIComponent(currentShopId)}/${encodeURIComponent(id)}`);
+                        const data = await resp.json();
+                        return data.ok ? data : null;
+                    } catch (_) { return null; }
+                }));
+                const valid = metas.filter((m) => m && m.presignedUrl);
+                if (!valid.length) {
+                    content.innerHTML = `<p style="color:#f87171;font-size:13px;padding:40px;text-align:center;">Ninguna de las ${recordingIds.length} grabaciones está lista.</p>`;
+                    return;
+                }
+
+                // Sort by triggerAt so the merged timeline is chronological
+                valid.sort((a, b) => new Date(a.recording?.triggerAt || 0) - new Date(b.recording?.triggerAt || 0));
+
+                // 2. Download each recording's events in parallel
+                const eventStreams = await Promise.all(valid.map(async (m) => {
+                    try {
+                        const r = await fetch(m.presignedUrl);
+                        const raw = await r.json();
+                        const arr = Array.isArray(raw) ? raw : (raw?.events || []);
+                        return arr;
+                    } catch (_) { return []; }
+                }));
+
+                // 3. Stitch with monotonic timestamps. Preserve internal timing of each
+                //    segment; insert a 500ms gap between segments.
+                const merged = [];
+                for (const stream of eventStreams) {
+                    if (!stream.length) continue;
+                    const sorted = stream.slice().sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
+                    if (merged.length === 0) {
+                        merged.push(...sorted);
+                        continue;
+                    }
+                    const prevLast = merged[merged.length - 1].timestamp || 0;
+                    const firstT = sorted[0].timestamp || 0;
+                    const delta = (prevLast + 500) - firstT;
+                    for (const ev of sorted) {
+                        merged.push({ ...ev, timestamp: (ev.timestamp || 0) + delta });
+                    }
+                }
+
+                if (!merged.length) {
+                    content.innerHTML = `<p style="color:#f87171;font-size:13px;padding:40px;text-align:center;">Sin eventos reproducibles.</p>`;
+                    return;
+                }
+                if (!merged.some((e) => e.type === 2)) {
+                    content.innerHTML = `<p style="color:#f87171;font-size:13px;padding:40px;text-align:center;">Ninguna grabación contiene FullSnapshot — no se puede reproducir.</p>`;
+                    return;
+                }
+
+                const totalDur = Math.round((merged[merged.length - 1].timestamp - merged[0].timestamp) / 1000);
+                title.textContent = `Timeline combinado · ${valid.length} sesiones · ${totalDur}s`;
+
+                // 4. Lazy-load rrweb-player (reuse global loader)
+                if (!_adrayPlayerLibLoaded) {
+                    content.innerHTML = '<p style="color:#9ca3af;font-size:13px;padding:40px 0;text-align:center;">Cargando reproductor…</p>';
+                    await new Promise((resolve, reject) => {
+                        const css = document.createElement('link');
+                        css.rel = 'stylesheet'; css.href = '/static/rp.css';
+                        document.head.appendChild(css);
+                        const s = document.createElement('script');
+                        s.src = '/static/rp.js';
+                        s.onload = resolve; s.onerror = reject;
+                        document.head.appendChild(s);
+                    });
+                    _adrayPlayerLibLoaded = true;
+                }
+
+                // 5. Render
+                content.innerHTML = '';
+                content.style.cssText = 'flex:1;overflow:hidden;background:#000;border-radius:0 0 12px 12px;';
+                const playerWidth  = Math.min(940, Math.floor(window.innerWidth  * 0.94));
+                const playerHeight = Math.min(580, Math.floor(window.innerHeight * 0.72));
+                new window.rrwebPlayer({
+                    target: content,
+                    props: {
+                        events: merged,
+                        width: playerWidth,
+                        height: playerHeight,
+                        autoPlay: true,
+                        showController: true,
+                        skipInactive: true,
+                        speed: 1,
+                    },
+                });
+                console.log('[adrayOpenStitchedPlayer] rendered', merged.length, 'stitched events from', valid.length, 'recordings');
+
+                // Build a concise signal strip showing per-segment info
+                const segLine = valid.map((m, i) => {
+                    const rec = m.recording || {};
+                    const dur = rec.durationMs ? `${Math.round(rec.durationMs/1000)}s` : '-';
+                    const tag = rec.outcome === 'PURCHASED' ? '💰' : rec.outcome === 'ABANDONED' ? '🚪' : '👀';
+                    return `<span style="color:#9ca3af;"><strong style="color:#e5e7eb;">${i+1}.</strong> ${tag} ${dur}</span>`;
+                }).join(' · ');
+                signals.innerHTML = `<span style="font-size:11px;"><i class="fa-solid fa-link"></i> ${valid.length} segmentos concatenados — ${segLine}</span>`;
+                signals.style.display = 'block';
+            } catch (err) {
+                console.error('[adrayOpenStitchedPlayer] error:', err);
+                content.innerHTML = `<p style="color:#f87171;font-size:13px;padding:40px;text-align:center;">Error cargando timeline: ${escapeHtml(err.message || String(err))}</p>`;
+            }
+        }
+
         // ─── End Recording Modal Player ───────────────────────────────────────────
 
         function rebuildJourneyProfileLookup(profiles = []) {
@@ -9789,6 +9913,51 @@ function renderRecentPurchases(purchases) {
             renderRecordingsList();
         }
 
+        /**
+         * Collapse multiple recordings from the same identified user into a single
+         * "stitched" entry. Anonymous sessions stay as individual cards because
+         * their userKey is shared across browsers.
+         *
+         * Group object keeps all original fields of the most recent recording +
+         * adds: groupedIds (array), groupSize, totalDurationMs, rangeStart/End,
+         * aggregated outcome (PURCHASED wins).
+         */
+        function collapseRecordingsByUser(recordings) {
+            if (!Array.isArray(recordings) || recordings.length === 0) return recordings || [];
+            const groups = new Map();
+            const passthrough = [];
+            for (const r of recordings) {
+                const key = r.userKey && r.userKey !== 'anonymous' ? r.userKey : null;
+                if (!key) { passthrough.push(r); continue; }
+                if (!groups.has(key)) groups.set(key, []);
+                groups.get(key).push(r);
+            }
+
+            const merged = [];
+            for (const [, list] of groups) {
+                if (list.length === 1) { merged.push(list[0]); continue; }
+                // Sort most recent first
+                list.sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+                const head = list[0];
+                const totalDuration = list.reduce((s, x) => s + (x.durationMs || 0), 0);
+                const anyPurchased = list.some((x) => x.outcome === 'PURCHASED');
+                const anyAbandoned = list.some((x) => x.outcome === 'ABANDONED');
+                const aggOutcome = anyPurchased ? 'PURCHASED' : (anyAbandoned ? 'ABANDONED' : head.outcome || null);
+                const dates = list.map((x) => new Date(x.createdAt || x.triggerAt || 0).getTime()).filter(Boolean).sort((a, b) => a - b);
+                merged.push({
+                    ...head,
+                    durationMs: totalDuration,
+                    outcome: aggOutcome,
+                    groupedIds: list.map((x) => x.recordingId),
+                    groupSize: list.length,
+                    rangeStart: dates[0] ? new Date(dates[0]).toISOString() : null,
+                    rangeEnd:   dates[dates.length - 1] ? new Date(dates[dates.length - 1]).toISOString() : null,
+                });
+            }
+            // Merge groups with passthrough and sort by most recent createdAt
+            return [...merged, ...passthrough].sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+        }
+
         function renderRecordingsList() {
             const container = document.getElementById('recordings-list');
             if (!container) return;
@@ -9797,7 +9966,7 @@ function renderRecentPurchases(purchases) {
             const dur     = document.getElementById('rec-filter-duration')?.value || '';
             const risk    = document.getElementById('rec-filter-risk')?.value || '';
 
-            const filtered = (_adrayAllRecordings || []).filter((r) => {
+            const filteredRaw = (_adrayAllRecordings || []).filter((r) => {
                 if (outcome && (r.outcome || 'STILL_BROWSING') !== outcome) return false;
                 if (device && (r.deviceType || '').toLowerCase() !== device) return false;
                 if (dur) {
@@ -9813,6 +9982,11 @@ function renderRecentPurchases(purchases) {
                 return true;
             });
 
+            // ── Group by userKey (Task: stitch recordings) ─────────────────
+            // One card per identified user. Anonymous sessions (userKey === 'anonymous')
+            // stay individual because their key is shared across different browsers.
+            const filtered = collapseRecordingsByUser(filteredRaw);
+
             const countEl = document.getElementById('rec-filter-count');
 
             if (filtered.length === 0) {
@@ -9827,8 +10001,11 @@ function renderRecentPurchases(purchases) {
             const hasMore = totalFiltered > visibleCount;
 
             const cardsHtml = visible.map((r) => {
+                const isGroup = Array.isArray(r.groupedIds) && r.groupedIds.length > 1;
                 const durS = r.durationMs ? `${Math.round(r.durationMs / 1000)}s` : '-';
-                const date = r.createdAt ? formatDateTimeMx(new Date(r.createdAt)) : '-';
+                const date = isGroup && r.rangeStart && r.rangeEnd && r.rangeStart !== r.rangeEnd
+                    ? `${formatDateTimeMx(new Date(r.rangeStart))} → ${formatDateTimeMx(new Date(r.rangeEnd))}`
+                    : (r.createdAt ? formatDateTimeMx(new Date(r.createdAt)) : '-');
                 const signals = r.behavioralSignals;
                 const rLevel = signals?.riskLevel || null;
                 const rColor = rLevel === 'high' ? '#f87171' : rLevel === 'medium' ? '#fb923c' : '#4ade80';
@@ -9842,39 +10019,49 @@ function renderRecentPurchases(purchases) {
                                    r.deviceType === 'tablet' ? '📱' :
                                    r.deviceType === 'desktop' ? '🖥' : '';
 
-                // ── Customer identity (Task 6) ──
                 const customerDisplay = r.customerName
                     || (r.customerId ? `Cliente #${String(r.customerId).slice(-6)}` : null)
                     || r.customerEmailMasked
                     || 'Anónimo';
-                const sessionBadge = (r.sessionCount30d && r.sessionCount30d > 1)
-                    ? `<span style="font-size:10px;color:#c4b5fd;background:#312e81;padding:2px 6px;border-radius:6px;" data-tooltip="${r.sessionCount30d} sesiones grabadas de este usuario en los últimos 30 días">${r.sessionCount30d} sesiones</span>`
+                const sessionBadge = isGroup
+                    ? `<span style="font-size:10px;color:#c4b5fd;background:#312e81;padding:2px 6px;border-radius:6px;" data-tooltip="${r.groupSize} grabaciones concatenadas de este usuario">${r.groupSize} grabaciones</span>`
+                    : (r.sessionCount30d && r.sessionCount30d > 1)
+                        ? `<span style="font-size:10px;color:#c4b5fd;background:#312e81;padding:2px 6px;border-radius:6px;" data-tooltip="${r.sessionCount30d} sesiones grabadas de este usuario en los últimos 30 días">${r.sessionCount30d} sesiones</span>`
+                        : '';
+                const stitchedHint = isGroup
+                    ? `<span style="font-size:10px;color:#9ca3af;background:#0f172a;padding:2px 6px;border-radius:6px;display:inline-flex;align-items:center;gap:4px;"><i class="fa-solid fa-link"></i> Timeline combinado</span>`
                     : '';
+
+                const onClickPayload = isGroup
+                    ? `adrayOpenStitchedPlayer(${JSON.stringify(r.groupedIds)})`
+                    : `adrayOpenPlayer('${escapeInlineSingleQuotedJs(r.recordingId)}','${escapeInlineSingleQuotedJs(r.sessionId || '')}')`;
+                const btnLabel = isGroup ? `Ver ${r.groupSize} grabaciones` : 'Ver grabación';
 
                 return `
                 <div style="background:#111827;border:1px solid #1f2937;border-radius:10px;padding:14px;display:flex;flex-direction:column;gap:10px;">
                     <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
-                        <span style="color:#9ca3af;font-size:11px;display:inline-flex;align-items:center;gap:8px;">
+                        <span style="color:#9ca3af;font-size:11px;display:inline-flex;align-items:center;gap:8px;flex-wrap:wrap;">
                             ${date}
                             <span style="color:#6b7280;"><i class="fa-solid fa-clock" style="margin-right:3px;"></i>${durS}</span>
                             ${deviceIcon ? `<span style="color:#6b7280;">${deviceIcon}</span>` : ''}
                         </span>
                         ${rLabel ? `<span style="font-size:10px;font-weight:600;padding:2px 7px;border-radius:9px;background:${rColor}22;color:${rColor};">${rLabel}</span>` : ''}
                     </div>
-                    <div style="display:flex;align-items:center;gap:8px;font-size:12px;color:#e5e7eb;min-height:18px;">
+                    <div style="display:flex;align-items:center;gap:8px;font-size:12px;color:#e5e7eb;min-height:18px;flex-wrap:wrap;">
                         <i class="fa-solid fa-user" style="color:#6b7280;font-size:11px;"></i>
-                        <span style="font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;" title="${escapeHtmlAttr(customerDisplay)}">${escapeHtml(customerDisplay)}</span>
+                        <span style="font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0;" title="${escapeHtmlAttr(customerDisplay)}">${escapeHtml(customerDisplay)}</span>
                         ${sessionBadge}
                     </div>
-                    ${outcomeLabel || signals?.pattern ? `
+                    ${(outcomeLabel || signals?.pattern || stitchedHint) ? `
                     <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:11px;">
                         ${outcomeLabel ? `<span style="color:${outcomeColor};font-weight:600;">${outcomeLabel}</span>` : ''}
                         ${signals?.pattern ? `<span style="color:#a78bfa;">${signals.pattern.replace(/_/g,' ')}</span>` : ''}
+                        ${stitchedHint}
                     </div>` : ''}
                     <button type="button"
                         style="background:#7c3aed;color:#fff;border:none;border-radius:7px;padding:7px 12px;font-size:12px;font-weight:600;cursor:pointer;display:inline-flex;align-items:center;gap:6px;width:100%;justify-content:center;"
-                        onclick="adrayOpenPlayer('${escapeInlineSingleQuotedJs(r.recordingId)}','${escapeInlineSingleQuotedJs(r.sessionId || '')}')">
-                        <i class="fa-solid fa-circle-play"></i> Ver grabación
+                        onclick="${onClickPayload}">
+                        <i class="fa-solid fa-circle-play"></i> ${btnLabel}
                     </button>
                 </div>`;
             }).join('');
