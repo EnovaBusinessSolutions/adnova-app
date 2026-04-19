@@ -6974,6 +6974,24 @@
          */
         let _adrayPlaylistState = null; // { metas, index, playerRoot }
 
+        /**
+         * Onclick bridge: reads the JSON array from the button's data attribute
+         * and forwards to adrayOpenStitchedPlayer. Avoids HTML-attribute quoting
+         * issues when the recordingId list would otherwise be inlined into onclick.
+         */
+        function adrayOpenStitchedPlayerFromAttr(btn) {
+            if (!btn) return;
+            let ids = [];
+            try {
+                ids = JSON.parse(btn.getAttribute('data-adray-group-ids') || '[]');
+            } catch (e) {
+                console.error('[adrayOpenStitchedPlayerFromAttr] invalid data-adray-group-ids:', e.message);
+                return;
+            }
+            if (!Array.isArray(ids) || ids.length === 0) return;
+            return adrayOpenStitchedPlayer(ids);
+        }
+
         async function adrayOpenStitchedPlayer(recordingIds) {
             if (!Array.isArray(recordingIds) || recordingIds.length === 0) return;
             if (recordingIds.length === 1) return adrayOpenPlayer(recordingIds[0], '');
@@ -10077,9 +10095,14 @@ function renderRecentPurchases(purchases) {
                     ? `<span style="font-size:10px;color:#9ca3af;background:#0f172a;padding:2px 6px;border-radius:6px;display:inline-flex;align-items:center;gap:4px;"><i class="fa-solid fa-link"></i> Timeline combinado</span>`
                     : '';
 
+                // Group IDs live in an attribute so we avoid the HTML-in-onclick
+                // quoting trap (double quotes inside onclick="..." close the attribute).
                 const onClickPayload = isGroup
-                    ? `adrayOpenStitchedPlayer(${JSON.stringify(r.groupedIds)})`
+                    ? `adrayOpenStitchedPlayerFromAttr(this)`
                     : `adrayOpenPlayer('${escapeInlineSingleQuotedJs(r.recordingId)}','${escapeInlineSingleQuotedJs(r.sessionId || '')}')`;
+                const groupIdsAttr = isGroup
+                    ? ` data-adray-group-ids="${escapeHtmlAttr(JSON.stringify(r.groupedIds))}"`
+                    : '';
                 const btnLabel = isGroup ? `Ver ${r.groupSize} grabaciones` : 'Ver grabación';
 
                 return `
@@ -10105,7 +10128,7 @@ function renderRecentPurchases(purchases) {
                     </div>` : ''}
                     <button type="button"
                         style="background:#7c3aed;color:#fff;border:none;border-radius:7px;padding:7px 12px;font-size:12px;font-weight:600;cursor:pointer;display:inline-flex;align-items:center;gap:6px;width:100%;justify-content:center;"
-                        onclick="${onClickPayload}">
+                        onclick="${onClickPayload}"${groupIdsAttr}>
                         <i class="fa-solid fa-circle-play"></i> ${btnLabel}
                     </button>
                 </div>`;
