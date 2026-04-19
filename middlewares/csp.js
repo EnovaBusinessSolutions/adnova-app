@@ -296,6 +296,23 @@ const publicCSPHelmet = helmet({
 
       // ⚠️ SOLO para páginas públicas, NO para Shopify
       frameAncestors: ["'self'"],
+
+      /**
+       * FORM-ACTION
+       * Overrides Helmet default of "'self'".
+       * Needed for OAuth 2.0 consent forms (POST /oauth/authorize) that
+       * 302-redirect to the client's registered redirect_uri on external
+       * origins like https://claude.ai/api/mcp/auth_callback or
+       * https://chatgpt.com/connector_platform_oauth_redirect.
+       * CSP form-action applies to the entire redirect chain, so "'self'"
+       * blocks these cross-origin callbacks.
+       *
+       * Security note: the OAuth server (backend/mcp/auth/oauth-server.js)
+       * validates redirect_uri against the registered client on every
+       * /oauth/authorize and /oauth/token call, so only URIs the client
+       * registered via DCR (POST /oauth/register) are ever used.
+       */
+      formAction: ["'self'", 'https:'],
     },
   },
 });
