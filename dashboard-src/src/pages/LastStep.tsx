@@ -251,6 +251,7 @@ type SignalPromptItem = {
 };
 
 const MOCK_SIGNAL_MIN_DURATION_MS = 3.5 * 60 * 1000;
+const MOCK_SIGNAL_REBUILD_DURATION_MS = 45 * 1000; // 45s for rebuilds (source added after first signal)
 const VISUAL_PROGRESS_CAP_BEFORE_READY = 95;
 const SIGNAL_GATE_STORAGE_KEY = "adray:laststep:signalGate:v4";
 
@@ -1627,13 +1628,18 @@ export default function LastStep() {
     state.signalStatus === "ready" &&
     !state.needSignalRebuild &&
     (state.signalReadyForPdf || state.signalComplete);
-  const gateMinDurationElapsed = elapsedMs >= MOCK_SIGNAL_MIN_DURATION_MS;
+  // If this is a rebuild (signal existed before, needSignalRebuild was true),
+  // use a shorter minimum gate so user doesn't wait 3.5min again.
+  const isSignalRebuild = !!state?.needSignalRebuild || state?.signalStatus === 'stale';
+  const effectiveGateMs = isSignalRebuild ? MOCK_SIGNAL_REBUILD_DURATION_MS : MOCK_SIGNAL_MIN_DURATION_MS;
+  const gateMinDurationElapsed = elapsedMs >= effectiveGateMs;
 
   useEffect(() => {
     if (!skipInitialSignalReplay || !state) return;
 
     if (
       state.signalStatus !== "ready" ||
+      state.signalStatus === "stale" ||
       state.needSignalRebuild ||
       (!state.signalReadyForPdf && !state.signalComplete)
     ) {
@@ -1671,7 +1677,10 @@ export default function LastStep() {
       };
       writeStoredSignalGate(nextGate);
       setNowMs(nextGate.startedAt);
-      setVisualProgress(0);
+      // Do NOT reset progress to 0 — keep current progress as floor to avoid
+      // jarring backward jump when a new source is detected mid-build.
+      // Progress will smoothly continue from current position.
+      setVisualProgress((prev) => Math.max(prev > 0 ? 5 : 0, 0));
       return;
     }
 
@@ -1695,18 +1704,39 @@ export default function LastStep() {
 
     if (!connectedSourcesKey || !storedGate) return;
 
-    const targetProgress =
-      backendSignalReady && gateMinDurationElapsed
-        ? 100
-        : computeSmoothProgress(elapsedMs, VISUAL_PROGRESS_CAP_BEFORE_READY);
+    let targetProgress: number;
+
+    if (backendSignalReady && gateMinDurationElapsed) {
+      targetProgress = 100;
+    } else {
+      // Blend time-based progress with backend-reported progress (if available)
+      const timeBasedProgress = computeSmoothProgress(elapsedMs, VISUAL_PROGRESS_CAP_BEFORE_READY);
+      const backendProgress = typeof state?.signalProgress === 'number'
+        ? Math.min(state.signalProgress, VISUAL_PROGRESS_CAP_BEFORE_READY)
+        : 0;
+      // Use max of time-based and backend-reported so it never goes backward
+      targetProgress = Math.max(timeBasedProgress, backendProgress);
+    }
 
     setVisualProgress((prev) => Math.max(prev, targetProgress));
-  }, [connectedSourcesKey, storedGate, elapsedMs, backendSignalReady, gateMinDurationElapsed, bypassVisualGate]);
+  }, [connectedSourcesKey, storedGate, elapsedMs, backendSignalReady, gateMinDurationElapsed, bypassVisualGate, state?.signalProgress]);
 
   const isFullyUnlocked = bypassVisualGate || (gateMinDurationElapsed && backendSignalReady);
 
-  const effectiveCanGeneratePdf = !!state?.canGeneratePdf && isFullyUnlocked;
-  const effectiveCanDownloadPdf = !!state?.canDownloadPdf && isFullyUnlocked;
+  const signalIsStaleOrRebuilding =
+    state?.needSignalRebuild === true ||
+    state?.signalStatus === 'stale' ||
+    state?.signalStatus === 'processing';
+
+  const effectiveCanGeneratePdf =
+    !!state?.canGeneratePdf &&
+    isFullyUnlocked &&
+    !signalIsStaleOrRebuilding;
+
+  const effectiveCanDownloadPdf =
+    !!state?.canDownloadPdf &&
+    isFullyUnlocked &&
+    !signalIsStaleOrRebuilding;
 
   const onRetrySignal = async () => {
     if (!state) return;

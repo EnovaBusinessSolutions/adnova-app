@@ -845,7 +845,7 @@ function buildKpiDefinitions() {
 
 function formatGa4ForLlm({
   datasets = [],
-  contextRangeDays = 60,
+  contextRangeDays = 30,
   topChannels = 8,
   topDevices = 6,
   topLandingPages = 8,
@@ -860,7 +860,7 @@ function formatGa4ForLlm({
 
   const normalizedRange = normalizeRange(meta?.range || {});
   const effectiveContextRangeDays =
-    clampInt(contextRangeDays || meta?.contextRangeDays || normalizedRange?.days || 60, 7, 3650);
+    clampInt(contextRangeDays || meta?.contextRangeDays || normalizedRange?.days || 30, 7, 3650);
 
   const headline_kpis = buildHeadlineKpis(extracted.summary);
 
@@ -944,7 +944,7 @@ function formatGa4ForLlm({
 
 function formatGa4ForLlmMini({
   datasets = [],
-  contextRangeDays = 60,
+  contextRangeDays = 30,
   topChannels = 5,
   topDevices = 4,
   topLandingPages = 5,

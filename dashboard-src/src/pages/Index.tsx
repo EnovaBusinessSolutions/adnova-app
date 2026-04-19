@@ -1119,6 +1119,8 @@ export default function Index() {
                     </div>
                   </div>
 
+                  {/* DEMO-HIDE 2026-04-17: bloque "Guided Pixel Setup / Connect your website pixel" oculto temporalmente para la demo. Revertir removiendo los delimitadores de abajo. */}
+                  {/*
                   <div className="mt-5 overflow-hidden rounded-[24px] border border-white/[0.08] bg-[linear-gradient(180deg,rgba(18,14,28,0.72)_0%,rgba(10,10,14,0.88)_100%)] p-4 backdrop-blur-md sm:mt-6 sm:rounded-[28px] sm:p-5">
                     <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
                       <div className="min-w-0">
@@ -1162,6 +1164,7 @@ export default function Index() {
                       )}
                     </div>
                   </div>
+                  */}
 
 
                   {asmUiLoading ? (

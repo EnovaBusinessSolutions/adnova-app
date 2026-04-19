@@ -1637,6 +1637,7 @@ async function collectMeta(userId, opts = {}) {
 
   // --- 3b: Fetch ads with insights ---
   let adsData = [];
+  let adsDailyData = [];
   if (buildAds) {
     try {
       for (const a of accountIds) {
@@ -1650,6 +1651,29 @@ async function collectMeta(userId, opts = {}) {
 
         const adInsightsMap7 = new Map(adInsights7.map((r) => [r.ad_id, r]));
         const adInsightsMap30 = new Map(adInsights30.map((r) => [r.ad_id, r]));
+
+        // Fase 3 — daily breakdown top 25 ads por spend
+        const adsDailyUrl = `https://graph.facebook.com/${API_VER}/act_${a}/insights?fields=ad_id,ad_name,adset_id,campaign_id,spend,impressions,clicks,actions,action_values&level=ad&time_increment=1&date_preset=last_30d&sort=spend_descending&limit=25&access_token=${encodeURIComponent(token)}`;
+        let adsDailyRows = [];
+        try {
+          adsDailyRows = await pageAllInsights(adsDailyUrl);
+        } catch (_e) {
+          adsDailyRows = [];
+        }
+        adsDailyData.push(...adsDailyRows.map((r) => ({
+          ad_id: r.ad_id || null,
+          ad_name: r.ad_name || null,
+          adset_id: r.adset_id || null,
+          campaign_id: r.campaign_id || null,
+          date: r.date_start || null,
+          spend: toNum(r.spend),
+          impressions: toNum(r.impressions),
+          clicks: toNum(r.clicks),
+          conversions: pickActionValue(r.actions, PURCHASE_ACTION_PRIORITY).value != null
+            ? pickActionValue(r.actions, PURCHASE_ACTION_PRIORITY).count
+            : null,
+          conversion_value: pickActionValue(r.action_values, PURCHASE_ACTION_PRIORITY).value,
+        })));
 
         const allRoas7 = adInsights7
           .map((r) => {
@@ -1859,6 +1883,19 @@ async function collectMeta(userId, opts = {}) {
       data: {
         meta: contextHeader,
         ads: adsData,
+      },
+    });
+  }
+
+  if (buildAds && adsDailyData.length > 0) {
+    datasets.push({
+      source: 'metaAds',
+      dataset: 'meta.ads_daily',
+      range: contextRangeOut,
+      stats: { rows: adsDailyData.length, bytes: 0 },
+      data: {
+        meta: contextHeader,
+        ads_daily: adsDailyData,
       },
     });
   }

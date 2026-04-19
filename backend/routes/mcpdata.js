@@ -808,7 +808,7 @@ router.post('/collect-now', async (req, res) => {
       return res.status(400).json({ ok: false, error: 'INVALID_SOURCES' });
     }
 
-    const rangeDays = toBoundedInt(body.rangeDays, 60, 7, 3650);
+    const rangeDays = toBoundedInt(body.rangeDays, 30, 7, 3650);
     const forceFull = Boolean(body.forceFull);
 
     const [metaDoc, googleDoc] = await Promise.all([

@@ -50,7 +50,7 @@ try {
   // Prisma no disponible — campos Tier 3/4 quedarán null
 }
 
-const DEFAULT_CONTEXT_RANGE_DAYS = clampInt(process.env.MCP_CONTEXT_RANGE_DAYS || 60, 7, 365);
+const DEFAULT_CONTEXT_RANGE_DAYS = clampInt(process.env.MCP_CONTEXT_RANGE_DAYS || 30, 7, 365);
 const BUILD_WAIT_TIMEOUT_MS = clampInt(process.env.MCP_CONTEXT_BUILD_WAIT_TIMEOUT_MS || 120000, 5000, 300000);
 const BUILD_WAIT_POLL_MS = clampInt(process.env.MCP_CONTEXT_BUILD_WAIT_POLL_MS || 1500, 300, 5000);
 const BUILD_ACTIVE_GUARD_MS = clampInt(process.env.MCP_CONTEXT_BUILD_ACTIVE_GUARD_MS || 180000, 15000, 900000);
@@ -1490,6 +1490,7 @@ function buildMetaContext(chunks, contextRangeDays) {
     rankedDataset: chunks.find((chunk) => chunk?.dataset === 'meta.campaigns_ranked') || null,
     adSetsDataset: chunks.find((c) => c?.dataset === 'meta.ad_sets') || null,
     adsDataset: chunks.find((c) => c?.dataset === 'meta.ads') || null,
+    adsDailyDataset: chunks.find((c) => c?.dataset === 'meta.ads_daily') || null,
     chunks,
     full: formatMetaForLlm({
       datasets: chunks,
@@ -1512,6 +1513,7 @@ function buildGoogleAdsContext(chunks, contextRangeDays) {
   return {
     dailyDataset: chunks.find((chunk) => chunk?.dataset === 'google.daily_trends_ai') || null,
     rankedDataset: chunks.find((chunk) => chunk?.dataset === 'google.campaigns_ranked') || null,
+    adsDailyDataset: chunks.find((c) => c?.dataset === 'google.ads_daily') || null,
     chunks,
     full: formatGoogleAdsForLlm({
       datasets: chunks,
@@ -1533,6 +1535,7 @@ function buildGa4Context(chunks, contextRangeDays) {
 
   return {
     dailyDataset: chunks.find((chunk) => chunk?.dataset === 'ga4.daily_trends_ai') || null,
+    landingPagesChunks: chunks.filter((c) => c?.dataset?.startsWith('ga4.history.landing_pages.')) || [],
     full: formatGa4ForLlm({
       datasets: chunks,
       contextRangeDays,
@@ -1722,11 +1725,12 @@ function pickStableValue(values = []) {
   return unique.length === 1 ? unique[0] : null;
 }
 
-function deriveCapabilityTier(usablePlatforms = []) {
+function deriveCapabilityTier(usablePlatforms = [], { pixelActive = false, ordersTracked = false } = {}) {
   const usable = uniqStrings(usablePlatforms, 10);
   const hasAds = usable.includes('meta') || usable.includes('google');
   const hasGa4 = usable.includes('ga4');
 
+  if (hasAds && hasGa4 && pixelActive && ordersTracked) return 4;
   if (hasAds && hasGa4) return 3;
   if (usable.length >= 2) return 2;
   if (usable.length === 1) return 1;
@@ -1861,6 +1865,17 @@ async function fetchDailyOrderStats(accountId, since, until) {
   }
 }
 
+function generateDateRange(days = 30) {
+  // Genera array de strings YYYY-MM-DD para los últimos N días (hoy inclusive)
+  const dates = [];
+  for (let i = days - 1; i >= 0; i--) {
+    const d = new Date();
+    d.setUTCDate(d.getUTCDate() - i);
+    dates.push(d.toISOString().slice(0, 10));
+  }
+  return dates;
+}
+
 function buildMetaDailyRows(metaPack, pixelStatsByDay = new Map(), orderStatsByDay = new Map()) {
   const activeTotals = Array.isArray(metaPack?.dailyDataset?.data?.totals_by_day)
     ? metaPack.dailyDataset.data.totals_by_day
@@ -1877,60 +1892,61 @@ function buildMetaDailyRows(metaPack, pixelStatsByDay = new Map(), orderStatsByD
     if (isIsoDay(row?.date)) byDate.set(row.date, row);
   }
 
-  // Filtrar últimos 60 días
-  const cutoff = new Date();
-  cutoff.setDate(cutoff.getDate() - 60);
-  const cutoffStr = cutoff.toISOString().slice(0, 10);
-
-  const totals = [...byDate.values()].filter((r) => r.date >= cutoffStr);
-
-  return totals
-    .filter((row) => isIsoDay(row?.date))
-    .map((row) => {
-      const spend = toNum(row?.kpis?.spend, null);
-      const impressions = toNum(row?.kpis?.impressions, null);
-      const clicks = toNum(row?.kpis?.clicks, null);
-      const purchases = toNum(row?.kpis?.purchases, null);
-      const purchaseValue = toNum(row?.kpis?.purchase_value, null);
-      const pixel = pixelStatsByDay.get(row.date) || null;
-      const orderData = orderStatsByDay.get(row.date) || null;
-
+  const allDates = generateDateRange(30);
+  const completeRows = allDates.map(date => {
+    if (!byDate.has(date)) {
       return {
-        date: row.date,
-        platform: 'meta',
-        spend: spend == null ? null : round2(spend),
-        impressions: impressions == null ? null : round2(impressions),
-        clicks: clicks == null ? null : round2(clicks),
-        ctr: impressions > 0 ? round2((clicks / impressions) * 100) : null,
-        cpc: clicks > 0 ? round2(spend / clicks) : null,
-        cpm: impressions > 0 ? round2((spend / impressions) * 1000) : null,
-        conversions: purchases == null ? null : round2(purchases),
-        conversion_value: purchaseValue == null ? null : round2(purchaseValue),
-        roas_platform: spend > 0 ? round2(purchaseValue / spend) : null,
-        sessions: pixel?.sessions ?? null,
-        users: null,
-        engagement_rate: null,
-        ga4_revenue: null,
-        blended_spend: null,
-        blended_ctr: null,
-        blended_cpc: null,
-        platform_spend_share: null,
-
-        // Tier 3
-        add_to_cart_count: pixel?.add_to_cart_count ?? null,
-        checkout_starts: pixel?.checkout_starts ?? null,
-        landing_page_cvr: pixel?.landing_page_cvr ?? null,
-        cart_abandonment_rate: pixel?.cart_abandonment_rate ?? null,
-
-        // Tier 4
-        orders: orderData?.orders ?? null,
-        revenue: orderData?.revenue ?? null,
-        roas_reconciled: spend > 0 && orderData?.revenue != null
-          ? round2(orderData.revenue / spend) : null,
-        ncac: null,
-        mer: null,
+        date, platform: 'meta',
+        spend: null, impressions: null, clicks: null,
+        ctr: null, cpc: null, cpm: null,
+        conversions: null, conversion_value: null, roas_platform: null,
+        sessions: null, users: null, engagement_rate: null, ga4_revenue: null,
+        blended_spend: null, blended_ctr: null, blended_cpc: null, platform_spend_share: null,
+        add_to_cart_count: null, checkout_starts: null, landing_page_cvr: null, cart_abandonment_rate: null,
+        orders: null, revenue: null, roas_reconciled: null, ncac: null, mer: null,
       };
-    });
+    }
+    const row = byDate.get(date);
+    const spend = toNum(row?.kpis?.spend, null);
+    const impressions = toNum(row?.kpis?.impressions, null);
+    const clicks = toNum(row?.kpis?.clicks, null);
+    const purchases = toNum(row?.kpis?.purchases, null);
+    const purchaseValue = toNum(row?.kpis?.purchase_value, null);
+    const pixel = pixelStatsByDay.get(row.date) || null;
+    const orderData = orderStatsByDay.get(row.date) || null;
+    return {
+      date: row.date,
+      platform: 'meta',
+      spend: spend == null ? null : round2(spend),
+      impressions: impressions == null ? null : round2(impressions),
+      clicks: clicks == null ? null : round2(clicks),
+      ctr: impressions > 0 ? round2((clicks / impressions) * 100) : null,
+      cpc: clicks > 0 ? round2(spend / clicks) : null,
+      cpm: impressions > 0 ? round2((spend / impressions) * 1000) : null,
+      conversions: purchases == null ? null : round2(purchases),
+      conversion_value: purchaseValue == null ? null : round2(purchaseValue),
+      roas_platform: spend > 0 ? round2(purchaseValue / spend) : null,
+      sessions: pixel?.sessions ?? null,
+      users: null,
+      engagement_rate: null,
+      ga4_revenue: null,
+      blended_spend: null,
+      blended_ctr: null,
+      blended_cpc: null,
+      platform_spend_share: null,
+      add_to_cart_count: pixel?.add_to_cart_count ?? null,
+      checkout_starts: pixel?.checkout_starts ?? null,
+      landing_page_cvr: pixel?.landing_page_cvr ?? null,
+      cart_abandonment_rate: pixel?.cart_abandonment_rate ?? null,
+      orders: orderData?.orders ?? null,
+      revenue: orderData?.revenue ?? null,
+      roas_reconciled: spend > 0 && orderData?.revenue != null
+        ? round2(orderData.revenue / spend) : null,
+      ncac: null,
+      mer: null,
+    };
+  });
+  return completeRows;
 }
 
 function buildGoogleDailyRows(googlePack, pixelStatsByDay = new Map(), orderStatsByDay = new Map()) {
@@ -1949,113 +1965,127 @@ function buildGoogleDailyRows(googlePack, pixelStatsByDay = new Map(), orderStat
     if (isIsoDay(row?.date)) byDate.set(row.date, row);
   }
 
-  // Filtrar últimos 60 días
-  const cutoff = new Date();
-  cutoff.setDate(cutoff.getDate() - 60);
-  const cutoffStr = cutoff.toISOString().slice(0, 10);
-
-  const totals = [...byDate.values()].filter((r) => r.date >= cutoffStr);
-
-  return totals
-    .filter((row) => isIsoDay(row?.date))
-    .map((row) => {
-      const spend = toNum(row?.kpis?.spend, null);
-      const impressions = toNum(row?.kpis?.impressions, null);
-      const clicks = toNum(row?.kpis?.clicks, null);
-      const conversions = toNum(row?.kpis?.conversions, null);
-      const conversionValue = toNum(row?.kpis?.conversion_value, null);
-      const pixel = pixelStatsByDay.get(row.date) || null;
-      const orderData = orderStatsByDay.get(row.date) || null;
-
+  const allDates = generateDateRange(30);
+  const completeRows = allDates.map(date => {
+    if (!byDate.has(date)) {
       return {
-        date: row.date,
-        platform: 'google',
-        spend: spend == null ? null : round2(spend),
-        impressions: impressions == null ? null : round2(impressions),
-        clicks: clicks == null ? null : round2(clicks),
-        ctr: impressions > 0 ? round2((clicks / impressions) * 100) : null,
-        cpc: clicks > 0 ? round2(spend / clicks) : null,
-        cpm: impressions > 0 ? round2((spend / impressions) * 1000) : null,
-        conversions: conversions == null ? null : round2(conversions),
-        conversion_value: conversionValue == null ? null : round2(conversionValue),
-        roas_platform: spend > 0 ? round2(conversionValue / spend) : null,
-        sessions: pixel?.sessions ?? null,
-        users: null,
-        engagement_rate: null,
-        ga4_revenue: null,
-        blended_spend: null,
-        blended_ctr: null,
-        blended_cpc: null,
-        platform_spend_share: null,
-
-        // Tier 3
-        add_to_cart_count: pixel?.add_to_cart_count ?? null,
-        checkout_starts: pixel?.checkout_starts ?? null,
-        landing_page_cvr: pixel?.landing_page_cvr ?? null,
-        cart_abandonment_rate: pixel?.cart_abandonment_rate ?? null,
-
-        // Tier 4
-        orders: orderData?.orders ?? null,
-        revenue: orderData?.revenue ?? null,
-        roas_reconciled: spend > 0 && orderData?.revenue != null
-          ? round2(orderData.revenue / spend) : null,
-        ncac: null,
-        mer: null,
+        date, platform: 'google',
+        spend: null, impressions: null, clicks: null,
+        ctr: null, cpc: null, cpm: null,
+        conversions: null, conversion_value: null, roas_platform: null,
+        sessions: null, users: null, engagement_rate: null, ga4_revenue: null,
+        blended_spend: null, blended_ctr: null, blended_cpc: null, platform_spend_share: null,
+        add_to_cart_count: null, checkout_starts: null, landing_page_cvr: null, cart_abandonment_rate: null,
+        orders: null, revenue: null, roas_reconciled: null, ncac: null, mer: null,
       };
-    });
+    }
+    const row = byDate.get(date);
+    const spend = toNum(row?.kpis?.spend, null);
+    const impressions = toNum(row?.kpis?.impressions, null);
+    const clicks = toNum(row?.kpis?.clicks, null);
+    const conversions = toNum(row?.kpis?.conversions, null);
+    const conversionValue = toNum(row?.kpis?.conversion_value, null);
+    const pixel = pixelStatsByDay.get(row.date) || null;
+    const orderData = orderStatsByDay.get(row.date) || null;
+    return {
+      date: row.date,
+      platform: 'google',
+      spend: spend == null ? null : round2(spend),
+      impressions: impressions == null ? null : round2(impressions),
+      clicks: clicks == null ? null : round2(clicks),
+      ctr: impressions > 0 ? round2((clicks / impressions) * 100) : null,
+      cpc: clicks > 0 ? round2(spend / clicks) : null,
+      cpm: impressions > 0 ? round2((spend / impressions) * 1000) : null,
+      conversions: conversions == null ? null : round2(conversions),
+      conversion_value: conversionValue == null ? null : round2(conversionValue),
+      roas_platform: spend > 0 ? round2(conversionValue / spend) : null,
+      sessions: pixel?.sessions ?? null,
+      users: null,
+      engagement_rate: null,
+      ga4_revenue: null,
+      blended_spend: null,
+      blended_ctr: null,
+      blended_cpc: null,
+      platform_spend_share: null,
+      add_to_cart_count: pixel?.add_to_cart_count ?? null,
+      checkout_starts: pixel?.checkout_starts ?? null,
+      landing_page_cvr: pixel?.landing_page_cvr ?? null,
+      cart_abandonment_rate: pixel?.cart_abandonment_rate ?? null,
+      orders: orderData?.orders ?? null,
+      revenue: orderData?.revenue ?? null,
+      roas_reconciled: spend > 0 && orderData?.revenue != null
+        ? round2(orderData.revenue / spend) : null,
+      ncac: null,
+      mer: null,
+    };
+  });
+  return completeRows;
 }
 
 function buildGa4DailyRows(ga4Pack, pixelStatsByDay = new Map(), orderStatsByDay = new Map()) {
-  const totals = Array.isArray(ga4Pack?.dailyDataset?.data?.totals_by_day)
+  const rawTotals = Array.isArray(ga4Pack?.dailyDataset?.data?.totals_by_day)
     ? ga4Pack.dailyDataset.data.totals_by_day
     : [];
 
-  return totals
-    .filter((row) => isIsoDay(row?.date))
-    .map((row) => {
-      const sessions = toNum(row?.kpis?.sessions, null);
-      const users = toNum(row?.kpis?.users, null);
-      const conversions = toNum(row?.kpis?.conversions, null);
-      const ga4Rev = toNum(row?.kpis?.revenue, null);
-      const engagementRate = toNum(row?.kpis?.engagementRate, null);
-      const pixel = pixelStatsByDay.get(row.date) || null;
-      const orderData = orderStatsByDay.get(row.date) || null;
+  const byDate = new Map();
+  for (const row of rawTotals) {
+    if (isIsoDay(row?.date)) byDate.set(row.date, row);
+  }
 
+  const allDates = generateDateRange(30);
+  const completeRows = allDates.map(date => {
+    if (!byDate.has(date)) {
       return {
-        date: row.date,
-        platform: 'ga4',
-        spend: null,
-        impressions: null,
-        clicks: null,
-        ctr: null,
-        cpc: null,
-        cpm: null,
-        conversions: conversions == null ? null : round2(conversions),
-        conversion_value: null,
-        roas_platform: null,
-        sessions: sessions == null ? null : round2(sessions),
-        users: users == null ? null : round2(users),
-        engagement_rate: engagementRate == null ? null : round2(engagementRate),
-        ga4_revenue: ga4Rev == null ? null : round2(ga4Rev),
-        blended_spend: null,
-        blended_ctr: null,
-        blended_cpc: null,
-        platform_spend_share: null,
-
-        // Tier 3
-        add_to_cart_count: pixel?.add_to_cart_count ?? null,
-        checkout_starts: pixel?.checkout_starts ?? null,
-        landing_page_cvr: pixel?.landing_page_cvr ?? null,
-        cart_abandonment_rate: pixel?.cart_abandonment_rate ?? null,
-
-        // Tier 4
-        orders: orderData?.orders ?? null,
-        revenue: orderData?.revenue ?? null,
-        roas_reconciled: null,
-        ncac: null,
-        mer: null,
+        date, platform: 'ga4',
+        spend: null, impressions: null, clicks: null,
+        ctr: null, cpc: null, cpm: null,
+        conversions: null, conversion_value: null, roas_platform: null,
+        sessions: null, users: null, engagement_rate: null, ga4_revenue: null,
+        blended_spend: null, blended_ctr: null, blended_cpc: null, platform_spend_share: null,
+        add_to_cart_count: null, checkout_starts: null, landing_page_cvr: null, cart_abandonment_rate: null,
+        orders: null, revenue: null, roas_reconciled: null, ncac: null, mer: null,
       };
-    });
+    }
+    const row = byDate.get(date);
+    const sessions = toNum(row?.kpis?.sessions, null);
+    const users = toNum(row?.kpis?.users, null);
+    const conversions = toNum(row?.kpis?.conversions, null);
+    const ga4Rev = toNum(row?.kpis?.revenue, null);
+    const engagementRate = toNum(row?.kpis?.engagementRate, null);
+    const pixel = pixelStatsByDay.get(row.date) || null;
+    const orderData = orderStatsByDay.get(row.date) || null;
+    return {
+      date: row.date,
+      platform: 'ga4',
+      spend: null,
+      impressions: null,
+      clicks: null,
+      ctr: null,
+      cpc: null,
+      cpm: null,
+      conversions: conversions == null ? null : round2(conversions),
+      conversion_value: null,
+      roas_platform: null,
+      sessions: sessions == null ? null : round2(sessions),
+      users: users == null ? null : round2(users),
+      engagement_rate: engagementRate == null ? null : round2(engagementRate),
+      ga4_revenue: ga4Rev == null ? null : round2(ga4Rev),
+      blended_spend: null,
+      blended_ctr: null,
+      blended_cpc: null,
+      platform_spend_share: null,
+      add_to_cart_count: pixel?.add_to_cart_count ?? null,
+      checkout_starts: pixel?.checkout_starts ?? null,
+      landing_page_cvr: pixel?.landing_page_cvr ?? null,
+      cart_abandonment_rate: pixel?.cart_abandonment_rate ?? null,
+      orders: orderData?.orders ?? null,
+      revenue: orderData?.revenue ?? null,
+      roas_reconciled: null,
+      ncac: null,
+      mer: null,
+    };
+  });
+  return completeRows;
 }
 
 function buildBlendedDailyRows(dailyRows, usablePlatforms) {
@@ -2385,6 +2415,228 @@ function applyCampaignDerivedFields(campaigns) {
   return next;
 }
 
+function buildAdsDailySchema({ metaPack, googlePack }) {
+  const DAYS = 30;
+  const dateRange = generateDateRange(DAYS);
+  const result = [];
+
+  const processPlatform = (pack, platform) => {
+    const rawRows = Array.isArray(pack?.adsDailyDataset?.data?.ads_daily)
+      ? pack.adsDailyDataset.data.ads_daily
+      : [];
+    if (rawRows.length === 0) return;
+
+    const byId = new Map();
+    for (const row of rawRows) {
+      const adId = safeStr(row?.ad_id).trim() || safeStr(row?.ad_name).trim();
+      if (!adId) continue;
+      if (!byId.has(adId)) {
+        byId.set(adId, {
+          ad_id: safeStr(row.ad_id).trim() || null,
+          ad_name: safeStr(row.ad_name).trim() || null,
+          adset_id: safeStr(row.adset_id || row.ad_group_id).trim() || null,
+          campaign_id: safeStr(row.campaign_id).trim() || null,
+          platform,
+          days: new Map(),
+        });
+      }
+      const dateKey = safeStr(row?.date).trim();
+      if (isIsoDay(dateKey)) byId.get(adId).days.set(dateKey, row);
+    }
+
+    for (const [, entry] of byId) {
+      const days = dateRange.map((date) => {
+        const row = entry.days.get(date);
+        if (!row) {
+          return { date, spend: null, impressions: null, clicks: null, ctr: null, cpc: null, conversions: null, conversion_value: null, roas: null };
+        }
+        const spend = toNum(row.spend, null);
+        const impressions = toNum(row.impressions, null);
+        const clicks = toNum(row.clicks, null);
+        const conversions = toNum(row.conversions, null);
+        const conversionValue = toNum(row.conversion_value, null);
+        return {
+          date,
+          spend: spend != null ? round2(spend) : null,
+          impressions,
+          clicks,
+          ctr: impressions > 0 && clicks != null ? round2((clicks / impressions) * 100) : null,
+          cpc: clicks > 0 && spend != null ? round2(spend / clicks) : null,
+          conversions,
+          conversion_value: conversionValue != null ? round2(conversionValue) : null,
+          roas: spend > 0 && conversionValue != null ? round2(conversionValue / spend) : null,
+        };
+      });
+      result.push({
+        ad_id: entry.ad_id,
+        ad_name: entry.ad_name,
+        adset_id: entry.adset_id,
+        campaign_id: entry.campaign_id,
+        platform: entry.platform,
+        days,
+      });
+    }
+  };
+
+  processPlatform(metaPack, 'meta');
+  processPlatform(googlePack, 'google');
+
+  return result;
+}
+
+function buildLandingPagesDailySchema({ ga4Pack }) {
+  const DAYS = 30;
+  const dateRange = generateDateRange(DAYS);
+  const minDate = dateRange[0];
+
+  const landingChunks = Array.isArray(ga4Pack?.landingPagesChunks)
+    ? ga4Pack.landingPagesChunks
+    : [];
+
+  if (landingChunks.length === 0) return [];
+
+  const allRows = [];
+  for (const chunk of landingChunks) {
+    const rows = Array.isArray(chunk?.data?.landing_pages_daily)
+      ? chunk.data.landing_pages_daily
+      : [];
+    for (const row of rows) {
+      if (!isIsoDay(row?.date) || row.date < minDate) continue;
+      allRows.push(row);
+    }
+  }
+
+  if (allRows.length === 0) return [];
+
+  const byPage = new Map();
+  for (const row of allRows) {
+    const page = safeStr(row?.page).trim();
+    if (!page) continue;
+    if (!byPage.has(page)) byPage.set(page, { totalSessions: 0, days: new Map() });
+    byPage.get(page).totalSessions += toNum(row.sessions, 0);
+    byPage.get(page).days.set(safeStr(row.date).trim(), row);
+  }
+
+  const top25 = [...byPage.entries()]
+    .sort((a, b) => b[1].totalSessions - a[1].totalSessions)
+    .slice(0, 25);
+
+  return top25.map(([page, entry]) => ({
+    page,
+    platform: 'ga4',
+    days: dateRange.map((date) => {
+      const row = entry.days.get(date);
+      if (!row) {
+        return { date, sessions: null, conversions: null, revenue: null, engagement_rate: null };
+      }
+      return {
+        date,
+        sessions: toNum(row.sessions, null) != null ? round2(toNum(row.sessions)) : null,
+        conversions: toNum(row.conversions, null) != null ? round2(toNum(row.conversions)) : null,
+        revenue: toNum(row.revenue, null) != null ? round2(toNum(row.revenue)) : null,
+        engagement_rate: toNum(row.engagementRate, null) != null ? round2(toNum(row.engagementRate)) : null,
+      };
+    }),
+  }));
+}
+
+function buildCampaignsDailySchema({ metaPack, googlePack }) {
+  const DAYS = 30;
+  const dateRange = generateDateRange(DAYS);
+
+  const result = [];
+
+  const processPlatform = (pack, platform) => {
+    const rawRows = Array.isArray(pack?.dailyDataset?.data?.campaigns_daily)
+      ? pack.dailyDataset.data.campaigns_daily
+      : [];
+
+    if (rawRows.length === 0) return;
+
+    const byId = new Map();
+    for (const row of rawRows) {
+      const cid = safeStr(row?.campaign_id).trim() || safeStr(row?.campaign_name).trim();
+      if (!cid) continue;
+      if (!byId.has(cid)) {
+        byId.set(cid, {
+          campaign_id: safeStr(row.campaign_id).trim() || null,
+          campaign_name: safeStr(row.campaign_name || row.name).trim() || null,
+          platform,
+          days: new Map(),
+        });
+      }
+      const dateKey = safeStr(row?.date).trim();
+      if (!isIsoDay(dateKey)) continue;
+      byId.get(cid).days.set(dateKey, row);
+    }
+
+    for (const [, entry] of byId) {
+      const days = dateRange.map((date) => {
+        const row = entry.days.get(date);
+        if (!row) {
+          return {
+            date,
+            spend: null,
+            impressions: null,
+            clicks: null,
+            ctr: null,
+            cpc: null,
+            cpm: null,
+            conversions: null,
+            conversion_value: null,
+            roas: null,
+          };
+        }
+        const spend = toNum(row.kpis?.spend, null);
+        const impressions = toNum(row.kpis?.impressions, null);
+        const clicks = toNum(row.kpis?.clicks, null);
+        const conversions =
+          platform === 'meta'
+            ? toNum(row.kpis?.purchases ?? row.kpis?.conversions, null)
+            : toNum(row.kpis?.conversions, null);
+        const conversionValue =
+          platform === 'meta'
+            ? toNum(row.kpis?.purchase_value ?? row.kpis?.conversion_value, null)
+            : toNum(row.kpis?.conversion_value, null);
+
+        return {
+          date,
+          spend: spend != null ? round2(spend) : null,
+          impressions: impressions != null ? round2(impressions) : null,
+          clicks: clicks != null ? round2(clicks) : null,
+          ctr:
+            impressions != null && impressions > 0 && clicks != null
+              ? round2((clicks / impressions) * 100)
+              : null,
+          cpc: clicks != null && clicks > 0 && spend != null ? round2(spend / clicks) : null,
+          cpm:
+            impressions != null && impressions > 0 && spend != null
+              ? round2((spend / impressions) * 1000)
+              : null,
+          conversions: conversions != null ? round2(conversions) : null,
+          conversion_value: conversionValue != null ? round2(conversionValue) : null,
+          roas:
+            spend != null && spend > 0 && conversionValue != null
+              ? round2(conversionValue / spend)
+              : null,
+        };
+      });
+
+      result.push({
+        campaign_id: entry.campaign_id,
+        campaign_name: entry.campaign_name,
+        platform: entry.platform,
+        days,
+      });
+    }
+  };
+
+  processPlatform(metaPack, 'meta');
+  processPlatform(googlePack, 'google');
+
+  return result;
+}
+
 function buildCampaignsSchema({ metaPack, googlePack, unifiedBase }) {
   const contextEnd = getContextWindowEnd(unifiedBase, metaPack, googlePack);
   const campaigns = [
@@ -2400,13 +2652,130 @@ function buildCampaignsSchema({ metaPack, googlePack, unifiedBase }) {
     });
 }
 
+function buildStructuredAttribution({ usablePlatforms, pixelStatsByDay, orderStatsByDay }) {
+  const usable = uniqStrings(usablePlatforms, 10);
+  const hasAds = usable.includes('meta') || usable.includes('google');
+  const hasGa4 = usable.includes('ga4');
+  const pixelActive = pixelStatsByDay instanceof Map && pixelStatsByDay.size > 0;
+  const ordersTracked = orderStatsByDay instanceof Map && orderStatsByDay.size > 0;
+
+  const tier = deriveCapabilityTier(usablePlatforms, { pixelActive, ordersTracked });
+
+  let mode;
+  let confidenceNote;
+  let missingForUpgrade = [];
+
+  if (tier === 4) {
+    mode = 'first_party';
+    confidenceNote = 'Full first-party attribution available. Pixel events and platform orders are being tracked alongside ad platform data and GA4. Highest confidence for ROAS and attribution questions.';
+  } else if (tier === 3) {
+    mode = 'cross_channel';
+    confidenceNote = 'Cross-channel attribution available via ads platform + GA4. Revenue figures come from ad platforms. For first-party attribution, connect the Adray pixel and enable order tracking.';
+    if (!pixelActive) missingForUpgrade.push('adray_pixel');
+    if (!ordersTracked) missingForUpgrade.push('order_tracking');
+  } else if (tier === 2) {
+    mode = 'platform_only';
+    confidenceNote = 'Two ad platforms connected but no GA4. Attribution relies entirely on platform-reported conversions. Connect GA4 for cross-channel visibility.';
+    if (!hasGa4) missingForUpgrade.push('ga4');
+    if (!pixelActive) missingForUpgrade.push('adray_pixel');
+    if (!ordersTracked) missingForUpgrade.push('order_tracking');
+  } else if (tier === 1) {
+    mode = 'platform_only';
+    confidenceNote = 'Single platform connected. Attribution is limited to platform-reported data only. Connect additional platforms and GA4 for a more complete picture.';
+    if (!hasGa4) missingForUpgrade.push('ga4');
+    if (!pixelActive) missingForUpgrade.push('adray_pixel');
+    if (!ordersTracked) missingForUpgrade.push('order_tracking');
+  } else {
+    mode = 'none';
+    confidenceNote = 'No usable data sources connected. Attribution is not available.';
+    missingForUpgrade = ['meta_or_google_ads', 'ga4', 'adray_pixel', 'order_tracking'];
+  }
+
+  return {
+    mode,
+    capability_tier: tier,
+    pixel_active: pixelActive,
+    orders_tracked: ordersTracked,
+    has_ads_data: hasAds,
+    has_ga4_data: hasGa4,
+    confidence_note: confidenceNote,
+    missing_for_upgrade: missingForUpgrade,
+  };
+}
+
 function buildStructuredBenchmarks({ metaPack, googlePack, ga4Pack }) {
-  const meta = metaPack?.mini?.headline_kpis || null;
-  const google = googlePack?.mini?.headline_kpis || null;
-  const ga4 = ga4Pack?.mini?.data?.headline_kpis || ga4Pack?.mini?.headline_kpis || null;
+  function mkKpi(current, prior) {
+    const c = toNum(current, null);
+    const p = toNum(prior, null);
+    let pct = null;
+    if (c != null && p != null && p !== 0) {
+      pct = round2(((c - p) / Math.abs(p)) * 100);
+    }
+    let trend = null;
+    if (pct != null) {
+      if (pct > 1) trend = 'up';
+      else if (pct < -1) trend = 'down';
+      else trend = 'flat';
+    }
+    return {
+      current_value: c != null ? round2(c) : null,
+      prior_value: p != null ? round2(p) : null,
+      pct_change: pct,
+      trend,
+    };
+  }
+
+  // --- META ---
+  const metaCurrent = metaPack?.mini?.headline_kpis || {};
+  const metaPrior   = metaPack?.full?.executive_summary?.comparison_windows?.prev_30_days || {};
+  const metaBenchmarks = {
+    roas:             mkKpi(metaCurrent.roas,             metaPrior.roas),
+    cpa:              mkKpi(metaCurrent.cpa,              metaPrior.cpa),
+    spend:            mkKpi(metaCurrent.spend,            metaPrior.spend),
+    purchases:        mkKpi(metaCurrent.purchases,        metaPrior.purchases),
+    purchase_value:   mkKpi(metaCurrent.purchase_value,   metaPrior.purchase_value),
+    ctr:              mkKpi(metaCurrent.ctr,              metaPrior.ctr),
+    cpc:              mkKpi(metaCurrent.cpc,              metaPrior.cpc),
+    cpm:              mkKpi(metaCurrent.cpm,              metaPrior.cpm),
+    conversion_rate:  mkKpi(metaCurrent.conversion_rate,  metaPrior.conversion_rate),
+    frequency:        mkKpi(metaCurrent.frequency,        null),
+  };
+
+  // --- GOOGLE ---
+  const googleCurrent = googlePack?.mini?.headline_kpis || {};
+  const googlePrior   = googlePack?.full?.executive_summary?.comparison_windows?.prev_30_days || {};
+  const googleBenchmarks = {
+    roas:             mkKpi(googleCurrent.roas,             googlePrior.roas),
+    cpa:              mkKpi(googleCurrent.cpa,              googlePrior.cpa),
+    spend:            mkKpi(googleCurrent.spend,            googlePrior.spend),
+    conversions:      mkKpi(googleCurrent.conversions,      googlePrior.conversions),
+    conversion_value: mkKpi(googleCurrent.conversion_value, googlePrior.conversion_value),
+    ctr:              mkKpi(googleCurrent.ctr,              googlePrior.ctr),
+    cpc:              mkKpi(googleCurrent.cpc,              googlePrior.cpc),
+    cpm:              mkKpi(googleCurrent.cpm,              googlePrior.cpm),
+    conversion_rate:  mkKpi(googleCurrent.conversion_rate,  googlePrior.conversion_rate),
+  };
+
+  // --- GA4 ---
+  const ga4Current = ga4Pack?.mini?.headline_kpis
+    || ga4Pack?.mini?.data?.headline_kpis
+    || {};
+  const ga4Prior = ga4Pack?.full?.executive_summary?.comparison_windows?.prev_30_days
+    || ga4Pack?.full?.data?.executive_summary?.comparison_windows?.prev_30_days
+    || {};
+  const ga4Benchmarks = {
+    revenue:              mkKpi(ga4Current.revenue,              ga4Prior.revenue),
+    sessions:             mkKpi(ga4Current.sessions,             ga4Prior.sessions),
+    conversions:          mkKpi(ga4Current.conversions,          ga4Prior.conversions),
+    conversion_rate:      mkKpi(ga4Current.conversion_rate,      ga4Prior.conversion_rate),
+    avg_session_duration: mkKpi(ga4Current.avg_session_duration, ga4Prior.avg_session_duration),
+    bounce_rate:          mkKpi(ga4Current.bounce_rate,          ga4Prior.bounce_rate),
+  };
+
+  // --- OVERVIEW ---
   const adsPlatforms = [
-    meta?.roas != null ? { platform: 'meta', roas: round2(meta.roas) } : null,
-    google?.roas != null ? { platform: 'google', roas: round2(google.roas) } : null,
+    metaCurrent.roas != null ? { platform: 'meta', roas: round2(metaCurrent.roas) } : null,
+    googleCurrent.roas != null ? { platform: 'google', roas: round2(googleCurrent.roas) } : null,
   ].filter(Boolean);
   const topAdsPlatformByRoas = adsPlatforms
     .slice()
@@ -2414,13 +2783,13 @@ function buildStructuredBenchmarks({ metaPack, googlePack, ga4Pack }) {
 
   return {
     overview: {
-      ads_platforms_present: adsPlatforms.map((row) => row.platform),
+      ads_platforms_present: adsPlatforms.map((r) => r.platform),
       top_ads_platform_by_roas: topAdsPlatformByRoas?.platform || null,
-      ga4_revenue: ga4?.revenue != null ? round2(ga4.revenue) : null,
+      ga4_revenue: ga4Current.revenue != null ? round2(ga4Current.revenue) : null,
     },
-    meta,
-    google,
-    ga4,
+    meta:   Object.keys(metaBenchmarks).length > 0   ? metaBenchmarks   : null,
+    google: Object.keys(googleBenchmarks).length > 0 ? googleBenchmarks : null,
+    ga4:    Object.keys(ga4Benchmarks).length > 0    ? ga4Benchmarks    : null,
   };
 }
 
@@ -3211,7 +3580,7 @@ async function buildStructuredSignalSchema({
   ).trim() || null;
 
   const cutoff = new Date();
-  cutoff.setDate(cutoff.getDate() - 60);
+  cutoff.setDate(cutoff.getDate() - 30);
   const since = cutoff.toISOString().slice(0, 10);
   const until = new Date().toISOString().slice(0, 10);
 
@@ -3259,6 +3628,8 @@ async function buildStructuredSignalSchema({
     ga4: sourceFlags.ga4.snapshotId,
   };
 
+  const attribution = buildStructuredAttribution({ usablePlatforms, pixelStatsByDay, orderStatsByDay });
+
   const campaigns = buildCampaignsSchema({
     metaPack,
     googlePack,
@@ -3273,6 +3644,9 @@ async function buildStructuredSignalSchema({
   const crossChannel = buildStructuredCrossChannel({ metaPack, googlePack, ga4Pack, usablePlatforms });
   const adSets = buildStructuredAdSets({ metaPack });
   const ads = buildStructuredAds({ metaPack });
+  const campaignsDaily = buildCampaignsDailySchema({ metaPack, googlePack });
+  const adsDaily = buildAdsDailySchema({ metaPack, googlePack });
+  const landingPagesDaily = buildLandingPagesDailySchema({ ga4Pack });
   const usableSourcesCount = usablePlatforms.length;
   const payloadStats = {
     daily_index_rows: dailyIndex.length,
@@ -3286,6 +3660,9 @@ async function buildStructuredSignalSchema({
     cross_channel_platforms_count: Array.isArray(crossChannel?.platform_mix) ? crossChannel.platform_mix.length : 0,
     ad_sets_count: adSets.length,
     ads_count: ads.length,
+    campaigns_daily_count: campaignsDaily.length,
+    ads_daily_count: adsDaily.length,
+    landing_pages_daily_count: landingPagesDaily.length,
   };
   const payloadHealth = buildStructuredPayloadHealth({
     connectedPlatforms,
@@ -3296,6 +3673,7 @@ async function buildStructuredSignalSchema({
         usable_sources: usablePlatforms,
       },
       daily_index: dailyIndex,
+      attribution,
       campaigns: flaggedCampaigns,
       anomalies,
       benchmarks,
@@ -3305,9 +3683,24 @@ async function buildStructuredSignalSchema({
       cross_channel: crossChannel,
       ad_sets: adSets,
       ads,
+      campaigns_daily: campaignsDaily,
+      ads_daily: adsDaily,
+      landing_pages_daily: landingPagesDaily,
       payload_stats: payloadStats,
     },
   });
+
+  // Fase 4 — valores derivados para meta object
+  const totalSpend30d = round2(
+    dailyIndex.reduce((sum, row) => sum + toNum(row?.meta_spend ?? row?.spend, 0), 0)
+  );
+  const totalRevenue30dPlatform = round2(
+    dailyIndex.reduce((sum, row) => sum + toNum(row?.meta_conversion_value ?? row?.conversion_value, 0), 0)
+  );
+  const activeCampaignsCount = flaggedCampaigns.filter((c) => {
+    const s = safeStr(c?.status).toLowerCase();
+    return s === 'active' || s === 'enabled' || s === 'on';
+  }).length;
 
   return {
     schema: 'adray.signal.granular.v1',
@@ -3321,7 +3714,7 @@ async function buildStructuredSignalSchema({
       data_window_end: uniqueDates[uniqueDates.length - 1] || null,
       days_of_data: uniqueDates.length > 0 ? uniqueDates.length : null,
       connected_sources: connectedPlatforms,
-      capability_tier: deriveCapabilityTier(usablePlatforms),
+      capability_tier: attribution.capability_tier,
       account_currency: accountCurrency,
       timezone,
       snapshot_id: safeStr(unifiedBase?.snapshotId).trim() || null,
@@ -3332,8 +3725,15 @@ async function buildStructuredSignalSchema({
       usable_sources_count: usableSourcesCount,
       schema_name: 'adray.signal.granular',
       schema_version: 'v1',
+      pixel_connected: connectedPlatforms.includes('pixel'),
+      shopify_connected: connectedPlatforms.includes('shopify'),
+      total_spend_30d: totalSpend30d,
+      total_revenue_30d_platform: totalRevenue30dPlatform,
+      active_campaigns_count: activeCampaignsCount,
+      anomaly_count: anomalies.length,
     },
     daily_index: dailyIndex,
+    attribution,
     campaigns: flaggedCampaigns,
     anomalies,
     benchmarks,
@@ -3343,6 +3743,9 @@ async function buildStructuredSignalSchema({
     cross_channel: crossChannel,
     ad_sets: adSets,
     ads,
+    campaigns_daily: campaignsDaily,
+    ads_daily: adsDaily,
+    landing_pages_daily: landingPagesDaily,
     payload_stats: payloadStats,
     payload_health: payloadHealth,
   };
@@ -3418,6 +3821,9 @@ async function appendStructuredSignalSchema({
       cross_channel: structured.cross_channel,
       ad_sets: structured.ad_sets,
       ads: structured.ads,
+      campaigns_daily: structured.campaigns_daily || [],
+      ads_daily: structured.ads_daily || [],
+      landing_pages_daily: structured.landing_pages_daily || [],
       payload_stats: structured.payload_stats,
       payload_health: structured.payload_health,
     },

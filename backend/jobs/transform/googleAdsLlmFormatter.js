@@ -119,7 +119,7 @@ function filterRowsByContextRange(rows, contextRangeDays, explicitRange) {
   const list = Array.isArray(rows) ? rows : [];
   if (!list.length) return [];
 
-  const rangeDays = clampInt(contextRangeDays || 60, 1, 3650);
+  const rangeDays = clampInt(contextRangeDays || 30, 1, 3650);
   const explicitTo = safeDateStr(explicitRange?.to || explicitRange?.until);
   const computedLatest = list
     .map((r) => safeDateStr(r?.date))
@@ -373,7 +373,7 @@ function sortRowsByDateAsc(rows) {
     .sort((a, b) => safeStr(a?.date).localeCompare(safeStr(b?.date)));
 }
 
-function buildDailyTrends(dailyData, topCampaignRows = 5, contextRangeDays = 60) {
+function buildDailyTrends(dailyData, topCampaignRows = 5, contextRangeDays = 30) {
   const inferredRange = normalizeRange(dailyData?.meta?.range);
   const rawTotalsByDay = sortRowsByDateAsc(dailyData?.totals_by_day || []);
   const rawCampaignsDaily = Array.isArray(dailyData?.campaigns_daily) ? dailyData.campaigns_daily : [];
@@ -730,7 +730,7 @@ function buildKpiDefinitions() {
 
 function formatGoogleAdsForLlm({
   datasets = [],
-  contextRangeDays = 60,
+  contextRangeDays = 30,
   topCampaigns = 8,
   topBreakdowns = 5,
   topTrendCampaigns = 5,
@@ -746,7 +746,7 @@ function formatGoogleAdsForLlm({
   const meta = getGoogleHeader(dsMap);
   const normalizedRange = normalizeRange(meta?.range);
   const effectiveContextRangeDays =
-    clampInt(contextRangeDays || meta?.contextRangeDays || normalizedRange?.days || 60, 7, 3650);
+    clampInt(contextRangeDays || meta?.contextRangeDays || normalizedRange?.days || 30, 7, 3650);
 
   const ranked_campaigns = buildRankedCampaigns(rankedData, Math.max(topCampaigns, 12));
   const breakdowns = buildBreakdowns(breakdownsData, topBreakdowns);
@@ -798,7 +798,7 @@ function formatGoogleAdsForLlm({
 
 function formatGoogleAdsForLlmMini({
   datasets = [],
-  contextRangeDays = 60,
+  contextRangeDays = 30,
   topCampaigns = 5,
 } = {}) {
   const full = formatGoogleAdsForLlm({

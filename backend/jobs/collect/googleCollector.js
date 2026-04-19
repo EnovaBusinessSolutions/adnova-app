@@ -894,6 +894,94 @@ function aggregateWindowFromTotals(totalsByDay, endDate, days) {
   return k;
 }
 
+async function fetchAdsDailyRows({ accessToken, customerId, since, until }) {
+  const cid = normId(customerId);
+  if (!cid || !since || !until) return [];
+
+  const GAQL = `
+    SELECT
+      ad_group_ad.ad.id,
+      ad_group_ad.ad.name,
+      ad_group.id,
+      ad_group.name,
+      campaign.id,
+      campaign.name,
+      segments.date,
+      metrics.impressions,
+      metrics.clicks,
+      metrics.cost_micros,
+      metrics.conversions,
+      metrics.conversions_value
+    FROM ad_group_ad
+    WHERE
+      segments.date BETWEEN '${since}' AND '${until}'
+      AND metrics.impressions > 0
+    ORDER BY segments.date
+  `.trim();
+
+  let rows;
+  try {
+    rows = await Ads.searchGAQLStream(accessToken, cid, GAQL);
+  } catch (e) {
+    logger.error('[gadsCollector] ads daily GAQL error', {
+      customerId: cid,
+      message: e?.message,
+    });
+    return [];
+  }
+
+  const spendByAd = new Map();
+  for (const r of rows) {
+    const ad = r.ad_group_ad?.ad || {};
+    const adId = normId(ad.id);
+    if (!adId) continue;
+    const costMicros = Number(r.metrics?.costMicros ?? r.metrics?.cost_micros ?? 0);
+    spendByAd.set(adId, (spendByAd.get(adId) || 0) + costMicros);
+  }
+  const top25Ids = new Set(
+    [...spendByAd.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 25)
+      .map(([id]) => id)
+  );
+
+  const result = [];
+  for (const r of rows) {
+    const ad = r.ad_group_ad?.ad || {};
+    const adGroup = r.ad_group || {};
+    const camp = r.campaign || {};
+    const seg = r.segments || {};
+    const met = r.metrics || {};
+
+    const adId = normId(ad.id);
+    if (!adId || !top25Ids.has(adId)) continue;
+
+    const date = seg.date || seg['segments.date'] || null;
+    if (!date) continue;
+
+    const costMicros = Number(met.costMicros ?? met.cost_micros ?? 0);
+    const conversions = Number(met.conversions || 0);
+    const conversionValue = Number(met.conversionsValue ?? met.conversions_value ?? 0);
+
+    result.push({
+      ad_id: adId,
+      ad_name: ad.name || `Ad ${adId}`,
+      ad_group_id: normId(adGroup.id) || null,
+      ad_group_name: adGroup.name || null,
+      campaign_id: normId(camp.id) || null,
+      campaign_name: camp.name || null,
+      date,
+      spend: round2(costMicros / 1_000_000),
+      impressions: Number(met.impressions || 0),
+      clicks: Number(met.clicks || 0),
+      conversions: round2(conversions),
+      conversion_value: round2(conversionValue),
+    });
+  }
+
+  return result;
+}
+
 /* ====================== Collector principal ====================== */
 async function collectGoogle(userId, opts = {}) {
   const {
@@ -1242,6 +1330,19 @@ async function collectGoogle(userId, opts = {}) {
     contextRangeDays: contextDays,
   });
 
+  // Fase 3 — ads daily top 25
+  let adsDailyRows = [];
+  try {
+    adsDailyRows = await fetchAdsDailyRows({
+      accessToken,
+      customerId: idsToAudit[0],
+      since: contextSinceGlobal,
+      until: contextUntilGlobal,
+    });
+  } catch (_e) {
+    adsDailyRows = [];
+  }
+
   const datasets = [
     {
       source: 'googleAds',
@@ -1284,6 +1385,19 @@ async function collectGoogle(userId, opts = {}) {
       },
     },
   ];
+
+  if (adsDailyRows.length > 0) {
+    datasets.push({
+      source: 'googleAds',
+      dataset: 'google.ads_daily',
+      range: contextRangeOut,
+      stats: { rows: adsDailyRows.length, bytes: 0 },
+      data: {
+        meta: contextHeader,
+        ads_daily: adsDailyRows,
+      },
+    });
+  }
 
   if (buildHistoricalDatasets) {
     datasets.push({

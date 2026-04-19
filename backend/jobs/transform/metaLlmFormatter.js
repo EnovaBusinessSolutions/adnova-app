@@ -142,7 +142,7 @@ function filterRowsByContextRange(rows, contextRangeDays, explicitRange) {
   const list = Array.isArray(rows) ? rows : [];
   if (!list.length) return [];
 
-  const rangeDays = clampInt(contextRangeDays || 60, 1, 3650);
+  const rangeDays = clampInt(contextRangeDays || 30, 1, 3650);
   const explicitTo = safeDateStr(explicitRange?.until || explicitRange?.to);
   const computedLatest = list
     .map((r) => safeDateStr(r?.date))
@@ -447,7 +447,7 @@ function sortRowsByDateAsc(rows) {
     .sort((a, b) => safeStr(a?.date).localeCompare(safeStr(b?.date)));
 }
 
-function buildDailyTrends(dailyData, topCampaignRows = 5, contextRangeDays = 60) {
+function buildDailyTrends(dailyData, topCampaignRows = 5, contextRangeDays = 30) {
   const rawTotalsByDay = sortRowsByDateAsc(dailyData?.totals_by_day || []);
   const rawCampaignsDaily = Array.isArray(dailyData?.campaigns_daily) ? dailyData.campaigns_daily : [];
 
@@ -822,7 +822,7 @@ function buildKpiDefinitions() {
  */
 function formatMetaForLlm({
   datasets = [],
-  contextRangeDays = 60,
+  contextRangeDays = 30,
   topCampaigns = 8,
   topBreakdowns = 5,
   topTrendCampaigns = 5,
@@ -838,7 +838,7 @@ function formatMetaForLlm({
   const meta = getMetaHeader(dsMap);
   const range = normalizeRange(meta?.range);
   const effectiveContextRangeDays =
-    clampInt(contextRangeDays || meta?.contextRangeDays || range?.days || 60, 7, 3650);
+    clampInt(contextRangeDays || meta?.contextRangeDays || range?.days || 30, 7, 3650);
 
   const ranked_campaigns = buildRankedCampaigns(rankedData, Math.max(topCampaigns, 12));
   const breakdowns = buildBreakdowns(breakdownsData, topBreakdowns);
@@ -894,7 +894,7 @@ function formatMetaForLlm({
  */
 function formatMetaForLlmMini({
   datasets = [],
-  contextRangeDays = 60,
+  contextRangeDays = 30,
   topCampaigns = 6,
 } = {}) {
   const full = formatMetaForLlm({

@@ -70,13 +70,13 @@ async function maybeEnqueueBackgroundCollect(userId, sourceKey) {
     await q.enqueueMetaCollectBestEffort({
       userId,
       reason: 'mcp_snapshot_stale_read',
-      rangeDays: 60,
+      rangeDays: 30,
     });
   } else if (sourceKey === 'googleAds') {
     await q.enqueueGoogleAdsCollectBestEffort({
       userId,
       reason: 'mcp_snapshot_stale_read',
-      rangeDays: 60,
+      rangeDays: 30,
     });
   }
 }

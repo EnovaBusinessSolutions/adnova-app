@@ -1092,7 +1092,7 @@ async function triggerPaidMediaAutoSyncIfNeeded({ userId, accountId, summary, ro
     const metaEnqueue = await enqueueMetaCollectBestEffort({
       userId: userIdStr,
       metaAccountId,
-      rangeDays: 60,
+      rangeDays: 30,
       reason: 'paid_media_auto_sync',
       trigger: 'analytics_paid_media',
       forceFull: false,
@@ -1111,7 +1111,7 @@ async function triggerPaidMediaAutoSyncIfNeeded({ userId, accountId, summary, ro
     const googleEnqueue = await enqueueGoogleAdsCollectBestEffort({
       userId: userIdStr,
       accountId: googleAccountId,
-      rangeDays: 60,
+      rangeDays: 30,
       reason: 'paid_media_auto_sync',
       trigger: 'analytics_paid_media',
       forceFull: false,

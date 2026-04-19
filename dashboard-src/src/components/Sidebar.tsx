@@ -26,7 +26,8 @@ const LOGOUT_PATH = "/logout";
 
 const PRIMARY: NavItem[] = [
   { icon: <Compass className="h-5 w-5" />, label: "Get started", path: START_PATH },
-  { icon: <ChartColumn className="h-5 w-5" />, label: "Attribution", path: ATTRIBUTION_PATH },
+  // DEMO-HIDE 2026-04-17: Attribution oculto temporalmente del sidebar para la demo. Revertir descomentando esta línea.
+  // { icon: <ChartColumn className="h-5 w-5" />, label: "Attribution", path: ATTRIBUTION_PATH },
 ];
 
 const SECONDARY: NavItem[] = [{ icon: <Settings className="h-5 w-5" />, label: "Settings", path: SETTINGS_PATH }];

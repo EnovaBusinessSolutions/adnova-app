@@ -35,7 +35,7 @@ const DEFAULT_STORAGE_RANGE_DAYS = clampInt(
 );
 
 const DEFAULT_CONTEXT_RANGE_DAYS = clampInt(
-  process.env.MCP_CONTEXT_RANGE_DAYS || 60,
+  process.env.MCP_CONTEXT_RANGE_DAYS || 30,
   7,
   365
 );
@@ -622,12 +622,12 @@ async function resolveContextRangeDaysByPlan(userId, requestedDays) {
   const u = await User.findById(userId).select('plan').lean();
   const plan = String(u?.plan || 'gratis').toLowerCase();
 
-  if (plan === 'gratis' || plan === 'free') return 60;
+  if (plan === 'gratis' || plan === 'free') return 30;
   if (plan === 'pro' || plan === 'crecimiento' || plan === 'growth' || plan === 'enterprise') {
-    return 60;
+    return 30;
   }
 
-  return 60;
+  return 30;
 }
 
 async function resolveStorageRangeDays(_userId, requestedDays) {
