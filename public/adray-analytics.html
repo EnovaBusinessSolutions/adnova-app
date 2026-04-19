@@ -5884,6 +5884,13 @@
                            onclick="adrayOpenPlayer('${escapeInlineSingleQuotedJs(purchase.rrwebRecordingId)}','${escapeInlineSingleQuotedJs(purchase.sessionId || '')}')">
                             <i class="fa-solid fa-circle-play"></i>
                             Ver grabación
+                        </button>` :
+                        (typeof purchase.clarityPlaybackUrl === 'string' && purchase.clarityPlaybackUrl.startsWith('http')) ? `
+                        <button type="button" class="journey-export-btn"
+                           style="background:#5c2d91;color:#fff;display:inline-flex;align-items:center;gap:6px;"
+                           onclick="adrayOpenClarityModal('${escapeInlineSingleQuotedJs(purchase.clarityPlaybackUrl)}')">
+                            <i class="fa-solid fa-circle-play"></i>
+                            Ver grabación
                         </button>` : ''}
                         <button type="button" class="journey-export-btn" onclick="downloadSingleJourneyCsv('${escapeInlineSingleQuotedJs(selectionKey)}')">
                             <i class="fa-solid fa-file-arrow-down"></i>
@@ -6690,6 +6697,30 @@
             }
         }
 
+        function adrayOpenClarityModal(url) {
+            _adrayShowModal('Grabación de sesión · Microsoft Clarity');
+            const content = document.getElementById('adray-modal-content');
+            content.style.cssText = 'flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:40px;background:#111827;border-radius:0 0 12px 12px;';
+            const isValidUrl = typeof url === 'string' && url.startsWith('http');
+            if (!isValidUrl) {
+                content.innerHTML = `
+                    <i class="fa-solid fa-link-slash" style="font-size:36px;color:#6b7280;margin-bottom:16px;"></i>
+                    <p style="color:#e5e7eb;font-size:14px;font-weight:600;margin-bottom:6px;">Grabación no disponible</p>
+                    <p style="color:#9ca3af;font-size:12px;text-align:center;max-width:300px;">El enlace de esta grabación no es válido o expiró.</p>`;
+                return;
+            }
+            const safeUrl = url.replace(/"/g, '&quot;');
+            content.innerHTML = `
+                <i class="fa-solid fa-circle-play" style="font-size:40px;color:#7c3aed;margin-bottom:16px;"></i>
+                <p style="color:#e5e7eb;font-size:14px;font-weight:600;margin-bottom:6px;">Grabación en Microsoft Clarity</p>
+                <p style="color:#9ca3af;font-size:12px;margin-bottom:24px;text-align:center;max-width:320px;">Esta grabación está almacenada en Clarity. Ábrela en una nueva pestaña.</p>
+                <a href="${safeUrl}" target="_blank" rel="noopener noreferrer"
+                   onclick="adrayCloseModal()"
+                   style="display:inline-flex;align-items:center;gap:8px;padding:10px 22px;background:#5c2d91;color:#fff;border-radius:8px;text-decoration:none;font-size:13px;font-weight:600;">
+                    <i class="fa-solid fa-arrow-up-right-from-square"></i> Abrir en Clarity
+                </a>`;
+        }
+
         async function adrayOpenPlayer(recordingId, sessionId) {
             _adrayShowModal('Grabación de sesión');
             const content = document.getElementById('adray-modal-content');
@@ -7136,11 +7167,40 @@
                     || '';
             };
 
-            const allWooProfiles = Array.isArray(wooProfilesState.profiles) ? wooProfilesState.profiles : [];
+            const wooProfilesFromEndpoint = Array.isArray(wooProfilesState.profiles) ? wooProfilesState.profiles : [];
+
+            // Augment with synthetic profiles derived from the current purchases so users
+            // always see a chip per customer even if the backend profiles endpoint is empty
+            // or its customerDisplayName fields are blank.
+            const profileByKey = new Map();
+            wooProfilesFromEndpoint.forEach((p) => {
+                const key = String(p.profileKey || p.customerId || '').trim();
+                if (key) profileByKey.set(key, p);
+            });
+            rankedJourneys.forEach(({ purchase }) => {
+                const customerId = normalizeCustomerId(purchase?.customerId);
+                if (!customerId) return;
+                const profileKey = `customer:${customerId}`;
+                if (profileByKey.has(profileKey) || profileByKey.has(customerId)) return;
+                const name = resolvePurchaseCustomerName(purchase);
+                const email = resolvePurchaseCustomerEmail(purchase);
+                profileByKey.set(profileKey, {
+                    profileKey,
+                    customerId,
+                    customerDisplayName: name || '',
+                    customerEmailPreview: email || '',
+                    orderCount: 1,
+                    totalRevenue: Number(purchase.revenue || 0),
+                    lastSeenAt: purchase.platformCreatedAt || purchase.createdAt || null,
+                    lastOrderAt: purchase.platformCreatedAt || purchase.createdAt || null,
+                    profileLabel: name || email || `Customer ${customerId}`,
+                    _syntheticFromPurchase: true,
+                });
+            });
+            const allWooProfiles = Array.from(profileByKey.values());
+
             const normalizedSearch = normalizeProfileName(attributionJourneyState.profileSearch || '');
             const visibleProfilesBase = allWooProfiles.filter((profile) => {
-                // A profile is "readable" if we can render something meaningful for it:
-                // either its own identity fields OR an identity stitched from recent purchases.
                 const resolvedLabel = resolveProfileDisplayName(profile);
                 if (!resolvedLabel) return false;
                 if (!normalizedSearch) return true;
@@ -7941,6 +8001,15 @@
                        class="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium"
                        style="background:#7c3aed;color:#fff;border:none;cursor:pointer;"
                        onclick="adrayOpenPlayer('${escapeInlineSingleQuotedJs(session.rrwebRecordingId)}','${escapeInlineSingleQuotedJs(session.sessionId || '')}')">
+                        ▶ Ver grabación de sesión
+                    </button>
+                </div>` :
+                (typeof session.clarityPlaybackUrl === 'string' && session.clarityPlaybackUrl.startsWith('http')) ? `
+                <div class="mt-3">
+                    <button type="button"
+                       class="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium"
+                       style="background:#5c2d91;color:#fff;border:none;cursor:pointer;"
+                       onclick="adrayOpenClarityModal('${escapeInlineSingleQuotedJs(session.clarityPlaybackUrl)}')">
                         ▶ Ver grabación de sesión
                     </button>
                 </div>` : `
@@ -9596,6 +9665,8 @@ function renderRecentPurchases(purchases) {
         }
 
         let _adrayAllRecordings = [];
+        let _adrayRecordingsVisibleCount = 8;
+        const _ADRAY_RECORDINGS_PAGE_SIZE = 8;
 
         async function loadRecordingsList() {
             const container = document.getElementById('recordings-list');
@@ -9605,10 +9676,18 @@ function renderRecentPurchases(purchases) {
                 return;
             }
             container.innerHTML = '<p class="text-sm text-gray-400 col-span-full">Cargando...</p>';
+            _adrayRecordingsVisibleCount = _ADRAY_RECORDINGS_PAGE_SIZE;
             try {
-                const res = await fetch(`/api/recording/${encodeURIComponent(currentShopId)}/list`);
-                const data = await res.json();
-                if (!data.ok || !Array.isArray(data.recordings) || data.recordings.length === 0) {
+                const res = await fetch(`/api/recording/${encodeURIComponent(currentShopId)}/list?limit=100`);
+                const data = await res.json().catch(() => ({ ok: false }));
+                if (!res.ok || !data.ok) {
+                    _adrayAllRecordings = [];
+                    container.innerHTML = `<p class="text-sm text-red-400 col-span-full">No se pudieron cargar las grabaciones (${res.status}). ${data?.error ? `<br><span class="text-xs text-gray-500">${escapeHtml(String(data.error))}</span>` : ''}</p>`;
+                    const countEl = document.getElementById('rec-filter-count');
+                    if (countEl) countEl.textContent = '';
+                    return;
+                }
+                if (!Array.isArray(data.recordings) || data.recordings.length === 0) {
                     _adrayAllRecordings = [];
                     container.innerHTML = '<p class="text-sm text-gray-400 col-span-full">No hay grabaciones disponibles aún.</p>';
                     const countEl = document.getElementById('rec-filter-count');
@@ -9618,8 +9697,13 @@ function renderRecentPurchases(purchases) {
                 _adrayAllRecordings = data.recordings;
                 renderRecordingsList();
             } catch (e) {
-                container.innerHTML = `<p class="text-sm text-red-400 col-span-full">Error al cargar grabaciones: ${e.message}</p>`;
+                container.innerHTML = `<p class="text-sm text-red-400 col-span-full">Error al cargar grabaciones: ${escapeHtml(e.message || String(e))}</p>`;
             }
+        }
+
+        function adrayRecordingsShowMore() {
+            _adrayRecordingsVisibleCount += _ADRAY_RECORDINGS_PAGE_SIZE;
+            renderRecordingsList();
         }
 
         function renderRecordingsList() {
@@ -9647,14 +9731,19 @@ function renderRecentPurchases(purchases) {
             });
 
             const countEl = document.getElementById('rec-filter-count');
-            if (countEl) countEl.textContent = `${filtered.length} de ${_adrayAllRecordings.length}`;
 
             if (filtered.length === 0) {
+                if (countEl) countEl.textContent = `0 de ${_adrayAllRecordings.length}`;
                 container.innerHTML = '<p class="text-sm text-gray-400 col-span-full">Ninguna grabación coincide con los filtros.</p>';
                 return;
             }
 
-            container.innerHTML = filtered.map((r) => {
+            const totalFiltered = filtered.length;
+            const visibleCount = Math.min(_adrayRecordingsVisibleCount, totalFiltered);
+            const visible = filtered.slice(0, visibleCount);
+            const hasMore = totalFiltered > visibleCount;
+
+            const cardsHtml = visible.map((r) => {
                 const durS = r.durationMs ? `${Math.round(r.durationMs / 1000)}s` : '-';
                 const date = r.createdAt ? formatDateTimeMx(new Date(r.createdAt)) : '-';
                 const signals = r.behavioralSignals;
@@ -9691,6 +9780,18 @@ function renderRecentPurchases(purchases) {
                     </button>
                 </div>`;
             }).join('');
+
+            const showMoreHtml = hasMore ? `
+                <div class="col-span-full flex justify-center mt-2">
+                    <button type="button" onclick="adrayRecordingsShowMore()"
+                        style="background:#1f2937;color:#e5e7eb;border:1px solid #374151;border-radius:8px;padding:8px 20px;font-size:12px;font-weight:600;cursor:pointer;">
+                        Ver más (${totalFiltered - visibleCount} más)
+                    </button>
+                </div>` : '';
+
+            container.innerHTML = cardsHtml + showMoreHtml;
+
+            if (countEl) countEl.textContent = `${visibleCount} de ${totalFiltered}${_adrayAllRecordings.length !== totalFiltered ? ` (${_adrayAllRecordings.length} total)` : ''}`;
         }
 
         function renderAttributionChart(attributionData, paidMedia = {}) {
