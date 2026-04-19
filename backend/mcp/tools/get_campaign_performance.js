@@ -10,11 +10,14 @@ const { checkToolScopes } = require('../scopes');
 const TOOL_NAME = 'get_campaign_performance';
 
 function register(server, mcpUserId) {
-  server.tool(
+  server.registerTool(
     TOOL_NAME,
-    'Retrieves performance metrics broken down by campaign for a given ad channel and date range.',
-    getCampaignPerformanceInput,
-    { readOnlyHint: true },
+    {
+      description:
+        'Retrieves performance metrics broken down by campaign for a given ad channel and date range.',
+      inputSchema: getCampaignPerformanceInput,
+      annotations: { readOnlyHint: true },
+    },
     async (params, extra) => {
       try {
         const userId = resolveToolUserId(mcpUserId, extra);

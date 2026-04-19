@@ -9,11 +9,14 @@ const { checkToolScopes } = require('../scopes');
 const TOOL_NAME = 'get_channel_summary';
 
 function register(server, mcpUserId) {
-  server.tool(
+  server.registerTool(
     TOOL_NAME,
-    'Returns a side-by-side summary of performance across all connected ad channels for a given date range.',
-    getChannelSummaryInput,
-    { readOnlyHint: true },
+    {
+      description:
+        'Returns a side-by-side summary of performance across all connected ad channels for a given date range.',
+      inputSchema: getChannelSummaryInput,
+      annotations: { readOnlyHint: true },
+    },
     async (params, extra) => {
       try {
         const userId = resolveToolUserId(mcpUserId, extra);

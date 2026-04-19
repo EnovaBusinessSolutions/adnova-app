@@ -9,11 +9,14 @@ const { checkToolScopes } = require('../scopes');
 const TOOL_NAME = 'get_date_comparison';
 
 function register(server, mcpUserId) {
-  server.tool(
+  server.registerTool(
     TOOL_NAME,
-    'Compares ad performance metrics between two date periods for a given channel.',
-    getDateComparisonInput,
-    { readOnlyHint: true },
+    {
+      description:
+        'Compares ad performance metrics between two date periods for a given channel.',
+      inputSchema: getDateComparisonInput,
+      annotations: { readOnlyHint: true },
+    },
     async (params, extra) => {
       try {
         const userId = resolveToolUserId(mcpUserId, extra);

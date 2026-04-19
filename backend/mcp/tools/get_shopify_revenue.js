@@ -11,11 +11,14 @@ const TOOL_NAME = 'get_shopify_revenue';
 
 /** Shopify orders are not stored in mcpdata chunks yet — live API only; wrapper keeps metrics/logging consistent. */
 function register(server, mcpUserId) {
-  server.tool(
+  server.registerTool(
     TOOL_NAME,
-    'Retrieves order and revenue data from the connected Shopify store for a given date range.',
-    getShopifyRevenueInput,
-    { readOnlyHint: true },
+    {
+      description:
+        'Retrieves order and revenue data from the connected Shopify store for a given date range.',
+      inputSchema: getShopifyRevenueInput,
+      annotations: { readOnlyHint: true },
+    },
     async (params, extra) => {
       try {
         const userId = resolveToolUserId(mcpUserId, extra);
