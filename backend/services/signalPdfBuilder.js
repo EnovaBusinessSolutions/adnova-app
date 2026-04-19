@@ -277,20 +277,21 @@ function getConnectedSources(root, signalPayload) {
   return out;
 }
 
-function buildPromptHints(signalPayload) {
+function buildPromptHints(signalPayload, contextRangeDays = null) {
   const hints = uniqStrings(signalPayload?.prompt_hints || [], 8);
   if (hints.length > 0) return hints;
 
+  const days = Number(contextRangeDays) > 0 ? Number(contextRangeDays) : 30;
   const summary = signalPayload?.summary || {};
   return uniqStrings([
     'Which campaigns have the strongest ROAS and what is limiting the weaker ones?',
-    'Based on the last 60 days, where should we shift budget to improve efficiency?',
+    `Based on the last ${days} days, where should we shift budget to improve efficiency?`,
     'Write a concise performance summary I can share with my team this week.',
     ...(summary?.priority_actions || []).slice(0, 3).map((x) => `Turn this into an action plan: ${x}`),
   ], 6);
 }
 
-function resolveSignalSections(signalPayload, encodedPayload) {
+function resolveSignalSections(signalPayload, encodedPayload, contextRangeDays = null) {
   const summaryFromSignal = signalPayload?.summary && typeof signalPayload.summary === 'object'
     ? signalPayload.summary
     : {};
@@ -301,7 +302,7 @@ function resolveSignalSections(signalPayload, encodedPayload) {
     Object.keys(summaryFromSignal).length > 0
       ? summaryFromSignal
       : summaryFromEncoded;
-  const prompts = buildPromptHints(signalPayload);
+  const prompts = buildPromptHints(signalPayload, contextRangeDays);
 
   return {
     executiveSummary: safeStr(summary?.executive_summary).trim(),
@@ -417,8 +418,8 @@ function buildSignalPdfModel({ userId, root, signalPayload, encodedPayload, user
 
   const workspaceName = getWorkspaceName({ root, signalPayload, user });
   const connectedSources = getConnectedSources(root, signalPayload);
-  const sections = resolveSignalSections(signalPayload, encodedPayload);
   const lineage = buildLineage(root, signalPayload, encodedPayload);
+  const sections = resolveSignalSections(signalPayload, encodedPayload, lineage?.contextRangeDays || null);
 
   const encodedText = extractEncodedSignalText(encodedPayload);
   const humanText =

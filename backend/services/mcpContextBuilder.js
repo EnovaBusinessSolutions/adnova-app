@@ -129,14 +129,13 @@ function resolveRequestedContextRangeDays(root, requested) {
   const explicit = clampInt(requested, 0, 365);
   if (explicit > 0) return explicit;
 
-  const fromRoot =
-    toNum(root?.coverage?.contextDefaultRangeDays) ||
-    toNum(root?.coverage?.defaultRangeDays) ||
-    toNum(root?.sources?.metaAds?.contextDefaultRangeDays) ||
-    toNum(root?.sources?.googleAds?.contextDefaultRangeDays) ||
-    toNum(root?.sources?.ga4?.contextDefaultRangeDays);
-
-  if (fromRoot > 0) return clampInt(fromRoot, 7, 365);
+  // NOTE: we intentionally do NOT fall back to root.coverage.contextDefaultRangeDays
+  // or root.sources.*.contextDefaultRangeDays here. Those fields can hold stale
+  // values persisted from earlier collections (e.g. rangeDays=60 before the
+  // rangeDays->30 E2E fix landed), and using them would poison every subsequent
+  // rebuild with an outdated window. Callers that need a custom rangeDays must
+  // pass `requested` explicitly. Otherwise we always fall back to the current
+  // DEFAULT_CONTEXT_RANGE_DAYS constant.
   return DEFAULT_CONTEXT_RANGE_DAYS;
 }
 
