@@ -6966,24 +6966,26 @@
         }
 
         /**
-         * Stitched player: fetches N recordings, concatenates their rrweb event
-         * streams (offsetting timestamps so time is monotonic), and plays them
-         * as a single continuous session. Each inner FullSnapshot acts as a
-         * natural DOM-reset between segments (different pages / sessions).
+         * Playlist player: reproduce N grabaciones del mismo usuario una por una.
+         * rrweb no puede concatenar real-stream porque los node IDs viven en el
+         * espacio de cada FullSnapshot — la reconciliación entre grabaciones rompe
+         * con "Node with id not found". En cambio, mostramos una grabación a la vez
+         * y navegamos con flechas Prev/Next entre segmentos.
          */
+        let _adrayPlaylistState = null; // { metas, index, playerRoot }
+
         async function adrayOpenStitchedPlayer(recordingIds) {
             if (!Array.isArray(recordingIds) || recordingIds.length === 0) return;
             if (recordingIds.length === 1) return adrayOpenPlayer(recordingIds[0], '');
 
-            _adrayShowModal(`Timeline combinado · ${recordingIds.length} grabaciones`);
+            _adrayShowModal(`Sesiones del usuario · 1 de ${recordingIds.length}`);
             const content = document.getElementById('adray-modal-content');
             const signals = document.getElementById('adray-modal-signals');
-            const title = document.getElementById('adray-modal-title');
 
             try {
-                content.innerHTML = `<p style="color:#9ca3af;font-size:13px;padding:40px 0;text-align:center;">Descargando ${recordingIds.length} grabaciones…</p>`;
+                content.innerHTML = `<p style="color:#9ca3af;font-size:13px;padding:40px 0;text-align:center;">Cargando ${recordingIds.length} grabaciones…</p>`;
 
-                // 1. Fetch metadata for each recording in parallel
+                // Fetch metadata in parallel
                 const metas = await Promise.all(recordingIds.map(async (id) => {
                     try {
                         const resp = await fetch(`/api/recording/${encodeURIComponent(currentShopId)}/${encodeURIComponent(id)}`);
@@ -6991,56 +6993,15 @@
                         return data.ok ? data : null;
                     } catch (_) { return null; }
                 }));
-                const valid = metas.filter((m) => m && m.presignedUrl);
+                const valid = metas.filter((m) => m && m.recording);
                 if (!valid.length) {
-                    content.innerHTML = `<p style="color:#f87171;font-size:13px;padding:40px;text-align:center;">Ninguna de las ${recordingIds.length} grabaciones está lista.</p>`;
+                    content.innerHTML = `<p style="color:#f87171;font-size:13px;padding:40px;text-align:center;">Ninguna de las ${recordingIds.length} grabaciones está disponible.</p>`;
                     return;
                 }
-
-                // Sort by triggerAt so the merged timeline is chronological
+                // Chronological
                 valid.sort((a, b) => new Date(a.recording?.triggerAt || 0) - new Date(b.recording?.triggerAt || 0));
 
-                // 2. Download each recording's events in parallel
-                const eventStreams = await Promise.all(valid.map(async (m) => {
-                    try {
-                        const r = await fetch(m.presignedUrl);
-                        const raw = await r.json();
-                        const arr = Array.isArray(raw) ? raw : (raw?.events || []);
-                        return arr;
-                    } catch (_) { return []; }
-                }));
-
-                // 3. Stitch with monotonic timestamps. Preserve internal timing of each
-                //    segment; insert a 500ms gap between segments.
-                const merged = [];
-                for (const stream of eventStreams) {
-                    if (!stream.length) continue;
-                    const sorted = stream.slice().sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
-                    if (merged.length === 0) {
-                        merged.push(...sorted);
-                        continue;
-                    }
-                    const prevLast = merged[merged.length - 1].timestamp || 0;
-                    const firstT = sorted[0].timestamp || 0;
-                    const delta = (prevLast + 500) - firstT;
-                    for (const ev of sorted) {
-                        merged.push({ ...ev, timestamp: (ev.timestamp || 0) + delta });
-                    }
-                }
-
-                if (!merged.length) {
-                    content.innerHTML = `<p style="color:#f87171;font-size:13px;padding:40px;text-align:center;">Sin eventos reproducibles.</p>`;
-                    return;
-                }
-                if (!merged.some((e) => e.type === 2)) {
-                    content.innerHTML = `<p style="color:#f87171;font-size:13px;padding:40px;text-align:center;">Ninguna grabación contiene FullSnapshot — no se puede reproducir.</p>`;
-                    return;
-                }
-
-                const totalDur = Math.round((merged[merged.length - 1].timestamp - merged[0].timestamp) / 1000);
-                title.textContent = `Timeline combinado · ${valid.length} sesiones · ${totalDur}s`;
-
-                // 4. Lazy-load rrweb-player (reuse global loader)
+                // Lazy-load rrweb player
                 if (!_adrayPlayerLibLoaded) {
                     content.innerHTML = '<p style="color:#9ca3af;font-size:13px;padding:40px 0;text-align:center;">Cargando reproductor…</p>';
                     await new Promise((resolve, reject) => {
@@ -7055,15 +7016,85 @@
                     _adrayPlayerLibLoaded = true;
                 }
 
-                // 5. Render
-                content.innerHTML = '';
-                content.style.cssText = 'flex:1;overflow:hidden;background:#000;border-radius:0 0 12px 12px;';
+                _adrayPlaylistState = { metas: valid, index: 0 };
+                await _adrayRenderPlaylistSegment();
+
+                // Signals strip lists all segments; clicking one jumps to it
+                const segLine = valid.map((m, i) => {
+                    const rec = m.recording || {};
+                    const dur = rec.durationMs ? `${Math.round(rec.durationMs/1000)}s` : '-';
+                    const tag = rec.outcome === 'PURCHASED' ? '💰' : rec.outcome === 'ABANDONED' ? '🚪' : '👀';
+                    return `<a href="javascript:void(0)" onclick="adrayPlaylistGoto(${i})" style="color:#c4b5fd;text-decoration:none;" data-seg="${i}"><strong>${i+1}.</strong> ${tag} ${dur}</a>`;
+                }).join(' · ');
+                signals.innerHTML = `<span style="font-size:11px;color:#9ca3af;"><i class="fa-solid fa-list-ol"></i> ${valid.length} sesiones de este usuario — ${segLine}</span>`;
+                signals.style.display = 'block';
+            } catch (err) {
+                console.error('[adrayOpenStitchedPlayer] error:', err);
+                content.innerHTML = `<p style="color:#f87171;font-size:13px;padding:40px;text-align:center;">Error: ${escapeHtml(err.message || String(err))}</p>`;
+            }
+        }
+
+        function adrayPlaylistGoto(index) {
+            if (!_adrayPlaylistState) return;
+            const n = _adrayPlaylistState.metas.length;
+            if (index < 0) index = 0;
+            if (index >= n) index = n - 1;
+            _adrayPlaylistState.index = index;
+            _adrayRenderPlaylistSegment();
+        }
+
+        async function _adrayRenderPlaylistSegment() {
+            const state = _adrayPlaylistState;
+            if (!state) return;
+            const content = document.getElementById('adray-modal-content');
+            const title = document.getElementById('adray-modal-title');
+            const meta = state.metas[state.index];
+            const rec = meta.recording || {};
+            const total = state.metas.length;
+            const idx = state.index;
+
+            const dur = rec.durationMs ? ` · ${Math.round(rec.durationMs/1000)}s` : '';
+            const cart = rec.cartValue ? ` · $${Number(rec.cartValue).toFixed(2)}` : '';
+            const outcome = rec.outcome === 'PURCHASED' ? ' · ✓ Compra'
+                          : rec.outcome === 'ABANDONED' ? ' · ✗ Abandono'
+                          : rec.outcome === 'STILL_BROWSING' ? ' · 👀 Explorando' : '';
+            title.textContent = `Sesión ${idx+1} de ${total}${dur}${cart}${outcome}`;
+
+            content.innerHTML = `<p style="color:#9ca3af;font-size:13px;padding:40px 0;text-align:center;">Cargando sesión ${idx+1}…</p>`;
+
+            if (!meta.presignedUrl) {
+                const status = rec.status || 'unknown';
+                const msgs = {
+                    RECORDING: 'Grabando… el cliente aún está en la página.',
+                    FINALIZING: 'Procesando grabación… espera unos segundos e intenta de nuevo.',
+                    ERROR: 'Error al procesar esta grabación.',
+                    unknown: `Estado: ${status}`,
+                };
+                content.innerHTML = `
+                    ${_adrayPlaylistNavHtml(idx, total)}
+                    <p style="color:#fbbf24;font-size:13px;padding:40px;text-align:center;">${msgs[status] || msgs.unknown}</p>`;
+                return;
+            }
+
+            try {
+                const eventsResp = await fetch(meta.presignedUrl);
+                const raw = await eventsResp.json();
+                const events = Array.isArray(raw) ? raw : (raw?.events || []);
+                if (!events.length || !events.some((e) => e.type === 2)) {
+                    content.innerHTML = `
+                        ${_adrayPlaylistNavHtml(idx, total)}
+                        <p style="color:#f87171;font-size:13px;padding:40px;text-align:center;">Sesión sin eventos reproducibles.</p>`;
+                    return;
+                }
+                content.innerHTML = `${_adrayPlaylistNavHtml(idx, total)}<div id="adray-playlist-player-host" style="flex:1;overflow:hidden;background:#000;"></div>`;
+                content.style.cssText = 'flex:1;display:flex;flex-direction:column;background:#000;border-radius:0 0 12px 12px;';
+                const host = document.getElementById('adray-playlist-player-host');
                 const playerWidth  = Math.min(940, Math.floor(window.innerWidth  * 0.94));
-                const playerHeight = Math.min(580, Math.floor(window.innerHeight * 0.72));
+                const playerHeight = Math.min(520, Math.floor(window.innerHeight * 0.66));
                 new window.rrwebPlayer({
-                    target: content,
+                    target: host,
                     props: {
-                        events: merged,
+                        events,
                         width: playerWidth,
                         height: playerHeight,
                         autoPlay: true,
@@ -7072,21 +7103,35 @@
                         speed: 1,
                     },
                 });
-                console.log('[adrayOpenStitchedPlayer] rendered', merged.length, 'stitched events from', valid.length, 'recordings');
-
-                // Build a concise signal strip showing per-segment info
-                const segLine = valid.map((m, i) => {
-                    const rec = m.recording || {};
-                    const dur = rec.durationMs ? `${Math.round(rec.durationMs/1000)}s` : '-';
-                    const tag = rec.outcome === 'PURCHASED' ? '💰' : rec.outcome === 'ABANDONED' ? '🚪' : '👀';
-                    return `<span style="color:#9ca3af;"><strong style="color:#e5e7eb;">${i+1}.</strong> ${tag} ${dur}</span>`;
-                }).join(' · ');
-                signals.innerHTML = `<span style="font-size:11px;"><i class="fa-solid fa-link"></i> ${valid.length} segmentos concatenados — ${segLine}</span>`;
-                signals.style.display = 'block';
             } catch (err) {
-                console.error('[adrayOpenStitchedPlayer] error:', err);
-                content.innerHTML = `<p style="color:#f87171;font-size:13px;padding:40px;text-align:center;">Error cargando timeline: ${escapeHtml(err.message || String(err))}</p>`;
+                console.error('[playlist render] error:', err);
+                content.innerHTML = `
+                    ${_adrayPlaylistNavHtml(idx, total)}
+                    <p style="color:#f87171;font-size:13px;padding:40px;text-align:center;">Error cargando la sesión ${idx+1}.</p>`;
             }
+        }
+
+        function _adrayPlaylistNavHtml(idx, total) {
+            const prevDisabled = idx === 0;
+            const nextDisabled = idx === total - 1;
+            return `
+                <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 14px;background:#0b1220;border-bottom:1px solid #1e293b;">
+                    <button type="button"
+                        onclick="adrayPlaylistGoto(${idx - 1})"
+                        ${prevDisabled ? 'disabled' : ''}
+                        style="background:${prevDisabled ? '#1f2937' : '#7c3aed'};color:${prevDisabled ? '#6b7280' : '#fff'};border:none;border-radius:6px;padding:6px 14px;font-size:12px;font-weight:600;cursor:${prevDisabled ? 'not-allowed' : 'pointer'};display:inline-flex;align-items:center;gap:6px;">
+                        <i class="fa-solid fa-chevron-left"></i> Sesión anterior
+                    </button>
+                    <span style="color:#e5e7eb;font-size:12px;font-weight:600;">
+                        Sesión ${idx + 1} de ${total}
+                    </span>
+                    <button type="button"
+                        onclick="adrayPlaylistGoto(${idx + 1})"
+                        ${nextDisabled ? 'disabled' : ''}
+                        style="background:${nextDisabled ? '#1f2937' : '#7c3aed'};color:${nextDisabled ? '#6b7280' : '#fff'};border:none;border-radius:6px;padding:6px 14px;font-size:12px;font-weight:600;cursor:${nextDisabled ? 'not-allowed' : 'pointer'};display:inline-flex;align-items:center;gap:6px;">
+                        Siguiente sesión <i class="fa-solid fa-chevron-right"></i>
+                    </button>
+                </div>`;
         }
 
         // ─── End Recording Modal Player ───────────────────────────────────────────
