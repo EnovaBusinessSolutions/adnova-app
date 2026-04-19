@@ -1586,26 +1586,9 @@
         } catch (_) {}
       });
 
-      // Capture the playback URL from Clarity and persist it to the session.
-      // This enables the "▶ Ver grabación" button in the Session Explorer.
-      // Note: clarity('metadata', cb) fires cb(playbackUrl, isNew) — only 2 guaranteed params.
-      // We extract the Clarity session ID from the URL path: /player/{projectId}/{sessionId}
-      try {
-        window.clarity('metadata', function(playbackUrl, isNew) {
-          if (!playbackUrl) return;
-          var sessionIdFromUrl = null;
-          try {
-            var m = playbackUrl.match(/\/player\/[^\/]+\/([^\/\?#]+)/);
-            sessionIdFromUrl = m ? m[1] : null;
-          } catch (_) {}
-          try {
-            sendEvent('clarity_session_linked', {
-              clarity_playback_url: playbackUrl,
-              clarity_session_id:   sessionIdFromUrl,
-            });
-          } catch (_) {}
-        });
-      } catch (_) {}
+      // (deprecated) We no longer emit a clarity_session_linked live event.
+      // rrweb is the primary recording stack now, and the Clarity link was
+      // causing noise in the live feed without adding signal value.
     }, 250);
   })();
 
@@ -1656,23 +1639,37 @@
     } catch(_) {}
   }
 
-  // ── Chunk retry: fetch with up to 2 retries, exponential backoff ──
+  function _adrayDetectDevice() {
+    var ua = (navigator.userAgent || '').toLowerCase();
+    if (/ipad|tablet|playbook|silk/i.test(ua)) return 'tablet';
+    if (/mobi|android|iphone|ipod|phone/i.test(ua)) return 'mobile';
+    return 'desktop';
+  }
+
+  // ── Chunk retry: fetch with up to 5 retries, exponential backoff (handles server cold-start) ──
+  // Delays: 2s, 4s, 8s, 16s, 32s — total ~62s max wait
+  // keepalive has a 64 KB body limit — anything larger (e.g. chunk 0 with FullSnapshot) fails
+  // silently. Only use keepalive for small bodies; mid-session large chunks are safe without it
+  // because the page is still alive, and the unload path uses sendBeacon instead.
+  var _ADRAY_MAX_RETRIES = 5;
+  var _ADRAY_KEEPALIVE_MAX = 60000;
   function _adraySendChunkWithRetry(endpoint, body, attempt) {
     attempt = attempt || 0;
-    fetch(endpoint, {
+    var opts = {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      keepalive: true,
       body: body
-    }).then(function(r) {
-      if (!r.ok && attempt < 2) {
-        setTimeout(function() { _adraySendChunkWithRetry(endpoint, body, attempt + 1); }, 1000 * Math.pow(2, attempt));
+    };
+    if (body.length <= _ADRAY_KEEPALIVE_MAX) opts.keepalive = true;
+    fetch(endpoint, opts).then(function(r) {
+      if (!r.ok && attempt < _ADRAY_MAX_RETRIES) {
+        setTimeout(function() { _adraySendChunkWithRetry(endpoint, body, attempt + 1); }, 2000 * Math.pow(2, attempt));
       } else {
         console.log('[ADRAY-REC] chunk sent →', r.status, attempt > 0 ? '(retry ' + attempt + ')' : '');
       }
     }).catch(function(e) {
-      if (attempt < 2) {
-        setTimeout(function() { _adraySendChunkWithRetry(endpoint, body, attempt + 1); }, 1000 * Math.pow(2, attempt));
+      if (attempt < _ADRAY_MAX_RETRIES) {
+        setTimeout(function() { _adraySendChunkWithRetry(endpoint, body, attempt + 1); }, 2000 * Math.pow(2, attempt));
       } else {
         console.error('[ADRAY-REC] chunk FAILED after retries:', e.message || e);
       }
@@ -1708,10 +1705,10 @@
   }
 
   function _adrayFlushChunk() {
-    if (!_adrayChunkBuffer.length || !_adrayRecordingId) {
-      console.log('[ADRAY-REC] flush skipped — buffer:', _adrayChunkBuffer.length, 'recId:', _adrayRecordingId);
-      return;
-    }
+    if (!_adrayChunkBuffer.length || !_adrayRecordingId) { return; }
+    // Chunk 0 must contain a FullSnapshot (type 2) — defer until rrweb emits it.
+    // Guards against premature flushes (stale timers, unload handler) before rrweb.record() fires.
+    if (_adrayChunkIndex === 0 && !_adrayChunkBuffer.some(function(e) { return e.type === 2; })) { return; }
     var events = _adrayChunkBuffer.splice(0, _adrayChunkBuffer.length);
     var idx = _adrayChunkIndex++;
     console.log('[ADRAY-REC] flushing chunk', idx, '—', events.length, 'events');
@@ -1757,9 +1754,10 @@
         recording_id: _adrayRecordingId,
         session_id: getOrCreateSessionId(),
         browser_id: getOrCreateBrowserId(),
-        trigger_event: 'add_to_cart',
+        trigger_event: (cartPayload && cartPayload.trigger) || 'add_to_cart',
         cart_value: cartPayload && cartPayload.cart_value ? cartPayload.cart_value : null,
         checkout_token: cartPayload && cartPayload.checkout_token ? cartPayload.checkout_token : null,
+        device_type: _adrayDetectDevice(),
         timestamp: new Date().toISOString()
       })
     }).then(function(r) {
@@ -1775,7 +1773,10 @@
       _adrayStopFn = window.rrweb.record({
         emit: function(event) {
           _adrayChunkBuffer.push(event);
-          if (JSON.stringify(_adrayChunkBuffer).length >= _ADRAY_CHUNK_MAX_BYTES) {
+          // Send FullSnapshot immediately so it's not lost if user navigates before timer fires
+          if (event.type === 2) {
+            _adrayFlushChunk();
+          } else if (JSON.stringify(_adrayChunkBuffer).length >= _ADRAY_CHUNK_MAX_BYTES) {
             _adrayFlushChunk();
           }
         },
@@ -1851,15 +1852,15 @@
   window.addEventListener('pagehide', _adrayHandleUnload);
   window.addEventListener('beforeunload', _adrayHandleUnload);
 
-  // Hook into sendEvent: trigger recording on add_to_cart, stop on purchase
+  // Hook into sendEvent: trigger recording on add_to_cart / begin_checkout, stop on purchase
   console.log('[ADRAY-REC] BRI recording module initialized. Hooking sendEvent...');
   var _adrayOrigSendEvent = sendEvent;
   sendEvent = function(eventName, eventData) {
     var result = _adrayOrigSendEvent.apply(this, arguments);
     console.log('[ADRAY-REC] sendEvent intercepted:', eventName);
     try {
-      if (eventName === 'add_to_cart') {
-        console.log('[ADRAY-REC] add_to_cart detected → loading rrweb');
+      if (eventName === 'add_to_cart' || eventName === 'begin_checkout') {
+        console.log('[ADRAY-REC] ' + eventName + ' detected → loading rrweb');
         _adrayLoadRrweb(function() { _adrayStartRecording(eventData || {}); });
       }
       if (eventName === 'purchase') {
@@ -1871,6 +1872,19 @@
     }
     return result;
   };
+
+  // Auto-resume: if this page load has a persisted recording in sessionStorage,
+  // the user navigated mid-flow (cart → checkout). Resume without waiting for a
+  // new add_to_cart — otherwise the checkout pages aren't captured.
+  (function _adrayAutoResume() {
+    try {
+      var persisted = sessionStorage.getItem(_SS_REC_KEY);
+      if (persisted) {
+        console.log('[ADRAY-REC] persisted recording detected → auto-resuming', persisted);
+        _adrayLoadRrweb(function() { _adrayStartRecording({ trigger: 'resumed' }); });
+      }
+    } catch(_) {}
+  })();
 
   // =========================================================================
   // END ADRAY BRI Recording Module

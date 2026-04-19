@@ -48,6 +48,7 @@ router.post('/init', async (req, res) => {
       trigger_event = 'add_to_cart',
       cart_value,
       checkout_token,
+      device_type,
       timestamp,
     } = req.body || {};
 
@@ -90,23 +91,60 @@ router.post('/init', async (req, res) => {
     const triggerAt = timestamp ? new Date(timestamp) : new Date();
     const r2Prefix = chunksPrefix(account_id, recording_id);
 
-    await prisma.sessionRecording.create({
-      data: {
-        recordingId: recording_id,
-        accountId: account_id,
-        sessionId: session_id,
-        userKey,
-        triggerEvent: trigger_event,
-        triggerAt,
-        cartValue: cart_value ? parseFloat(cart_value) : null,
-        checkoutToken: checkout_token || null,
-        attributionSnapshot,
-        r2ChunksPrefix: r2Prefix,
-        r2Bucket: process.env.R2_BUCKET || 'adray-recordings',
-        status: 'RECORDING',
-        maskingEnabled: true,
-      },
-    });
+    const createData = {
+      recordingId: recording_id,
+      accountId: account_id,
+      sessionId: session_id,
+      userKey,
+      triggerEvent: trigger_event,
+      triggerAt,
+      cartValue: cart_value ? parseFloat(cart_value) : null,
+      checkoutToken: checkout_token || null,
+      attributionSnapshot,
+      r2ChunksPrefix: r2Prefix,
+      r2Bucket: process.env.R2_BUCKET || 'adray-recordings',
+      status: 'RECORDING',
+      maskingEnabled: true,
+    };
+    // Include deviceType only if the column exists — retry without it on schema mismatch.
+    const createWithDevice = { ...createData, deviceType: device_type || null };
+    try {
+      await prisma.sessionRecording.create({ data: createWithDevice });
+    } catch (createErr) {
+      // P2002: unique constraint — row already exists (likely from /buf auto-create)
+      if (createErr?.code === 'P2002') {
+        await prisma.sessionRecording.update({
+          where: { recordingId: recording_id },
+          data: {
+            cartValue: cart_value ? parseFloat(cart_value) : undefined,
+            checkoutToken: checkout_token || undefined,
+            attributionSnapshot: attributionSnapshot || undefined,
+            deviceType: device_type || undefined,
+          },
+        }).catch((updateErr) => {
+          // Tolerate missing deviceType column during deploy lag
+          if (updateErr?.message?.includes('deviceType') || updateErr?.message?.includes('device_type')) {
+            return prisma.sessionRecording.update({
+              where: { recordingId: recording_id },
+              data: {
+                cartValue: cart_value ? parseFloat(cart_value) : undefined,
+                checkoutToken: checkout_token || undefined,
+                attributionSnapshot: attributionSnapshot || undefined,
+              },
+            });
+          }
+          throw updateErr;
+        });
+      } else if (createErr?.message?.includes('deviceType') || createErr?.message?.includes('device_type')) {
+        // Column not deployed yet — create without it
+        await prisma.sessionRecording.create({ data: createData }).catch((e2) => {
+          if (e2?.code === 'P2002') return;
+          throw e2;
+        });
+      } else {
+        throw createErr;
+      }
+    }
 
     // Link session → recording (session row may not exist yet if /collect is still processing)
     const linked = await prisma.session.updateMany({
@@ -185,8 +223,9 @@ router.post('/buf', async (req, res) => {
           },
         });
       } catch (createErr) {
-        if (!createErr.message?.includes('Unique constraint')) {
-          console.error('[recording/buf] auto-create failed:', createErr.message);
+        // P2002: unique constraint — row was just created by a racing request. OK to continue.
+        if (createErr?.code !== 'P2002' && !createErr?.message?.includes('Unique constraint')) {
+          console.error('[recording/buf] auto-create failed:', createErr.code, createErr.message);
           return res.status(503).json({ ok: false, error: 'Could not initialize recording' });
         }
       }
@@ -275,17 +314,102 @@ router.get('/:account_id/list', async (req, res) => {
     const { account_id } = req.params;
     const take = Math.min(Number(req.query.limit) || 50, 100);
 
-    const recs = await prisma.sessionRecording.findMany({
-      where: { accountId: account_id, status: 'READY', rawErasedAt: null },
-      select: {
-        recordingId: true, sessionId: true, status: true,
-        durationMs: true, triggerAt: true, createdAt: true,
-        behavioralSignals: true, outcome: true, cartValue: true,
-        r2Key: true,
-      },
-      orderBy: { createdAt: 'desc' },
-      take,
-    });
+    // Graceful fallback: if prisma db push hasn't added the `deviceType`
+    // column yet (fresh deploy still in flight), retry without that field.
+    let recs;
+    try {
+      recs = await prisma.sessionRecording.findMany({
+        where: { accountId: account_id, status: 'READY', rawErasedAt: null },
+        select: {
+          recordingId: true, sessionId: true, status: true,
+          durationMs: true, triggerAt: true, createdAt: true,
+          behavioralSignals: true, outcome: true, cartValue: true,
+          deviceType: true, r2Key: true, userKey: true, orderId: true,
+        },
+        orderBy: { createdAt: 'desc' },
+        take,
+      });
+    } catch (selectErr) {
+      console.error('[recording/list] select with deviceType failed, retrying without:', selectErr.message);
+      recs = await prisma.sessionRecording.findMany({
+        where: { accountId: account_id, status: 'READY', rawErasedAt: null },
+        select: {
+          recordingId: true, sessionId: true, status: true,
+          durationMs: true, triggerAt: true, createdAt: true,
+          behavioralSignals: true, outcome: true, cartValue: true,
+          r2Key: true, userKey: true, orderId: true,
+        },
+        orderBy: { createdAt: 'desc' },
+        take,
+      });
+    }
+
+    // ── Enrich with customer context (Task 6) ───────────────────────────────
+    // For each recording, attach: customerName, customerEmailMasked, customerId,
+    // sessionCount (distinct recordings for this userKey in last 30d).
+    try {
+      const userKeys = Array.from(new Set(recs.map((r) => r.userKey).filter((k) => k && k !== 'anonymous')));
+      const orderIds = Array.from(new Set(recs.map((r) => r.orderId).filter(Boolean)));
+
+      // Pull orders matching either the explicit orderId or any of the userKeys,
+      // most recent first so the freshest customer name wins per userKey.
+      const orFilters = [];
+      if (userKeys.length) orFilters.push({ userKey: { in: userKeys } });
+      if (orderIds.length) orFilters.push({ orderId: { in: orderIds } });
+      const relatedOrders = orFilters.length
+        ? await prisma.order.findMany({
+            where: { accountId: account_id, OR: orFilters },
+            select: {
+              orderId: true, userKey: true, customerId: true, emailHash: true,
+              attributionSnapshot: true, platformCreatedAt: true,
+            },
+            orderBy: { platformCreatedAt: 'desc' },
+            take: 500,
+          }).catch(() => [])
+        : [];
+
+      const byOrderId = new Map();
+      const byUserKey = new Map();
+      for (const o of relatedOrders) {
+        const snap = (o.attributionSnapshot && typeof o.attributionSnapshot === 'object') ? o.attributionSnapshot : {};
+        const name = snap.customer_name
+          || [snap.customer_first_name, snap.customer_last_name].filter(Boolean).join(' ').trim()
+          || null;
+        const info = {
+          customerName: name || null,
+          customerId: o.customerId || null,
+          emailMasked: o.emailHash ? `hash:${String(o.emailHash).slice(0, 6)}…` : null,
+        };
+        if (o.orderId) byOrderId.set(o.orderId, info);
+        if (o.userKey && !byUserKey.has(o.userKey)) byUserKey.set(o.userKey, info);
+      }
+
+      // Session counts: count distinct recordings per userKey in last 30d
+      const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+      const sessionCountMap = new Map();
+      if (userKeys.length) {
+        const counts = await prisma.sessionRecording.groupBy({
+          by: ['userKey'],
+          where: { accountId: account_id, userKey: { in: userKeys }, createdAt: { gte: thirtyDaysAgo } },
+          _count: { sessionId: true },
+        }).catch(() => []);
+        for (const c of counts) sessionCountMap.set(c.userKey, c._count.sessionId);
+      }
+
+      recs = recs.map((r) => {
+        const info = (r.orderId && byOrderId.get(r.orderId)) || (r.userKey && byUserKey.get(r.userKey)) || null;
+        return {
+          ...r,
+          customerName: info?.customerName || null,
+          customerId: info?.customerId || null,
+          customerEmailMasked: info?.emailMasked || null,
+          sessionCount30d: r.userKey && r.userKey !== 'anonymous' ? (sessionCountMap.get(r.userKey) || 1) : 1,
+        };
+      });
+    } catch (enrichErr) {
+      // Never fail the list endpoint just because enrichment failed
+      console.error('[recording/list] enrichment failed:', enrichErr.message);
+    }
 
     return res.json({ ok: true, recordings: recs });
   } catch (err) {
@@ -356,6 +480,155 @@ router.get('/:account_id/:recording_id', async (req, res) => {
     });
   } catch (err) {
     console.error('[recording GET] Error:', err.message);
+    return res.status(500).json({ ok: false, error: 'Internal error' });
+  }
+});
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * POST /api/recording/:account_id/:recording_id/insights
+ * On-demand AI-generated key recommendation for a single recording.
+ * Result is cached in Redis for 1h keyed by recordingId.
+ * ───────────────────────────────────────────────────────────────────────────── */
+router.post('/:account_id/:recording_id/insights', async (req, res) => {
+  try {
+    const { account_id, recording_id } = req.params;
+    // v2 schema: includes next_best_action + customer_tier + retention_insight
+    const cacheKey = `adray:rec:insight:v2:${recording_id}`;
+
+    if (redisClient) {
+      const cached = await redisClient.get(cacheKey).catch(() => null);
+      if (cached) {
+        try { return res.json({ ok: true, cached: true, insight: JSON.parse(cached) }); } catch (_) {}
+      }
+    }
+
+    let rec;
+    try {
+      rec = await prisma.sessionRecording.findUnique({
+        where: { recordingId: recording_id },
+        select: {
+          accountId: true, cartValue: true, durationMs: true,
+          behavioralSignals: true, deviceType: true, attributionSnapshot: true,
+          outcome: true, orderId: true, userKey: true,
+        },
+      });
+    } catch (selectErr) {
+      // deviceType column may not exist during deploy lag — retry without
+      console.error('[recording/insights] select with deviceType failed, retrying without:', selectErr.message);
+      rec = await prisma.sessionRecording.findUnique({
+        where: { recordingId: recording_id },
+        select: {
+          accountId: true, cartValue: true, durationMs: true,
+          behavioralSignals: true, attributionSnapshot: true,
+          outcome: true, orderId: true, userKey: true,
+        },
+      });
+    }
+
+    if (!rec || rec.accountId !== account_id) {
+      return res.status(404).json({ ok: false, error: 'Recording not found' });
+    }
+
+    const { generateNarrative, buildCustomerHistory, buildOrderContext } = require('../services/recordingNarrativeService');
+    const signals = rec.behavioralSignals || {};
+    const attrSnap = rec.attributionSnapshot;
+    const attributedChannel = (attrSnap && typeof attrSnap === 'object') ? (attrSnap.channel || attrSnap.attributedChannel || null) : null;
+
+    // For PURCHASED recordings: fetch the current Order + the customer's prior orders
+    // so the LLM can recommend a specific re-engagement action.
+    let orderContext = null;
+    let customerHistory = null;
+    if (rec.outcome === 'PURCHASED') {
+      try {
+        // Current order: prefer orderId, fallback to checkoutToken
+        let currentOrder = null;
+        if (rec.orderId) {
+          currentOrder = await prisma.order.findUnique({ where: { orderId: rec.orderId } }).catch(() => null);
+        }
+        if (!currentOrder && rec.userKey && rec.userKey !== 'anonymous') {
+          // Latest order for this userKey as fallback
+          currentOrder = await prisma.order.findFirst({
+            where: { accountId: account_id, userKey: rec.userKey },
+            orderBy: { platformCreatedAt: 'desc' },
+          }).catch(() => null);
+        }
+        orderContext = buildOrderContext(currentOrder);
+
+        // Prior orders: same userKey / customerId / emailHash, excluding the current one
+        if (rec.userKey && rec.userKey !== 'anonymous') {
+          const orFilters = [{ userKey: rec.userKey }];
+          if (currentOrder?.customerId) orFilters.push({ customerId: currentOrder.customerId });
+          if (currentOrder?.emailHash)  orFilters.push({ emailHash: currentOrder.emailHash });
+          const priorOrders = await prisma.order.findMany({
+            where: {
+              accountId: account_id,
+              OR: orFilters,
+              ...(currentOrder?.orderId ? { NOT: { orderId: currentOrder.orderId } } : {}),
+            },
+            select: { revenue: true, platformCreatedAt: true, createdAt: true },
+            orderBy: { platformCreatedAt: 'desc' },
+            take: 50,
+          }).catch(() => []);
+          customerHistory = buildCustomerHistory(priorOrders, currentOrder?.platformCreatedAt);
+        } else {
+          customerHistory = buildCustomerHistory([], currentOrder?.platformCreatedAt);
+        }
+      } catch (ctxErr) {
+        console.error('[recording/insights] purchase context build failed:', ctxErr.message);
+      }
+    }
+
+    let narrative = null;
+    try {
+      narrative = await generateNarrative({
+        signals,
+        cartValue: rec.cartValue,
+        attributedChannel,
+        sessionDurationMs: rec.durationMs,
+        outcome: rec.outcome,
+        orderContext,
+        customerHistory,
+      });
+    } catch (genErr) {
+      console.error('[recording/insights] generateNarrative threw:', genErr.message);
+    }
+
+    if (!narrative) {
+      // Ultimate fallback so the UI never sees a 500/503 for this endpoint
+      if (rec.outcome === 'PURCHASED') {
+        narrative = {
+          archetype: 'new_convert',
+          confidence_score: 0.3,
+          friction_signals: [],
+          narrative: 'No pudimos generar una recomendación detallada. Revisa la grabación y los datos del pedido para contexto.',
+          recommended_action: 'Envía un welcome flow en 3-5 días con producto complementario.',
+          next_best_action: { type: 'email', timing_days: 3, content: 'Welcome + cross-sell.', priority: 'medium' },
+          customer_tier: null,
+          retention_insight: null,
+        };
+      } else {
+        narrative = {
+          archetype: 'abandonment_risk',
+          confidence_score: 0.3,
+          friction_signals: [signals.abandonmentPattern || 'unknown'],
+          narrative: 'No pudimos generar una recomendación detallada en este momento. Revisa la grabación para contexto manual.',
+          recommended_action: signals.riskScore >= 60
+            ? 'Envía un email de recuperación inmediato con el producto del carrito visible.'
+            : 'Monitorea si regresa en las próximas 24h antes de tomar acción.',
+          next_best_action: { type: 'email', timing_days: 1, content: 'Email de recuperación con el producto del carrito.', priority: signals.riskScore >= 60 ? 'high' : 'medium' },
+          customer_tier: null,
+          retention_insight: null,
+        };
+      }
+    }
+
+    if (redisClient) {
+      await redisClient.set(cacheKey, JSON.stringify(narrative), 'EX', 60 * 60).catch(() => {});
+    }
+
+    return res.json({ ok: true, cached: false, insight: narrative });
+  } catch (err) {
+    console.error('[recording/insights] Error:', err.message);
     return res.status(500).json({ ok: false, error: 'Internal error' });
   }
 });

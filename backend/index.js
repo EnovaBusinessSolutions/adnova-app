@@ -293,6 +293,18 @@ app.options(/.*/, cors(corsOptions));
  * Alto rendimiento: pixel /collect y script pĂşblico antes de sesiĂłn
  * (mantiene rateLimitCollect de main para la seĂąal / anti-abuso)
  * ========================= */
+// BRI: session capture ingest — mounted under /collect/x so ad-blockers treat it
+// the same as the trusted /collect endpoint.
+// Must be registered BEFORE /collect so its 10mb body limit applies first —
+// Express does prefix matching and runs middleware in registration order.
+app.use(
+  "/collect/x",
+  cookieParser(),
+  express.json({ limit: "10mb" }),
+  rateLimitRecording,
+  recordingRoutes
+);
+
 app.use(
   "/collect",
   cookieParser(),
@@ -300,16 +312,6 @@ app.use(
   express.urlencoded({ extended: true }),
   rateLimitCollect,
   collectRoutes
-);
-
-// BRI: session capture ingest — mounted under /collect/x so ad-blockers treat it
-// the same as the trusted /collect endpoint
-app.use(
-  "/collect/x",
-  cookieParser(),
-  express.json({ limit: "2mb" }),
-  rateLimitRecording,
-  recordingRoutes
 );
 // Sweep also accessible internally via /collect/x/sweep (no sessionGuard)
 // The route handler itself validates x-adray-internal header
@@ -952,8 +954,15 @@ app.use('/api/daily-signal-delivery', sessionGuard, require('./routes/dailySigna
 // MCP Server (Phase 1) - protocol endpoint + OAuth + REST mirror
 const { mountMcpRoutes } = require('./mcp/transport');
 mountMcpRoutes(app);
-app.use('/oauth', require('./mcp/auth/oauth-server'));
+const oauthRouter = require('./mcp/auth/oauth-server');
+app.use('/oauth', oauthRouter);
 app.use('/gpt/v1', require('./mcp/rest/router'));
+
+// Some MCP clients probe `/register` at the root before checking
+// `registration_endpoint`, so mount the DCR handler there too.
+if (oauthRouter.dynamicClientRegistrationHandler) {
+  app.post('/register', express.json(), oauthRouter.dynamicClientRegistrationHandler);
+}
 
 // OAuth 2.0 Authorization Server Metadata (RFC 8414)
 // Required by the MCP spec for remote servers so clients (Claude, ChatGPT, etc.)
@@ -965,6 +974,7 @@ app.get('/.well-known/oauth-authorization-server', (req, res) => {
     authorization_endpoint: `${base}/oauth/authorize`,
     token_endpoint: `${base}/oauth/token`,
     revocation_endpoint: `${base}/oauth/revoke`,
+    registration_endpoint: `${base}/oauth/register`,
     response_types_supported: ['code'],
     grant_types_supported: ['authorization_code', 'refresh_token'],
     code_challenge_methods_supported: ['S256'],

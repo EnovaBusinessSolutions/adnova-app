@@ -9,11 +9,14 @@ const { checkToolScopes } = require('../scopes');
 const TOOL_NAME = 'get_account_info';
 
 function register(server, mcpUserId) {
-  server.tool(
+  server.registerTool(
     TOOL_NAME,
-    'Returns metadata about the merchant\'s connected ad accounts and Shopify store (account names, IDs, currency, time zone, connection status).',
-    getAccountInfoInput,
-    { readOnlyHint: true },
+    {
+      description:
+        'Returns metadata about the merchant\'s connected ad accounts and Shopify store (account names, IDs, currency, time zone, connection status).',
+      inputSchema: getAccountInfoInput,
+      annotations: { readOnlyHint: true },
+    },
     async (_params, extra) => {
       try {
         const userId = resolveToolUserId(mcpUserId, extra);

@@ -11,11 +11,14 @@ const { checkToolScopes } = require('../scopes');
 const TOOL_NAME = 'get_adset_performance';
 
 function register(server, mcpUserId) {
-  server.tool(
+  server.registerTool(
     TOOL_NAME,
-    'Retrieves performance metrics broken down by ad set (Meta) or ad group (Google) for a campaign.',
-    getAdsetPerformanceInput,
-    { readOnlyHint: true },
+    {
+      description:
+        'Retrieves performance metrics broken down by ad set (Meta) or ad group (Google) for a campaign.',
+      inputSchema: getAdsetPerformanceInput,
+      annotations: { readOnlyHint: true },
+    },
     async (params, extra) => {
       try {
         const userId = resolveToolUserId(mcpUserId, extra);

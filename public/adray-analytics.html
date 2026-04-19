@@ -3208,10 +3208,49 @@
                     <i class="fa-solid fa-rotate-right"></i> Actualizar
                 </button>
             </div>
+            <div id="recordings-filters" class="flex items-center gap-2 mb-4 flex-wrap text-xs">
+                <select id="rec-filter-outcome" class="rec-filter" onchange="renderRecordingsList()">
+                    <option value="">Resultado: Todos</option>
+                    <option value="PURCHASED">Compraron</option>
+                    <option value="ABANDONED">Abandonaron</option>
+                    <option value="STILL_BROWSING">Explorando</option>
+                </select>
+                <select id="rec-filter-device" class="rec-filter" onchange="renderRecordingsList()">
+                    <option value="">Dispositivo: Todos</option>
+                    <option value="mobile">Móvil</option>
+                    <option value="tablet">Tablet</option>
+                    <option value="desktop">Desktop</option>
+                </select>
+                <select id="rec-filter-duration" class="rec-filter" onchange="renderRecordingsList()">
+                    <option value="">Duración: Toda</option>
+                    <option value="short">&lt; 30s</option>
+                    <option value="medium">30s – 2min</option>
+                    <option value="long">&gt; 2min</option>
+                </select>
+                <select id="rec-filter-risk" class="rec-filter" onchange="renderRecordingsList()">
+                    <option value="">Riesgo: Todos</option>
+                    <option value="high">Alto</option>
+                    <option value="medium">Medio</option>
+                    <option value="low">Bajo</option>
+                </select>
+                <span id="rec-filter-count" class="ml-auto text-gray-400"></span>
+            </div>
             <div id="recordings-list" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
                 <p class="text-sm text-gray-400 col-span-full">Cargando grabaciones...</p>
             </div>
         </div>
+        <style>
+            .rec-filter {
+                background: #111827;
+                color: #e5e7eb;
+                border: 1px solid #1f2937;
+                border-radius: 6px;
+                padding: 5px 10px;
+                font-size: 11px;
+                cursor: pointer;
+            }
+            .rec-filter:focus { outline: 1px solid #7c3aed; }
+        </style>
 
         <section id="session-detail-panel" class="hidden" aria-hidden="true">
             <div class="ops-panel overflow-hidden border border-gray-200">
@@ -5819,7 +5858,21 @@
                         <span class="journey-chip" data-tooltip="Initial landing page captured for this stitched journey."><i class="fa-solid fa-door-open"></i>${escapeHtml(journeyData.summary?.landing || 'No landing captured')}</span>
                         <span class="journey-chip" data-tooltip="How many stitched sessions currently support this purchase path."><i class="fa-solid fa-layer-group"></i>${sessionCount} sessions</span>
                     </div>
-                    ${renderBehavioralSignalsBadge(purchase.behavioralSignals, purchase.recordingStatus, purchase.recordingDurationMs)}
+                    ${renderBehavioralSignalsBadge(purchase.behavioralSignals, purchase.recordingStatus, purchase.recordingDurationMs, { purchaseMode: true })}
+                    ${purchase.rrwebRecordingId ? `
+                    <div class="insights-block" data-recording-id="${escapeHtmlAttr(purchase.rrwebRecordingId)}" style="background:#0f172a;border:1px solid #1e293b;border-radius:10px;padding:12px;">
+                        <div class="flex items-center justify-between gap-2 mb-2">
+                            <p class="font-medium text-gray-200" style="font-size:12px;">🤖 Key recommendation</p>
+                            <button type="button" class="insights-generate-btn"
+                                onclick="adrayGenerateInsight('${escapeInlineSingleQuotedJs(purchase.rrwebRecordingId)}', this)"
+                                style="background:#7c3aed;color:#fff;border:none;border-radius:6px;padding:4px 10px;font-size:11px;font-weight:600;cursor:pointer;">
+                                Generar con IA
+                            </button>
+                        </div>
+                        <div class="insights-content text-xs text-gray-400">
+                            Haz clic en "Generar con IA" para recibir una recomendación accionable basada en las métricas de esta sesión.
+                        </div>
+                    </div>` : ''}
                     <div>
                         <p class="font-medium text-gray-900 mb-1">UTM URL history for this journey</p>
                         ${renderTrackedUtmHistory(purchaseUtmHistory, { emptyMessage: 'No UTM URLs have been captured yet for this selected journey.' })}
@@ -5858,8 +5911,9 @@
             return `<div class="tip-title">${title}</div>${rowsHtml}${recHtml}`;
         }
 
-        function renderBehavioralSignalsBadge(signals, recordingStatus, durationMs) {
+        function renderBehavioralSignalsBadge(signals, recordingStatus, durationMs, opts = {}) {
             if (!signals || typeof signals !== 'object') return '';
+            const purchaseMode = !!opts.purchaseMode;
 
             const riskScore       = signals.riskScore ?? null;
             const rageClicks      = signals.rageClickCount || 0;
@@ -5878,12 +5932,15 @@
             const scrollBackCount = signals.scrollBackCount || 0;
             const mouseLeaveCount = signals.mouseLeaveCount || 0;
 
+            // Color scale. In purchase mode, high "risk" means high friction that
+            // was still overcome — that's still useful info, just framed differently.
             const riskColor = riskScore === null ? '#9ca3af'
                 : riskScore >= 70 ? '#f87171'
                 : riskScore >= 40 ? '#fbbf24'
                 : '#4ade80';
 
-            const patternMeta = {
+            // Pattern meta: two framings depending on whether the session ended in a purchase.
+            const patternMetaAbandon = {
                 shipping_shock:        { label: '🚢 Shipping shock',        tip: 'El usuario probablemente llegó a checkout y abandonó al ver el costo de envío.',            rec: 'Considera ofrecer envío gratis en órdenes de este valor o mostrar el costo antes del checkout.' },
                 form_friction:         { label: '📝 Form friction',         tip: 'El usuario llenó parcialmente formularios y los abandonó varias veces.',                    rec: 'Simplifica el form de checkout: usa autofill, reduce campos requeridos y muestra progreso.' },
                 rage_exit:             { label: '😤 Rage exit',            tip: 'Múltiples rage-clicks detectados seguidos de abandono — posible frustración con la UI.',     rec: 'Revisa qué elementos estaba clickeando; puede ser un botón que no responde o un error visual.' },
@@ -5891,6 +5948,15 @@
                 high_value_hesitation: { label: '💭 High-value hesitation', tip: 'Carrito de alto valor con mucho tiempo de hesitación — quiere comprar pero duda.',         rec: 'Un email de seguimiento con social proof o garantía de devolución puede cerrar esta venta.' },
                 exit_intent:           { label: '🚪 Exit intent',           tip: 'Movimientos repetidos del cursor hacia la barra del navegador antes de abandonar.',          rec: 'Un popup de exit-intent con oferta o recordatorio puede recuperar esta sesión.' },
             };
+            const patternMetaPurchase = {
+                shipping_shock:        { label: '🚢 Shipping shock superado', tip: 'Dudó al ver el costo de envío pero igual completó la compra — sensibilidad al envío confirmada.',                          rec: 'Ofrece envío gratis en la próxima compra con mínimo razonable — es probable que suba AOV.' },
+                form_friction:         { label: '📝 Form friction superada',   tip: 'Tuvo dificultad llenando el formulario pero persistió hasta completar el pedido.',                                          rec: 'Pre-llena datos en la próxima visita (1-click checkout) para reducir fricción.' },
+                rage_exit:             { label: '😤 Fricción superada',        tip: 'Mostró frustración con la UI pero igual compró — UI rescatable pero merece fix para que la recompra sea fluida.',         rec: 'Resuelve el elemento problemático antes de que regrese; envía una encuesta NPS ligera.' },
+                passive_browse:        { label: '👀 Browse → compra',          tip: 'Exploró sin intención fuerte pero terminó comprando — impulso detonado probablemente por trigger externo o urgencia.',    rec: 'Este perfil responde bien a cross-sell post-compra con FOMO (nuevos productos, ediciones limitadas).' },
+                high_value_hesitation: { label: '💭 Hesitation superada',       tip: 'Ticket alto con fuerte hesitación pero cerró la venta — cliente con alto valor que necesita reassurance para recomprar.', rec: 'Activa un follow-up personalizado con testimonios y garantía para apuntalar la segunda compra.' },
+                exit_intent:           { label: '🚪 Exit intent superado',     tip: 'Casi sale pero regresó y compró — gatillo de exit-intent funcionó o el producto ganó en el último momento.',              rec: 'Refuerza la decisión con un onboarding de producto claro para evitar devoluciones y subir LTV.' },
+            };
+            const patternMeta = purchaseMode ? patternMetaPurchase : patternMetaAbandon;
             const pm = patternMeta[pattern] || null;
             const patternLabel = pm?.label || null;
 
@@ -5899,28 +5965,74 @@
 
             const chips = [];
 
-            // ── Risk Score chip ──
+            // ── Insights chip (full session summary) ──
             if (riskScore !== null) {
-                const riskLabel = riskScore >= 70 ? 'Alto — recuperable con acción inmediata'
-                    : riskScore >= 40 ? 'Medio — requiere seguimiento'
-                    : 'Bajo — comprador comprometido';
-                const riskRows = [['🎯', 'Score', `${riskScore} / 100`], ['📊', 'Nivel', riskLabel]];
-                if (pattern) riskRows.push(['🔍', 'Patrón', pm?.label || pattern]);
-                if (archetype && archetype !== pattern) riskRows.push(['🧠', 'Arquetipo', archetype.replace(/_/g, ' ')]);
-                if (narrative) riskRows.push(['💬', 'Insight', narrative]);
-                const riskRec = riskScore >= 40
-                    ? { text: pm?.rec || 'Envía un email de recuperación en las próximas 2 horas mientras la sesión está fresca.' }
-                    : { text: 'Baja probabilidad de abandono. Monitorea si vuelve antes de tomar acción.' };
-                chips.push(`<span style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:12px;font-size:11px;font-weight:600;background:${riskColor}22;color:${riskColor};border:1px solid ${riskColor}44;cursor:default;" data-tooltip-html="${escapeHtml(buildRichTooltipHtml('Abandonment Risk Score', riskRows, riskRec))}"><i class="fa-solid fa-gauge-high" style="font-size:10px;"></i> Risk ${riskScore}/100</span>`);
+                const deviceType = signals.deviceType || null;
+                const insightRows = [];
+
+                if (purchaseMode) {
+                    // Purchase mode: frame metrics as purchase context, not abandonment risk.
+                    const frictionLabel = riskScore >= 70 ? 'Alta — compró a pesar de la fricción, oportunidad para limpiar UX'
+                        : riskScore >= 40 ? 'Media — señales de duda resueltas durante la compra'
+                        : 'Baja — experiencia fluida, cliente comprometido';
+                    insightRows.push(['🎯', 'Fricción durante compra', `${riskScore} / 100`]);
+                    insightRows.push(['📊', 'Nivel', frictionLabel]);
+                    if (pattern) insightRows.push(['🔍', 'Patrón', pm?.label || pattern]);
+                    if (archetype && archetype !== pattern) insightRows.push(['🧠', 'Arquetipo', archetype.replace(/_/g, ' ')]);
+                    if (deviceType) insightRows.push(['📱', 'Dispositivo', deviceType]);
+                    if (dur) insightRows.push(['⏱️', 'Duración', dur]);
+                    if (rageClicks > 0) insightRows.push(['👊', 'Rage clicks superados', String(rageClicks)]);
+                    if (exitIntents > 0) insightRows.push(['🚪', 'Intenciones de salida', String(exitIntents)]);
+                    if (formAbandon > 0) insightRows.push(['📝', 'Forms reintentados', String(formAbandon)]);
+                    if (hesitationMs > 2000) insightRows.push(['⏳', 'Hesitación total', fmtMs(hesitationMs)]);
+                    if (scrollPct != null) insightRows.push(['📜', 'Scroll depth', `${Math.round(scrollPct)}%`]);
+                    if (scrollBackCount > 0) insightRows.push(['↕️', 'Scroll backs', String(scrollBackCount)]);
+                    if (cartViewCount > 0) insightRows.push(['🛒', 'Revisiones de carrito', String(cartViewCount)]);
+                    if (mouseLeaveCount > 0) insightRows.push(['🖱️', 'Salidas de ventana', `${mouseLeaveCount}×`]);
+                    if (narrative) insightRows.push(['💬', 'Narrativa', narrative]);
+                    const insightRec = narrative
+                        ? null
+                        : riskScore >= 40
+                            ? { text: 'Hay fricción que convendría resolver. Clic en "Generar con IA" para una recomendación de re-engagement específica.' }
+                            : { text: 'Compra limpia. Clic en "Generar con IA" para una sugerencia de retención basada en el historial del cliente.' };
+                    chips.push(`<span style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:12px;font-size:11px;font-weight:600;background:${riskColor}22;color:${riskColor};border:1px solid ${riskColor}44;cursor:default;" data-tooltip-html="${escapeHtml(buildRichTooltipHtml('Insights de compra', insightRows, insightRec))}"><i class="fa-solid fa-gauge-high" style="font-size:10px;"></i> Insights · Fricción ${riskScore}/100</span>`);
+                } else {
+                    // Abandonment framing (original)
+                    const riskLabel = riskScore >= 70 ? 'Alto — recuperable con acción inmediata'
+                        : riskScore >= 40 ? 'Medio — requiere seguimiento'
+                        : 'Bajo — comprador comprometido';
+                    insightRows.push(['🎯', 'Risk score', `${riskScore} / 100`]);
+                    insightRows.push(['📊', 'Nivel', riskLabel]);
+                    if (pattern) insightRows.push(['🔍', 'Patrón', pm?.label || pattern]);
+                    if (archetype && archetype !== pattern) insightRows.push(['🧠', 'Arquetipo', archetype.replace(/_/g, ' ')]);
+                    if (deviceType) insightRows.push(['📱', 'Dispositivo', deviceType]);
+                    if (dur) insightRows.push(['⏱️', 'Duración', dur]);
+                    if (rageClicks > 0) insightRows.push(['👊', 'Rage clicks', String(rageClicks)]);
+                    if (exitIntents > 0) insightRows.push(['🚪', 'Exit intents', String(exitIntents)]);
+                    if (formAbandon > 0) insightRows.push(['📝', 'Form abandons', String(formAbandon)]);
+                    if (hesitationMs > 2000) insightRows.push(['⏳', 'Hesitación', fmtMs(hesitationMs)]);
+                    if (scrollPct != null) insightRows.push(['📜', 'Scroll depth', `${Math.round(scrollPct)}%`]);
+                    if (scrollBackCount > 0) insightRows.push(['↕️', 'Scroll backs', String(scrollBackCount)]);
+                    if (cartViewCount > 0) insightRows.push(['🛒', 'Cart views', String(cartViewCount)]);
+                    insightRows.push(['✅', 'Llegó a checkout', checkoutReach ? 'Sí' : 'No']);
+                    if (mouseLeaveCount > 0) insightRows.push(['🖱️', 'Cursor fuera', `${mouseLeaveCount}×`]);
+                    if (narrative) insightRows.push(['💬', 'Narrativa', narrative]);
+                    const insightRec = narrative
+                        ? null
+                        : riskScore >= 40
+                            ? { text: pm?.rec || 'Clic en "Key recommendation" en la tarjeta para generar una recomendación con IA.' }
+                            : { text: 'Baja probabilidad de abandono. Monitorea si vuelve antes de tomar acción.' };
+                    chips.push(`<span style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:12px;font-size:11px;font-weight:600;background:${riskColor}22;color:${riskColor};border:1px solid ${riskColor}44;cursor:default;" data-tooltip-html="${escapeHtml(buildRichTooltipHtml('Insights', insightRows, insightRec))}"><i class="fa-solid fa-gauge-high" style="font-size:10px;"></i> Insights · Risk ${riskScore}/100</span>`);
+                }
             }
 
             // ── Pattern chip ──
             if (patternLabel) {
-                const patRows = [['🔍', 'Patrón', patternLabel], ['💡', 'Qué pasó', pm.tip]];
+                const patRows = [['🔍', 'Patrón', patternLabel], ['💡', purchaseMode ? 'Qué pasó en la compra' : 'Qué pasó', pm.tip]];
                 if (rageClicks > 0) patRows.push(['👊', 'Rage clicks', String(rageClicks)]);
                 if (exitIntents > 0) patRows.push(['🚪', 'Exit intents', String(exitIntents)]);
                 if (formAbandon > 0) patRows.push(['📝', 'Form abandons', String(formAbandon)]);
-                chips.push(`<span style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:12px;font-size:11px;background:#312e81;color:#c4b5fd;border:1px solid #4c1d9544;cursor:default;" data-tooltip-html="${escapeHtml(buildRichTooltipHtml('Behavioral Pattern', patRows, { text: pm.rec }))}"><span style="font-size:11px;">${escapeHtml(patternLabel)}</span></span>`);
+                chips.push(`<span style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:12px;font-size:11px;background:#312e81;color:#c4b5fd;border:1px solid #4c1d9544;cursor:default;" data-tooltip-html="${escapeHtml(buildRichTooltipHtml(purchaseMode ? 'Patrón de compra' : 'Behavioral Pattern', patRows, { text: pm.rec }))}"><span style="font-size:11px;">${escapeHtml(patternLabel)}</span></span>`);
             }
 
             // ── Duration chip — rich with session summary ──
@@ -5931,26 +6043,39 @@
                 if (scrollDepth !== null) durRows.push(['📜', 'Scroll depth', scrollPct != null ? `${Math.round(scrollPct)}%` : `${scrollDepth}px`]);
                 if (scrollBackCount > 0) durRows.push(['↕️', 'Scroll backs', String(scrollBackCount)]);
                 if (cartViewCount > 0) durRows.push(['🛒', 'Vistas de carrito', String(cartViewCount)]);
-                durRows.push(['✅', 'Llegó a checkout', checkoutReach ? 'Sí' : 'No']);
+                if (!purchaseMode) durRows.push(['✅', 'Llegó a checkout', checkoutReach ? 'Sí' : 'No']);
                 if (mouseLeaveCount > 0) durRows.push(['🖱️', 'Cursor fuera', `${mouseLeaveCount}× salió de ventana`]);
-                const durRec = !checkoutReach
-                    ? { warn: true, text: 'Nunca llegó al checkout — el abandono fue antes de ver precios de envío o total.' }
-                    : hesitationMs > 15000
-                        ? { text: `${fmtMs(hesitationMs)} de hesitación en checkout — alto potencial de recuperación con email inmediato.` }
+                let durRec;
+                if (purchaseMode) {
+                    durRec = hesitationMs > 15000
+                        ? { text: `${fmtMs(hesitationMs)} de hesitación en la compra — resolver esta fricción (envío gratis, social proof) sube probabilidad de recompra.` }
                         : null;
+                } else {
+                    durRec = !checkoutReach
+                        ? { warn: true, text: 'Nunca llegó al checkout — el abandono fue antes de ver precios de envío o total.' }
+                        : hesitationMs > 15000
+                            ? { text: `${fmtMs(hesitationMs)} de hesitación en checkout — alto potencial de recuperación con email inmediato.` }
+                            : null;
+                }
                 chips.push(`<span style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:12px;font-size:11px;background:#111827;color:#6b7280;border:1px solid #37415144;cursor:default;" data-tooltip-html="${escapeHtml(buildRichTooltipHtml('Session Recording', durRows, durRec))}"><i class="fa-solid fa-video" style="font-size:10px;"></i> ${dur}</span>`);
             }
 
             // ── Rage clicks chip ──
             if (rageClicks > 0 && !patternLabel) {
                 const rcRows = [['👊', 'Clusters', String(rageClicks)], ['💡', 'Qué son', 'Clics repetidos y rápidos en el mismo elemento — señal de frustración.']];
-                chips.push(`<span style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:12px;font-size:11px;background:#4c1d1d;color:#fca5a5;border:1px solid #7f1d1d44;cursor:default;" data-tooltip-html="${escapeHtml(buildRichTooltipHtml('Rage Clicks', rcRows, { text: 'Revisa el elemento clickeado — puede ser un botón desactivado, un link roto o un precio confuso.' }))}"><i class="fa-solid fa-hand-fist" style="font-size:10px;"></i> ${rageClicks} rage click${rageClicks > 1 ? 's' : ''}</span>`);
+                const rcRec = purchaseMode
+                    ? { text: 'Compró a pesar del problema — resuelve el elemento problemático antes de que regrese para que la recompra sea fluida.' }
+                    : { text: 'Revisa el elemento clickeado — puede ser un botón desactivado, un link roto o un precio confuso.' };
+                chips.push(`<span style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:12px;font-size:11px;background:#4c1d1d;color:#fca5a5;border:1px solid #7f1d1d44;cursor:default;" data-tooltip-html="${escapeHtml(buildRichTooltipHtml('Rage Clicks', rcRows, rcRec))}"><i class="fa-solid fa-hand-fist" style="font-size:10px;"></i> ${rageClicks} rage click${rageClicks > 1 ? 's' : ''}</span>`);
             }
 
             // ── Exit intent chip ──
             if (exitIntents > 0 && !patternLabel) {
                 const eiRows = [['🚪', 'Detecciones', String(exitIntents)], ['💡', 'Qué son', 'El cursor se movió repetidamente hacia la barra superior del navegador.']];
-                chips.push(`<span style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:12px;font-size:11px;background:#1c2e1c;color:#86efac;border:1px solid #14532d44;cursor:default;" data-tooltip-html="${escapeHtml(buildRichTooltipHtml('Exit Intent', eiRows, { text: 'Considera mostrar un popup de "¿Te vas?" con un descuento o garantía de devolución.' }))}"><i class="fa-solid fa-arrow-right-from-bracket" style="font-size:10px;"></i> ${exitIntents} exit intent${exitIntents > 1 ? 's' : ''}</span>`);
+                const eiRec = purchaseMode
+                    ? { text: 'Casi se va pero igual compró — asegura que la experiencia post-compra (confirmación, onboarding) refuerce la decisión.' }
+                    : { text: 'Considera mostrar un popup de "¿Te vas?" con un descuento o garantía de devolución.' };
+                chips.push(`<span style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:12px;font-size:11px;background:#1c2e1c;color:#86efac;border:1px solid #14532d44;cursor:default;" data-tooltip-html="${escapeHtml(buildRichTooltipHtml('Exit Intent', eiRows, eiRec))}"><i class="fa-solid fa-arrow-right-from-bracket" style="font-size:10px;"></i> ${exitIntents} exit intent${exitIntents > 1 ? 's' : ''}</span>`);
             }
 
             if (!chips.length) return '';
@@ -6587,6 +6712,98 @@
             modal.style.display = 'flex';
         }
 
+        async function adrayGenerateInsight(recordingId, btn) {
+            if (!recordingId || !currentShopId) return;
+            const block = btn.closest('.insights-block');
+            const content = block?.querySelector('.insights-content');
+            if (!content) return;
+            const originalBtnText = btn.textContent;
+            btn.disabled = true;
+            btn.textContent = 'Generando...';
+            content.innerHTML = '<span class="text-gray-400">Analizando señales y grabación con IA…</span>';
+            try {
+                const resp = await fetch(`/api/recording/${encodeURIComponent(currentShopId)}/${encodeURIComponent(recordingId)}/insights`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                });
+                const data = await resp.json();
+                if (!data.ok || !data.insight) {
+                    content.innerHTML = `<span class="text-red-400">No se pudo generar: ${escapeHtml(data.error || 'error desconocido')}</span>`;
+                    return;
+                }
+                const ins = data.insight;
+                const archetypeBadge = ins.archetype ? `<span style="display:inline-block;background:#312e81;color:#c4b5fd;padding:2px 8px;border-radius:8px;font-size:10px;font-weight:600;margin-right:6px;">${escapeHtml(ins.archetype.replace(/_/g,' '))}</span>` : '';
+                const tierBadge = ins.customer_tier ? `<span style="display:inline-block;background:${ins.customer_tier==='vip'?'#7c2d12':ins.customer_tier==='returning'?'#064e3b':'#1e3a8a'};color:#fff;padding:2px 8px;border-radius:8px;font-size:10px;font-weight:600;margin-right:6px;">${ins.customer_tier.toUpperCase()}</span>` : '';
+                const friction = Array.isArray(ins.friction_signals) && ins.friction_signals.length
+                    ? `<p class="text-xs text-gray-500 mt-2">Fricciones detectadas: <span class="text-gray-300">${ins.friction_signals.map((s) => escapeHtml(s.replace(/_/g,' '))).join(' · ')}</span></p>`
+                    : '';
+                const cacheBadge = data.cached ? '<span class="text-[10px] text-gray-500 ml-2">(desde caché)</span>' : '';
+
+                // Next best action block (richer structured action)
+                let nextActionBlock = '';
+                const nba = ins.next_best_action;
+                if (nba && nba.type && nba.type !== 'none' && nba.content) {
+                    const typeIcon = nba.type === 'email' ? '📧' : nba.type === 'sms' ? '💬' : nba.type === 'retargeting' ? '🎯' : nba.type === 'coupon' ? '🎟️' : nba.type === 'loyalty_invite' ? '⭐' : '💡';
+                    const typeLabel = nba.type === 'loyalty_invite' ? 'Loyalty' : nba.type.charAt(0).toUpperCase() + nba.type.slice(1);
+                    const prioColor = nba.priority === 'high' ? '#f87171' : nba.priority === 'medium' ? '#fbbf24' : '#9ca3af';
+                    const timingLabel = nba.timing_days === 0 ? 'Inmediato' : nba.timing_days === 1 ? 'En 1 día' : `En ${nba.timing_days} días`;
+                    nextActionBlock = `
+                        <div style="margin-top:10px;padding:10px;background:#0b1220;border:1px solid #1e293b;border-radius:8px;">
+                            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px;">
+                                <span style="font-size:13px;">${typeIcon}</span>
+                                <span style="font-size:11px;font-weight:600;color:#e5e7eb;">${escapeHtml(typeLabel)}</span>
+                                <span style="font-size:10px;color:#9ca3af;">· ${escapeHtml(timingLabel)}</span>
+                                <span style="font-size:10px;font-weight:600;padding:1px 6px;border-radius:6px;background:${prioColor}22;color:${prioColor};margin-left:auto;">${nba.priority.toUpperCase()}</span>
+                            </div>
+                            <p class="text-xs text-gray-300 leading-snug">${escapeHtml(nba.content)}</p>
+                        </div>`;
+                }
+
+                const retentionBlock = ins.retention_insight
+                    ? `<p class="text-xs text-emerald-300 mt-2 leading-snug"><i class="fa-solid fa-lightbulb" style="margin-right:4px;"></i>${escapeHtml(ins.retention_insight)}</p>`
+                    : '';
+
+                content.innerHTML = `
+                    <div style="margin-bottom:6px;">${tierBadge}${archetypeBadge}</div>
+                    <p class="text-sm text-gray-200 leading-snug">${escapeHtml(ins.narrative || '')}</p>
+                    <p class="text-sm text-purple-300 mt-2 leading-snug"><strong>Acción sugerida:</strong> ${escapeHtml(ins.recommended_action || '')}</p>
+                    ${nextActionBlock}
+                    ${retentionBlock}
+                    ${friction}
+                    <p class="text-[10px] text-gray-500 mt-2">Confianza: ${Math.round((ins.confidence_score || 0) * 100)}%${cacheBadge}</p>`;
+                btn.textContent = 'Regenerar';
+            } catch (err) {
+                content.innerHTML = `<span class="text-red-400">Error: ${escapeHtml(err.message || String(err))}</span>`;
+                btn.textContent = originalBtnText;
+            } finally {
+                btn.disabled = false;
+            }
+        }
+
+        function adrayOpenClarityModal(url) {
+            _adrayShowModal('Grabación de sesión · Microsoft Clarity');
+            const content = document.getElementById('adray-modal-content');
+            content.style.cssText = 'flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:40px;background:#111827;border-radius:0 0 12px 12px;';
+            const isValidUrl = typeof url === 'string' && url.startsWith('http');
+            if (!isValidUrl) {
+                content.innerHTML = `
+                    <i class="fa-solid fa-link-slash" style="font-size:36px;color:#6b7280;margin-bottom:16px;"></i>
+                    <p style="color:#e5e7eb;font-size:14px;font-weight:600;margin-bottom:6px;">Grabación no disponible</p>
+                    <p style="color:#9ca3af;font-size:12px;text-align:center;max-width:300px;">El enlace de esta grabación no es válido o expiró.</p>`;
+                return;
+            }
+            const safeUrl = url.replace(/"/g, '&quot;');
+            content.innerHTML = `
+                <i class="fa-solid fa-circle-play" style="font-size:40px;color:#7c3aed;margin-bottom:16px;"></i>
+                <p style="color:#e5e7eb;font-size:14px;font-weight:600;margin-bottom:6px;">Grabación en Microsoft Clarity</p>
+                <p style="color:#9ca3af;font-size:12px;margin-bottom:24px;text-align:center;max-width:320px;">Esta grabación está almacenada en Clarity. Ábrela en una nueva pestaña.</p>
+                <a href="${safeUrl}" target="_blank" rel="noopener noreferrer"
+                   onclick="adrayCloseModal()"
+                   style="display:inline-flex;align-items:center;gap:8px;padding:10px 22px;background:#5c2d91;color:#fff;border-radius:8px;text-decoration:none;font-size:13px;font-weight:600;">
+                    <i class="fa-solid fa-arrow-up-right-from-square"></i> Abrir en Clarity
+                </a>`;
+        }
+
         async function adrayOpenPlayer(recordingId, sessionId) {
             _adrayShowModal('Grabación de sesión');
             const content = document.getElementById('adray-modal-content');
@@ -6748,31 +6965,175 @@
             }
         }
 
-        function adrayOpenClarityModal(url) {
-            _adrayShowModal('Grabación de sesión · Microsoft Clarity');
-            const content = document.getElementById('adray-modal-content');
-            content.style.cssText = 'flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:40px;background:#111827;border-radius:0 0 12px 12px;';
+        /**
+         * Playlist player: reproduce N grabaciones del mismo usuario una por una.
+         * rrweb no puede concatenar real-stream porque los node IDs viven en el
+         * espacio de cada FullSnapshot — la reconciliación entre grabaciones rompe
+         * con "Node with id not found". En cambio, mostramos una grabación a la vez
+         * y navegamos con flechas Prev/Next entre segmentos.
+         */
+        let _adrayPlaylistState = null; // { metas, index, playerRoot }
 
-            const isValidUrl = typeof url === 'string' && url.startsWith('http');
-            if (!isValidUrl) {
+        async function adrayOpenStitchedPlayer(recordingIds) {
+            if (!Array.isArray(recordingIds) || recordingIds.length === 0) return;
+            if (recordingIds.length === 1) return adrayOpenPlayer(recordingIds[0], '');
+
+            _adrayShowModal(`Sesiones del usuario · 1 de ${recordingIds.length}`);
+            const content = document.getElementById('adray-modal-content');
+            const signals = document.getElementById('adray-modal-signals');
+
+            try {
+                content.innerHTML = `<p style="color:#9ca3af;font-size:13px;padding:40px 0;text-align:center;">Cargando ${recordingIds.length} grabaciones…</p>`;
+
+                // Fetch metadata in parallel
+                const metas = await Promise.all(recordingIds.map(async (id) => {
+                    try {
+                        const resp = await fetch(`/api/recording/${encodeURIComponent(currentShopId)}/${encodeURIComponent(id)}`);
+                        const data = await resp.json();
+                        return data.ok ? data : null;
+                    } catch (_) { return null; }
+                }));
+                const valid = metas.filter((m) => m && m.recording);
+                if (!valid.length) {
+                    content.innerHTML = `<p style="color:#f87171;font-size:13px;padding:40px;text-align:center;">Ninguna de las ${recordingIds.length} grabaciones está disponible.</p>`;
+                    return;
+                }
+                // Chronological
+                valid.sort((a, b) => new Date(a.recording?.triggerAt || 0) - new Date(b.recording?.triggerAt || 0));
+
+                // Lazy-load rrweb player
+                if (!_adrayPlayerLibLoaded) {
+                    content.innerHTML = '<p style="color:#9ca3af;font-size:13px;padding:40px 0;text-align:center;">Cargando reproductor…</p>';
+                    await new Promise((resolve, reject) => {
+                        const css = document.createElement('link');
+                        css.rel = 'stylesheet'; css.href = '/static/rp.css';
+                        document.head.appendChild(css);
+                        const s = document.createElement('script');
+                        s.src = '/static/rp.js';
+                        s.onload = resolve; s.onerror = reject;
+                        document.head.appendChild(s);
+                    });
+                    _adrayPlayerLibLoaded = true;
+                }
+
+                _adrayPlaylistState = { metas: valid, index: 0 };
+                await _adrayRenderPlaylistSegment();
+
+                // Signals strip lists all segments; clicking one jumps to it
+                const segLine = valid.map((m, i) => {
+                    const rec = m.recording || {};
+                    const dur = rec.durationMs ? `${Math.round(rec.durationMs/1000)}s` : '-';
+                    const tag = rec.outcome === 'PURCHASED' ? '💰' : rec.outcome === 'ABANDONED' ? '🚪' : '👀';
+                    return `<a href="javascript:void(0)" onclick="adrayPlaylistGoto(${i})" style="color:#c4b5fd;text-decoration:none;" data-seg="${i}"><strong>${i+1}.</strong> ${tag} ${dur}</a>`;
+                }).join(' · ');
+                signals.innerHTML = `<span style="font-size:11px;color:#9ca3af;"><i class="fa-solid fa-list-ol"></i> ${valid.length} sesiones de este usuario — ${segLine}</span>`;
+                signals.style.display = 'block';
+            } catch (err) {
+                console.error('[adrayOpenStitchedPlayer] error:', err);
+                content.innerHTML = `<p style="color:#f87171;font-size:13px;padding:40px;text-align:center;">Error: ${escapeHtml(err.message || String(err))}</p>`;
+            }
+        }
+
+        function adrayPlaylistGoto(index) {
+            if (!_adrayPlaylistState) return;
+            const n = _adrayPlaylistState.metas.length;
+            if (index < 0) index = 0;
+            if (index >= n) index = n - 1;
+            _adrayPlaylistState.index = index;
+            _adrayRenderPlaylistSegment();
+        }
+
+        async function _adrayRenderPlaylistSegment() {
+            const state = _adrayPlaylistState;
+            if (!state) return;
+            const content = document.getElementById('adray-modal-content');
+            const title = document.getElementById('adray-modal-title');
+            const meta = state.metas[state.index];
+            const rec = meta.recording || {};
+            const total = state.metas.length;
+            const idx = state.index;
+
+            const dur = rec.durationMs ? ` · ${Math.round(rec.durationMs/1000)}s` : '';
+            const cart = rec.cartValue ? ` · $${Number(rec.cartValue).toFixed(2)}` : '';
+            const outcome = rec.outcome === 'PURCHASED' ? ' · ✓ Compra'
+                          : rec.outcome === 'ABANDONED' ? ' · ✗ Abandono'
+                          : rec.outcome === 'STILL_BROWSING' ? ' · 👀 Explorando' : '';
+            title.textContent = `Sesión ${idx+1} de ${total}${dur}${cart}${outcome}`;
+
+            content.innerHTML = `<p style="color:#9ca3af;font-size:13px;padding:40px 0;text-align:center;">Cargando sesión ${idx+1}…</p>`;
+
+            if (!meta.presignedUrl) {
+                const status = rec.status || 'unknown';
+                const msgs = {
+                    RECORDING: 'Grabando… el cliente aún está en la página.',
+                    FINALIZING: 'Procesando grabación… espera unos segundos e intenta de nuevo.',
+                    ERROR: 'Error al procesar esta grabación.',
+                    unknown: `Estado: ${status}`,
+                };
                 content.innerHTML = `
-                    <i class="fa-solid fa-link-slash" style="font-size:36px;color:#6b7280;margin-bottom:16px;"></i>
-                    <p style="color:#e5e7eb;font-size:14px;font-weight:600;margin-bottom:6px;">Grabación no disponible</p>
-                    <p style="color:#9ca3af;font-size:12px;text-align:center;max-width:300px;">El enlace de esta grabación no es válido o expiró.</p>`;
+                    ${_adrayPlaylistNavHtml(idx, total)}
+                    <p style="color:#fbbf24;font-size:13px;padding:40px;text-align:center;">${msgs[status] || msgs.unknown}</p>`;
                 return;
             }
 
-            const safeUrl = url.replace(/"/g, '&quot;');
-            content.innerHTML = `
-                <i class="fa-solid fa-circle-play" style="font-size:40px;color:#7c3aed;margin-bottom:16px;"></i>
-                <p style="color:#e5e7eb;font-size:14px;font-weight:600;margin-bottom:6px;">Grabación en Microsoft Clarity</p>
-                <p style="color:#9ca3af;font-size:12px;margin-bottom:24px;text-align:center;max-width:320px;">Esta grabación está almacenada en Clarity y no puede reproducirse aquí.<br>Ábrela en una nueva pestaña.</p>
-                <a href="${safeUrl}" target="_blank" rel="noopener noreferrer"
-                   onclick="adrayCloseModal()"
-                   style="display:inline-flex;align-items:center;gap:8px;padding:10px 22px;background:#5c2d91;color:#fff;border-radius:8px;text-decoration:none;font-size:13px;font-weight:600;">
-                    <i class="fa-solid fa-arrow-up-right-from-square"></i> Abrir en Clarity
-                </a>`;
+            try {
+                const eventsResp = await fetch(meta.presignedUrl);
+                const raw = await eventsResp.json();
+                const events = Array.isArray(raw) ? raw : (raw?.events || []);
+                if (!events.length || !events.some((e) => e.type === 2)) {
+                    content.innerHTML = `
+                        ${_adrayPlaylistNavHtml(idx, total)}
+                        <p style="color:#f87171;font-size:13px;padding:40px;text-align:center;">Sesión sin eventos reproducibles.</p>`;
+                    return;
+                }
+                content.innerHTML = `${_adrayPlaylistNavHtml(idx, total)}<div id="adray-playlist-player-host" style="flex:1;overflow:hidden;background:#000;"></div>`;
+                content.style.cssText = 'flex:1;display:flex;flex-direction:column;background:#000;border-radius:0 0 12px 12px;';
+                const host = document.getElementById('adray-playlist-player-host');
+                const playerWidth  = Math.min(940, Math.floor(window.innerWidth  * 0.94));
+                const playerHeight = Math.min(520, Math.floor(window.innerHeight * 0.66));
+                new window.rrwebPlayer({
+                    target: host,
+                    props: {
+                        events,
+                        width: playerWidth,
+                        height: playerHeight,
+                        autoPlay: true,
+                        showController: true,
+                        skipInactive: true,
+                        speed: 1,
+                    },
+                });
+            } catch (err) {
+                console.error('[playlist render] error:', err);
+                content.innerHTML = `
+                    ${_adrayPlaylistNavHtml(idx, total)}
+                    <p style="color:#f87171;font-size:13px;padding:40px;text-align:center;">Error cargando la sesión ${idx+1}.</p>`;
+            }
         }
+
+        function _adrayPlaylistNavHtml(idx, total) {
+            const prevDisabled = idx === 0;
+            const nextDisabled = idx === total - 1;
+            return `
+                <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 14px;background:#0b1220;border-bottom:1px solid #1e293b;">
+                    <button type="button"
+                        onclick="adrayPlaylistGoto(${idx - 1})"
+                        ${prevDisabled ? 'disabled' : ''}
+                        style="background:${prevDisabled ? '#1f2937' : '#7c3aed'};color:${prevDisabled ? '#6b7280' : '#fff'};border:none;border-radius:6px;padding:6px 14px;font-size:12px;font-weight:600;cursor:${prevDisabled ? 'not-allowed' : 'pointer'};display:inline-flex;align-items:center;gap:6px;">
+                        <i class="fa-solid fa-chevron-left"></i> Sesión anterior
+                    </button>
+                    <span style="color:#e5e7eb;font-size:12px;font-weight:600;">
+                        Sesión ${idx + 1} de ${total}
+                    </span>
+                    <button type="button"
+                        onclick="adrayPlaylistGoto(${idx + 1})"
+                        ${nextDisabled ? 'disabled' : ''}
+                        style="background:${nextDisabled ? '#1f2937' : '#7c3aed'};color:${nextDisabled ? '#6b7280' : '#fff'};border:none;border-radius:6px;padding:6px 14px;font-size:12px;font-weight:600;cursor:${nextDisabled ? 'not-allowed' : 'pointer'};display:inline-flex;align-items:center;gap:6px;">
+                        Siguiente sesión <i class="fa-solid fa-chevron-right"></i>
+                    </button>
+                </div>`;
+        }
+
         // ─── End Recording Modal Player ───────────────────────────────────────────
 
         function rebuildJourneyProfileLookup(profiles = []) {
@@ -7058,16 +7419,52 @@
                     || '';
             };
 
-            const allWooProfiles = Array.isArray(wooProfilesState.profiles) ? wooProfilesState.profiles : [];
+            const wooProfilesFromEndpoint = Array.isArray(wooProfilesState.profiles) ? wooProfilesState.profiles : [];
+
+            // Augment with synthetic profiles derived from the current purchases so users
+            // always see a chip per customer even if the backend profiles endpoint is empty
+            // or its customerDisplayName fields are blank.
+            const profileByKey = new Map();
+            wooProfilesFromEndpoint.forEach((p) => {
+                const key = String(p.profileKey || p.customerId || '').trim();
+                if (key) profileByKey.set(key, p);
+            });
+            rankedJourneys.forEach(({ purchase }) => {
+                const customerId = normalizeCustomerId(purchase?.customerId);
+                if (!customerId) return;
+                const profileKey = `customer:${customerId}`;
+                if (profileByKey.has(profileKey) || profileByKey.has(customerId)) return;
+                const name = resolvePurchaseCustomerName(purchase);
+                const email = resolvePurchaseCustomerEmail(purchase);
+                profileByKey.set(profileKey, {
+                    profileKey,
+                    customerId,
+                    customerDisplayName: name || '',
+                    customerEmailPreview: email || '',
+                    orderCount: 1,
+                    totalRevenue: Number(purchase.revenue || 0),
+                    lastSeenAt: purchase.platformCreatedAt || purchase.createdAt || null,
+                    lastOrderAt: purchase.platformCreatedAt || purchase.createdAt || null,
+                    profileLabel: name || email || `Customer ${customerId}`,
+                    _syntheticFromPurchase: true,
+                });
+            });
+            const allWooProfiles = Array.from(profileByKey.values());
+
             const normalizedSearch = normalizeProfileName(attributionJourneyState.profileSearch || '');
             const visibleProfilesBase = allWooProfiles.filter((profile) => {
-                if (!hasReadableWooProfileIdentity(profile)) return false;
-                if (!normalizedSearch) return true;
                 const resolvedLabel = resolveProfileDisplayName(profile);
                 if (!resolvedLabel) return false;
+                if (!normalizedSearch) return true;
                 const label = normalizeProfileName(resolvedLabel || '');
                 const customerId = normalizeCustomerId(profile.customerId);
-                return label.includes(normalizedSearch) || customerId.includes(normalizedSearch);
+                const emailPreview = normalizeEmailPreview(profile.customerEmailPreview || profile.emailPreview || '');
+                const recentIdentity = customerId ? (recentCustomerIdentityById.get(customerId) || {}) : {};
+                const recentEmail = normalizeEmailPreview(recentIdentity.email || '');
+                return label.includes(normalizedSearch)
+                    || customerId.includes(normalizedSearch)
+                    || (emailPreview && emailPreview.includes(normalizedSearch))
+                    || (recentEmail && recentEmail.includes(normalizedSearch));
             });
 
             const visibleProfiles = visibleProfilesBase.slice().sort((a, b) => {
@@ -7850,7 +8247,16 @@
                 <p><strong>GA4 Session Source:</strong> ${session.ga4SessionSource || '-'}</p>
                 <p><strong>Referrer:</strong> ${session.referrer || '-'}</p>
                 <p><strong>IP Hash:</strong> ${session.ipHash ? `${String(session.ipHash).slice(0, 10)}...` : '-'}</p>
-                ${(typeof session.clarityPlaybackUrl === 'string' && session.clarityPlaybackUrl.startsWith('http')) ? `
+                ${session.rrwebRecordingId ? `
+                <div class="mt-3">
+                    <button type="button"
+                       class="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium"
+                       style="background:#7c3aed;color:#fff;border:none;cursor:pointer;"
+                       onclick="adrayOpenPlayer('${escapeInlineSingleQuotedJs(session.rrwebRecordingId)}','${escapeInlineSingleQuotedJs(session.sessionId || '')}')">
+                        ▶ Ver grabación de sesión
+                    </button>
+                </div>` :
+                (typeof session.clarityPlaybackUrl === 'string' && session.clarityPlaybackUrl.startsWith('http')) ? `
                 <div class="mt-3">
                     <button type="button"
                        class="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium"
@@ -7858,7 +8264,6 @@
                        onclick="adrayOpenClarityModal('${escapeInlineSingleQuotedJs(session.clarityPlaybackUrl)}')">
                         ▶ Ver grabación de sesión
                     </button>
-                    <p class="text-xs text-gray-400 mt-1">Microsoft Clarity · ID: ${session.claritySessionId || '-'}</p>
                 </div>` : `
                 <div class="mt-3">
                     <span class="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs text-gray-400"
@@ -9511,6 +9916,10 @@ function renderRecentPurchases(purchases) {
             }).join('');
         }
 
+        let _adrayAllRecordings = [];
+        let _adrayRecordingsVisibleCount = 8;
+        const _ADRAY_RECORDINGS_PAGE_SIZE = 8;
+
         async function loadRecordingsList() {
             const container = document.getElementById('recordings-list');
             if (!container) return;
@@ -9519,40 +9928,200 @@ function renderRecentPurchases(purchases) {
                 return;
             }
             container.innerHTML = '<p class="text-sm text-gray-400 col-span-full">Cargando...</p>';
+            _adrayRecordingsVisibleCount = _ADRAY_RECORDINGS_PAGE_SIZE;
             try {
-                const res = await fetch(`/api/recording/${encodeURIComponent(currentShopId)}/list`);
-                const data = await res.json();
-                if (!data.ok || !Array.isArray(data.recordings) || data.recordings.length === 0) {
-                    container.innerHTML = '<p class="text-sm text-gray-400 col-span-full">No hay grabaciones disponibles aún.</p>';
+                const res = await fetch(`/api/recording/${encodeURIComponent(currentShopId)}/list?limit=100`);
+                const data = await res.json().catch(() => ({ ok: false }));
+                if (!res.ok || !data.ok) {
+                    _adrayAllRecordings = [];
+                    container.innerHTML = `<p class="text-sm text-red-400 col-span-full">No se pudieron cargar las grabaciones (${res.status}). ${data?.error ? `<br><span class="text-xs text-gray-500">${escapeHtml(String(data.error))}</span>` : ''}</p>`;
+                    const countEl = document.getElementById('rec-filter-count');
+                    if (countEl) countEl.textContent = '';
                     return;
                 }
-                container.innerHTML = data.recordings.map((r) => {
-                    const dur = r.durationMs ? `${Math.round(r.durationMs / 1000)}s` : '-';
-                    const date = r.createdAt ? formatDateTimeMx(new Date(r.createdAt)) : '-';
-                    const signals = r.behavioralSignals;
-                    const risk = signals?.riskLevel || null;
-                    const riskColor = risk === 'high' ? '#f87171' : risk === 'medium' ? '#fb923c' : '#4ade80';
-                    const riskLabel = risk ? risk.charAt(0).toUpperCase() + risk.slice(1) : null;
-                    return `
-                    <div style="background:#111827;border:1px solid #1f2937;border-radius:10px;padding:14px;display:flex;flex-direction:column;gap:10px;">
-                        <div style="display:flex;align-items:center;justify-content:space-between;gap:6px;">
-                            <span style="color:#9ca3af;font-size:11px;">${date}</span>
-                            ${riskLabel ? `<span style="font-size:10px;font-weight:600;padding:2px 7px;border-radius:9px;background:${riskColor}22;color:${riskColor};">${riskLabel} risk</span>` : ''}
-                        </div>
-                        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-                            <span style="color:#6b7280;font-size:11px;"><i class="fa-solid fa-clock" style="margin-right:3px;"></i>${dur}</span>
-                            ${signals?.pattern ? `<span style="color:#a78bfa;font-size:11px;">${signals.pattern.replace(/_/g,' ')}</span>` : ''}
-                        </div>
-                        <button type="button"
-                            style="background:#7c3aed;color:#fff;border:none;border-radius:7px;padding:7px 12px;font-size:12px;font-weight:600;cursor:pointer;display:inline-flex;align-items:center;gap:6px;width:100%;justify-content:center;"
-                            onclick="adrayOpenPlayer('${escapeInlineSingleQuotedJs(r.recordingId)}','${escapeInlineSingleQuotedJs(r.sessionId || '')}')">
-                            <i class="fa-solid fa-circle-play"></i> Ver grabación
-                        </button>
-                    </div>`;
-                }).join('');
+                if (!Array.isArray(data.recordings) || data.recordings.length === 0) {
+                    _adrayAllRecordings = [];
+                    container.innerHTML = '<p class="text-sm text-gray-400 col-span-full">No hay grabaciones disponibles aún.</p>';
+                    const countEl = document.getElementById('rec-filter-count');
+                    if (countEl) countEl.textContent = '';
+                    return;
+                }
+                _adrayAllRecordings = data.recordings;
+                renderRecordingsList();
             } catch (e) {
-                container.innerHTML = `<p class="text-sm text-red-400 col-span-full">Error al cargar grabaciones: ${e.message}</p>`;
+                container.innerHTML = `<p class="text-sm text-red-400 col-span-full">Error al cargar grabaciones: ${escapeHtml(e.message || String(e))}</p>`;
             }
+        }
+
+        function adrayRecordingsShowMore() {
+            _adrayRecordingsVisibleCount += _ADRAY_RECORDINGS_PAGE_SIZE;
+            renderRecordingsList();
+        }
+
+        /**
+         * Collapse multiple recordings from the same identified user into a single
+         * "stitched" entry. Anonymous sessions stay as individual cards because
+         * their userKey is shared across browsers.
+         *
+         * Group object keeps all original fields of the most recent recording +
+         * adds: groupedIds (array), groupSize, totalDurationMs, rangeStart/End,
+         * aggregated outcome (PURCHASED wins).
+         */
+        function collapseRecordingsByUser(recordings) {
+            if (!Array.isArray(recordings) || recordings.length === 0) return recordings || [];
+            const groups = new Map();
+            const passthrough = [];
+            for (const r of recordings) {
+                const key = r.userKey && r.userKey !== 'anonymous' ? r.userKey : null;
+                if (!key) { passthrough.push(r); continue; }
+                if (!groups.has(key)) groups.set(key, []);
+                groups.get(key).push(r);
+            }
+
+            const merged = [];
+            for (const [, list] of groups) {
+                if (list.length === 1) { merged.push(list[0]); continue; }
+                // Sort most recent first
+                list.sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+                const head = list[0];
+                const totalDuration = list.reduce((s, x) => s + (x.durationMs || 0), 0);
+                const anyPurchased = list.some((x) => x.outcome === 'PURCHASED');
+                const anyAbandoned = list.some((x) => x.outcome === 'ABANDONED');
+                const aggOutcome = anyPurchased ? 'PURCHASED' : (anyAbandoned ? 'ABANDONED' : head.outcome || null);
+                const dates = list.map((x) => new Date(x.createdAt || x.triggerAt || 0).getTime()).filter(Boolean).sort((a, b) => a - b);
+                merged.push({
+                    ...head,
+                    durationMs: totalDuration,
+                    outcome: aggOutcome,
+                    groupedIds: list.map((x) => x.recordingId),
+                    groupSize: list.length,
+                    rangeStart: dates[0] ? new Date(dates[0]).toISOString() : null,
+                    rangeEnd:   dates[dates.length - 1] ? new Date(dates[dates.length - 1]).toISOString() : null,
+                });
+            }
+            // Merge groups with passthrough and sort by most recent createdAt
+            return [...merged, ...passthrough].sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+        }
+
+        function renderRecordingsList() {
+            const container = document.getElementById('recordings-list');
+            if (!container) return;
+            const outcome = document.getElementById('rec-filter-outcome')?.value || '';
+            const device  = document.getElementById('rec-filter-device')?.value || '';
+            const dur     = document.getElementById('rec-filter-duration')?.value || '';
+            const risk    = document.getElementById('rec-filter-risk')?.value || '';
+
+            const filteredRaw = (_adrayAllRecordings || []).filter((r) => {
+                if (outcome && (r.outcome || 'STILL_BROWSING') !== outcome) return false;
+                if (device && (r.deviceType || '').toLowerCase() !== device) return false;
+                if (dur) {
+                    const s = Math.round((r.durationMs || 0) / 1000);
+                    if (dur === 'short'  && s >= 30)  return false;
+                    if (dur === 'medium' && (s < 30 || s > 120)) return false;
+                    if (dur === 'long'   && s <= 120) return false;
+                }
+                if (risk) {
+                    const rl = (r.behavioralSignals?.riskLevel || '').toLowerCase();
+                    if (rl !== risk) return false;
+                }
+                return true;
+            });
+
+            // ── Group by userKey (Task: stitch recordings) ─────────────────
+            // One card per identified user. Anonymous sessions (userKey === 'anonymous')
+            // stay individual because their key is shared across different browsers.
+            const filtered = collapseRecordingsByUser(filteredRaw);
+
+            const countEl = document.getElementById('rec-filter-count');
+
+            if (filtered.length === 0) {
+                if (countEl) countEl.textContent = `0 de ${_adrayAllRecordings.length}`;
+                container.innerHTML = '<p class="text-sm text-gray-400 col-span-full">Ninguna grabación coincide con los filtros.</p>';
+                return;
+            }
+
+            const totalFiltered = filtered.length;
+            const visibleCount = Math.min(_adrayRecordingsVisibleCount, totalFiltered);
+            const visible = filtered.slice(0, visibleCount);
+            const hasMore = totalFiltered > visibleCount;
+
+            const cardsHtml = visible.map((r) => {
+                const isGroup = Array.isArray(r.groupedIds) && r.groupedIds.length > 1;
+                const durS = r.durationMs ? `${Math.round(r.durationMs / 1000)}s` : '-';
+                const date = isGroup && r.rangeStart && r.rangeEnd && r.rangeStart !== r.rangeEnd
+                    ? `${formatDateTimeMx(new Date(r.rangeStart))} → ${formatDateTimeMx(new Date(r.rangeEnd))}`
+                    : (r.createdAt ? formatDateTimeMx(new Date(r.createdAt)) : '-');
+                const signals = r.behavioralSignals;
+                const rLevel = signals?.riskLevel || null;
+                const rColor = rLevel === 'high' ? '#f87171' : rLevel === 'medium' ? '#fb923c' : '#4ade80';
+                const rLabel = rLevel ? rLevel.charAt(0).toUpperCase() + rLevel.slice(1) : null;
+                const outcomeLabel = r.outcome === 'PURCHASED' ? '💰 Compra' :
+                                     r.outcome === 'ABANDONED' ? '🚪 Abandono' :
+                                     r.outcome === 'STILL_BROWSING' ? '👀 Explorando' : null;
+                const outcomeColor = r.outcome === 'PURCHASED' ? '#4ade80' :
+                                     r.outcome === 'ABANDONED' ? '#f87171' : '#9ca3af';
+                const deviceIcon = r.deviceType === 'mobile' ? '📱' :
+                                   r.deviceType === 'tablet' ? '📱' :
+                                   r.deviceType === 'desktop' ? '🖥' : '';
+
+                const customerDisplay = r.customerName
+                    || (r.customerId ? `Cliente #${String(r.customerId).slice(-6)}` : null)
+                    || r.customerEmailMasked
+                    || 'Anónimo';
+                const sessionBadge = isGroup
+                    ? `<span style="font-size:10px;color:#c4b5fd;background:#312e81;padding:2px 6px;border-radius:6px;" data-tooltip="${r.groupSize} grabaciones concatenadas de este usuario">${r.groupSize} grabaciones</span>`
+                    : (r.sessionCount30d && r.sessionCount30d > 1)
+                        ? `<span style="font-size:10px;color:#c4b5fd;background:#312e81;padding:2px 6px;border-radius:6px;" data-tooltip="${r.sessionCount30d} sesiones grabadas de este usuario en los últimos 30 días">${r.sessionCount30d} sesiones</span>`
+                        : '';
+                const stitchedHint = isGroup
+                    ? `<span style="font-size:10px;color:#9ca3af;background:#0f172a;padding:2px 6px;border-radius:6px;display:inline-flex;align-items:center;gap:4px;"><i class="fa-solid fa-link"></i> Timeline combinado</span>`
+                    : '';
+
+                const onClickPayload = isGroup
+                    ? `adrayOpenStitchedPlayer(${JSON.stringify(r.groupedIds)})`
+                    : `adrayOpenPlayer('${escapeInlineSingleQuotedJs(r.recordingId)}','${escapeInlineSingleQuotedJs(r.sessionId || '')}')`;
+                const btnLabel = isGroup ? `Ver ${r.groupSize} grabaciones` : 'Ver grabación';
+
+                return `
+                <div style="background:#111827;border:1px solid #1f2937;border-radius:10px;padding:14px;display:flex;flex-direction:column;gap:10px;">
+                    <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
+                        <span style="color:#9ca3af;font-size:11px;display:inline-flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                            ${date}
+                            <span style="color:#6b7280;"><i class="fa-solid fa-clock" style="margin-right:3px;"></i>${durS}</span>
+                            ${deviceIcon ? `<span style="color:#6b7280;">${deviceIcon}</span>` : ''}
+                        </span>
+                        ${rLabel ? `<span style="font-size:10px;font-weight:600;padding:2px 7px;border-radius:9px;background:${rColor}22;color:${rColor};">${rLabel}</span>` : ''}
+                    </div>
+                    <div style="display:flex;align-items:center;gap:8px;font-size:12px;color:#e5e7eb;min-height:18px;flex-wrap:wrap;">
+                        <i class="fa-solid fa-user" style="color:#6b7280;font-size:11px;"></i>
+                        <span style="font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0;" title="${escapeHtmlAttr(customerDisplay)}">${escapeHtml(customerDisplay)}</span>
+                        ${sessionBadge}
+                    </div>
+                    ${(outcomeLabel || signals?.pattern || stitchedHint) ? `
+                    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:11px;">
+                        ${outcomeLabel ? `<span style="color:${outcomeColor};font-weight:600;">${outcomeLabel}</span>` : ''}
+                        ${signals?.pattern ? `<span style="color:#a78bfa;">${signals.pattern.replace(/_/g,' ')}</span>` : ''}
+                        ${stitchedHint}
+                    </div>` : ''}
+                    <button type="button"
+                        style="background:#7c3aed;color:#fff;border:none;border-radius:7px;padding:7px 12px;font-size:12px;font-weight:600;cursor:pointer;display:inline-flex;align-items:center;gap:6px;width:100%;justify-content:center;"
+                        onclick="${onClickPayload}">
+                        <i class="fa-solid fa-circle-play"></i> ${btnLabel}
+                    </button>
+                </div>`;
+            }).join('');
+
+            const showMoreHtml = hasMore ? `
+                <div class="col-span-full flex justify-center mt-2">
+                    <button type="button" onclick="adrayRecordingsShowMore()"
+                        style="background:#1f2937;color:#e5e7eb;border:1px solid #374151;border-radius:8px;padding:8px 20px;font-size:12px;font-weight:600;cursor:pointer;">
+                        Ver más (${totalFiltered - visibleCount} más)
+                    </button>
+                </div>` : '';
+
+            container.innerHTML = cardsHtml + showMoreHtml;
+
+            if (countEl) countEl.textContent = `${visibleCount} de ${totalFiltered}${_adrayAllRecordings.length !== totalFiltered ? ` (${_adrayAllRecordings.length} total)` : ''}`;
         }
 
         function renderAttributionChart(attributionData, paidMedia = {}) {

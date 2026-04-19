@@ -10,11 +10,14 @@ const { checkToolScopes } = require('../scopes');
 const TOOL_NAME = 'get_shopify_products';
 
 function register(server, mcpUserId) {
-  server.tool(
+  server.registerTool(
     TOOL_NAME,
-    'Retrieves top products by units sold or revenue from the connected Shopify store for a given date range.',
-    getShopifyProductsInput,
-    { readOnlyHint: true },
+    {
+      description:
+        'Retrieves top products by units sold or revenue from the connected Shopify store for a given date range.',
+      inputSchema: getShopifyProductsInput,
+      annotations: { readOnlyHint: true },
+    },
     async (params, extra) => {
       try {
         const userId = resolveToolUserId(mcpUserId, extra);
