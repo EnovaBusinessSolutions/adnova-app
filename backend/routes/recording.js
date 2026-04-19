@@ -324,7 +324,7 @@ router.get('/:account_id/list', async (req, res) => {
           recordingId: true, sessionId: true, status: true,
           durationMs: true, triggerAt: true, createdAt: true,
           behavioralSignals: true, outcome: true, cartValue: true,
-          deviceType: true, r2Key: true,
+          deviceType: true, r2Key: true, userKey: true, orderId: true,
         },
         orderBy: { createdAt: 'desc' },
         take,
@@ -337,11 +337,78 @@ router.get('/:account_id/list', async (req, res) => {
           recordingId: true, sessionId: true, status: true,
           durationMs: true, triggerAt: true, createdAt: true,
           behavioralSignals: true, outcome: true, cartValue: true,
-          r2Key: true,
+          r2Key: true, userKey: true, orderId: true,
         },
         orderBy: { createdAt: 'desc' },
         take,
       });
+    }
+
+    // ── Enrich with customer context (Task 6) ───────────────────────────────
+    // For each recording, attach: customerName, customerEmailMasked, customerId,
+    // sessionCount (distinct recordings for this userKey in last 30d).
+    try {
+      const userKeys = Array.from(new Set(recs.map((r) => r.userKey).filter((k) => k && k !== 'anonymous')));
+      const orderIds = Array.from(new Set(recs.map((r) => r.orderId).filter(Boolean)));
+
+      // Pull orders matching either the explicit orderId or any of the userKeys,
+      // most recent first so the freshest customer name wins per userKey.
+      const orFilters = [];
+      if (userKeys.length) orFilters.push({ userKey: { in: userKeys } });
+      if (orderIds.length) orFilters.push({ orderId: { in: orderIds } });
+      const relatedOrders = orFilters.length
+        ? await prisma.order.findMany({
+            where: { accountId: account_id, OR: orFilters },
+            select: {
+              orderId: true, userKey: true, customerId: true, emailHash: true,
+              attributionSnapshot: true, platformCreatedAt: true,
+            },
+            orderBy: { platformCreatedAt: 'desc' },
+            take: 500,
+          }).catch(() => [])
+        : [];
+
+      const byOrderId = new Map();
+      const byUserKey = new Map();
+      for (const o of relatedOrders) {
+        const snap = (o.attributionSnapshot && typeof o.attributionSnapshot === 'object') ? o.attributionSnapshot : {};
+        const name = snap.customer_name
+          || [snap.customer_first_name, snap.customer_last_name].filter(Boolean).join(' ').trim()
+          || null;
+        const info = {
+          customerName: name || null,
+          customerId: o.customerId || null,
+          emailMasked: o.emailHash ? `hash:${String(o.emailHash).slice(0, 6)}…` : null,
+        };
+        if (o.orderId) byOrderId.set(o.orderId, info);
+        if (o.userKey && !byUserKey.has(o.userKey)) byUserKey.set(o.userKey, info);
+      }
+
+      // Session counts: count distinct recordings per userKey in last 30d
+      const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+      const sessionCountMap = new Map();
+      if (userKeys.length) {
+        const counts = await prisma.sessionRecording.groupBy({
+          by: ['userKey'],
+          where: { accountId: account_id, userKey: { in: userKeys }, createdAt: { gte: thirtyDaysAgo } },
+          _count: { sessionId: true },
+        }).catch(() => []);
+        for (const c of counts) sessionCountMap.set(c.userKey, c._count.sessionId);
+      }
+
+      recs = recs.map((r) => {
+        const info = (r.orderId && byOrderId.get(r.orderId)) || (r.userKey && byUserKey.get(r.userKey)) || null;
+        return {
+          ...r,
+          customerName: info?.customerName || null,
+          customerId: info?.customerId || null,
+          customerEmailMasked: info?.emailMasked || null,
+          sessionCount30d: r.userKey && r.userKey !== 'anonymous' ? (sessionCountMap.get(r.userKey) || 1) : 1,
+        };
+      });
+    } catch (enrichErr) {
+      // Never fail the list endpoint just because enrichment failed
+      console.error('[recording/list] enrichment failed:', enrichErr.message);
     }
 
     return res.json({ ok: true, recordings: recs });
@@ -425,7 +492,8 @@ router.get('/:account_id/:recording_id', async (req, res) => {
 router.post('/:account_id/:recording_id/insights', async (req, res) => {
   try {
     const { account_id, recording_id } = req.params;
-    const cacheKey = `adray:rec:insight:${recording_id}`;
+    // v2 schema: includes next_best_action + customer_tier + retention_insight
+    const cacheKey = `adray:rec:insight:v2:${recording_id}`;
 
     if (redisClient) {
       const cached = await redisClient.get(cacheKey).catch(() => null);
@@ -441,6 +509,7 @@ router.post('/:account_id/:recording_id/insights', async (req, res) => {
         select: {
           accountId: true, cartValue: true, durationMs: true,
           behavioralSignals: true, deviceType: true, attributionSnapshot: true,
+          outcome: true, orderId: true, userKey: true,
         },
       });
     } catch (selectErr) {
@@ -451,6 +520,7 @@ router.post('/:account_id/:recording_id/insights', async (req, res) => {
         select: {
           accountId: true, cartValue: true, durationMs: true,
           behavioralSignals: true, attributionSnapshot: true,
+          outcome: true, orderId: true, userKey: true,
         },
       });
     }
@@ -459,10 +529,54 @@ router.post('/:account_id/:recording_id/insights', async (req, res) => {
       return res.status(404).json({ ok: false, error: 'Recording not found' });
     }
 
-    const { generateNarrative } = require('../services/recordingNarrativeService');
+    const { generateNarrative, buildCustomerHistory, buildOrderContext } = require('../services/recordingNarrativeService');
     const signals = rec.behavioralSignals || {};
     const attrSnap = rec.attributionSnapshot;
-    const attributedChannel = (attrSnap && typeof attrSnap === 'object') ? (attrSnap.channel || null) : null;
+    const attributedChannel = (attrSnap && typeof attrSnap === 'object') ? (attrSnap.channel || attrSnap.attributedChannel || null) : null;
+
+    // For PURCHASED recordings: fetch the current Order + the customer's prior orders
+    // so the LLM can recommend a specific re-engagement action.
+    let orderContext = null;
+    let customerHistory = null;
+    if (rec.outcome === 'PURCHASED') {
+      try {
+        // Current order: prefer orderId, fallback to checkoutToken
+        let currentOrder = null;
+        if (rec.orderId) {
+          currentOrder = await prisma.order.findUnique({ where: { orderId: rec.orderId } }).catch(() => null);
+        }
+        if (!currentOrder && rec.userKey && rec.userKey !== 'anonymous') {
+          // Latest order for this userKey as fallback
+          currentOrder = await prisma.order.findFirst({
+            where: { accountId: account_id, userKey: rec.userKey },
+            orderBy: { platformCreatedAt: 'desc' },
+          }).catch(() => null);
+        }
+        orderContext = buildOrderContext(currentOrder);
+
+        // Prior orders: same userKey / customerId / emailHash, excluding the current one
+        if (rec.userKey && rec.userKey !== 'anonymous') {
+          const orFilters = [{ userKey: rec.userKey }];
+          if (currentOrder?.customerId) orFilters.push({ customerId: currentOrder.customerId });
+          if (currentOrder?.emailHash)  orFilters.push({ emailHash: currentOrder.emailHash });
+          const priorOrders = await prisma.order.findMany({
+            where: {
+              accountId: account_id,
+              OR: orFilters,
+              ...(currentOrder?.orderId ? { NOT: { orderId: currentOrder.orderId } } : {}),
+            },
+            select: { revenue: true, platformCreatedAt: true, createdAt: true },
+            orderBy: { platformCreatedAt: 'desc' },
+            take: 50,
+          }).catch(() => []);
+          customerHistory = buildCustomerHistory(priorOrders, currentOrder?.platformCreatedAt);
+        } else {
+          customerHistory = buildCustomerHistory([], currentOrder?.platformCreatedAt);
+        }
+      } catch (ctxErr) {
+        console.error('[recording/insights] purchase context build failed:', ctxErr.message);
+      }
+    }
 
     let narrative = null;
     try {
@@ -471,6 +585,9 @@ router.post('/:account_id/:recording_id/insights', async (req, res) => {
         cartValue: rec.cartValue,
         attributedChannel,
         sessionDurationMs: rec.durationMs,
+        outcome: rec.outcome,
+        orderContext,
+        customerHistory,
       });
     } catch (genErr) {
       console.error('[recording/insights] generateNarrative threw:', genErr.message);
@@ -478,15 +595,31 @@ router.post('/:account_id/:recording_id/insights', async (req, res) => {
 
     if (!narrative) {
       // Ultimate fallback so the UI never sees a 500/503 for this endpoint
-      narrative = {
-        archetype: 'abandonment_risk',
-        confidence_score: 0.3,
-        friction_signals: [signals.abandonmentPattern || 'unknown'],
-        narrative: 'No pudimos generar una recomendación detallada en este momento. Revisa la grabación para contexto manual.',
-        recommended_action: signals.riskScore >= 60
-          ? 'Envía un email de recuperación inmediato con el producto del carrito visible.'
-          : 'Monitorea si regresa en las próximas 24h antes de tomar acción.',
-      };
+      if (rec.outcome === 'PURCHASED') {
+        narrative = {
+          archetype: 'new_convert',
+          confidence_score: 0.3,
+          friction_signals: [],
+          narrative: 'No pudimos generar una recomendación detallada. Revisa la grabación y los datos del pedido para contexto.',
+          recommended_action: 'Envía un welcome flow en 3-5 días con producto complementario.',
+          next_best_action: { type: 'email', timing_days: 3, content: 'Welcome + cross-sell.', priority: 'medium' },
+          customer_tier: null,
+          retention_insight: null,
+        };
+      } else {
+        narrative = {
+          archetype: 'abandonment_risk',
+          confidence_score: 0.3,
+          friction_signals: [signals.abandonmentPattern || 'unknown'],
+          narrative: 'No pudimos generar una recomendación detallada en este momento. Revisa la grabación para contexto manual.',
+          recommended_action: signals.riskScore >= 60
+            ? 'Envía un email de recuperación inmediato con el producto del carrito visible.'
+            : 'Monitorea si regresa en las próximas 24h antes de tomar acción.',
+          next_best_action: { type: 'email', timing_days: 1, content: 'Email de recuperación con el producto del carrito.', priority: signals.riskScore >= 60 ? 'high' : 'medium' },
+          customer_tier: null,
+          retention_insight: null,
+        };
+      }
     }
 
     if (redisClient) {

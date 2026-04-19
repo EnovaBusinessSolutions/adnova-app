@@ -5858,7 +5858,7 @@
                         <span class="journey-chip" data-tooltip="Initial landing page captured for this stitched journey."><i class="fa-solid fa-door-open"></i>${escapeHtml(journeyData.summary?.landing || 'No landing captured')}</span>
                         <span class="journey-chip" data-tooltip="How many stitched sessions currently support this purchase path."><i class="fa-solid fa-layer-group"></i>${sessionCount} sessions</span>
                     </div>
-                    ${renderBehavioralSignalsBadge(purchase.behavioralSignals, purchase.recordingStatus, purchase.recordingDurationMs)}
+                    ${renderBehavioralSignalsBadge(purchase.behavioralSignals, purchase.recordingStatus, purchase.recordingDurationMs, { purchaseMode: true })}
                     ${purchase.rrwebRecordingId ? `
                     <div class="insights-block" data-recording-id="${escapeHtmlAttr(purchase.rrwebRecordingId)}" style="background:#0f172a;border:1px solid #1e293b;border-radius:10px;padding:12px;">
                         <div class="flex items-center justify-between gap-2 mb-2">
@@ -5911,8 +5911,9 @@
             return `<div class="tip-title">${title}</div>${rowsHtml}${recHtml}`;
         }
 
-        function renderBehavioralSignalsBadge(signals, recordingStatus, durationMs) {
+        function renderBehavioralSignalsBadge(signals, recordingStatus, durationMs, opts = {}) {
             if (!signals || typeof signals !== 'object') return '';
+            const purchaseMode = !!opts.purchaseMode;
 
             const riskScore       = signals.riskScore ?? null;
             const rageClicks      = signals.rageClickCount || 0;
@@ -5931,12 +5932,15 @@
             const scrollBackCount = signals.scrollBackCount || 0;
             const mouseLeaveCount = signals.mouseLeaveCount || 0;
 
+            // Color scale. In purchase mode, high "risk" means high friction that
+            // was still overcome — that's still useful info, just framed differently.
             const riskColor = riskScore === null ? '#9ca3af'
                 : riskScore >= 70 ? '#f87171'
                 : riskScore >= 40 ? '#fbbf24'
                 : '#4ade80';
 
-            const patternMeta = {
+            // Pattern meta: two framings depending on whether the session ended in a purchase.
+            const patternMetaAbandon = {
                 shipping_shock:        { label: '🚢 Shipping shock',        tip: 'El usuario probablemente llegó a checkout y abandonó al ver el costo de envío.',            rec: 'Considera ofrecer envío gratis en órdenes de este valor o mostrar el costo antes del checkout.' },
                 form_friction:         { label: '📝 Form friction',         tip: 'El usuario llenó parcialmente formularios y los abandonó varias veces.',                    rec: 'Simplifica el form de checkout: usa autofill, reduce campos requeridos y muestra progreso.' },
                 rage_exit:             { label: '😤 Rage exit',            tip: 'Múltiples rage-clicks detectados seguidos de abandono — posible frustración con la UI.',     rec: 'Revisa qué elementos estaba clickeando; puede ser un botón que no responde o un error visual.' },
@@ -5944,6 +5948,15 @@
                 high_value_hesitation: { label: '💭 High-value hesitation', tip: 'Carrito de alto valor con mucho tiempo de hesitación — quiere comprar pero duda.',         rec: 'Un email de seguimiento con social proof o garantía de devolución puede cerrar esta venta.' },
                 exit_intent:           { label: '🚪 Exit intent',           tip: 'Movimientos repetidos del cursor hacia la barra del navegador antes de abandonar.',          rec: 'Un popup de exit-intent con oferta o recordatorio puede recuperar esta sesión.' },
             };
+            const patternMetaPurchase = {
+                shipping_shock:        { label: '🚢 Shipping shock superado', tip: 'Dudó al ver el costo de envío pero igual completó la compra — sensibilidad al envío confirmada.',                          rec: 'Ofrece envío gratis en la próxima compra con mínimo razonable — es probable que suba AOV.' },
+                form_friction:         { label: '📝 Form friction superada',   tip: 'Tuvo dificultad llenando el formulario pero persistió hasta completar el pedido.',                                          rec: 'Pre-llena datos en la próxima visita (1-click checkout) para reducir fricción.' },
+                rage_exit:             { label: '😤 Fricción superada',        tip: 'Mostró frustración con la UI pero igual compró — UI rescatable pero merece fix para que la recompra sea fluida.',         rec: 'Resuelve el elemento problemático antes de que regrese; envía una encuesta NPS ligera.' },
+                passive_browse:        { label: '👀 Browse → compra',          tip: 'Exploró sin intención fuerte pero terminó comprando — impulso detonado probablemente por trigger externo o urgencia.',    rec: 'Este perfil responde bien a cross-sell post-compra con FOMO (nuevos productos, ediciones limitadas).' },
+                high_value_hesitation: { label: '💭 Hesitation superada',       tip: 'Ticket alto con fuerte hesitación pero cerró la venta — cliente con alto valor que necesita reassurance para recomprar.', rec: 'Activa un follow-up personalizado con testimonios y garantía para apuntalar la segunda compra.' },
+                exit_intent:           { label: '🚪 Exit intent superado',     tip: 'Casi sale pero regresó y compró — gatillo de exit-intent funcionó o el producto ganó en el último momento.',              rec: 'Refuerza la decisión con un onboarding de producto claro para evitar devoluciones y subir LTV.' },
+            };
+            const patternMeta = purchaseMode ? patternMetaPurchase : patternMetaAbandon;
             const pm = patternMeta[pattern] || null;
             const patternLabel = pm?.label || null;
 
@@ -5954,43 +5967,72 @@
 
             // ── Insights chip (full session summary) ──
             if (riskScore !== null) {
-                const riskLabel = riskScore >= 70 ? 'Alto — recuperable con acción inmediata'
-                    : riskScore >= 40 ? 'Medio — requiere seguimiento'
-                    : 'Bajo — comprador comprometido';
-                const deviceType      = signals.deviceType || null;
-                const insightRows = [
-                    ['🎯', 'Risk score', `${riskScore} / 100`],
-                    ['📊', 'Nivel', riskLabel],
-                ];
-                if (pattern) insightRows.push(['🔍', 'Patrón', pm?.label || pattern]);
-                if (archetype && archetype !== pattern) insightRows.push(['🧠', 'Arquetipo', archetype.replace(/_/g, ' ')]);
-                if (deviceType) insightRows.push(['📱', 'Dispositivo', deviceType]);
-                if (dur) insightRows.push(['⏱️', 'Duración', dur]);
-                if (rageClicks > 0) insightRows.push(['👊', 'Rage clicks', String(rageClicks)]);
-                if (exitIntents > 0) insightRows.push(['🚪', 'Exit intents', String(exitIntents)]);
-                if (formAbandon > 0) insightRows.push(['📝', 'Form abandons', String(formAbandon)]);
-                if (hesitationMs > 2000) insightRows.push(['⏳', 'Hesitación', fmtMs(hesitationMs)]);
-                if (scrollPct != null) insightRows.push(['📜', 'Scroll depth', `${Math.round(scrollPct)}%`]);
-                if (scrollBackCount > 0) insightRows.push(['↕️', 'Scroll backs', String(scrollBackCount)]);
-                if (cartViewCount > 0) insightRows.push(['🛒', 'Cart views', String(cartViewCount)]);
-                insightRows.push(['✅', 'Llegó a checkout', checkoutReach ? 'Sí' : 'No']);
-                if (mouseLeaveCount > 0) insightRows.push(['🖱️', 'Cursor fuera', `${mouseLeaveCount}×`]);
-                if (narrative) insightRows.push(['💬', 'Narrativa', narrative]);
-                const insightRec = narrative
-                    ? null
-                    : riskScore >= 40
-                        ? { text: pm?.rec || 'Clic en "Key recommendation" en la tarjeta para generar una recomendación con IA.' }
-                        : { text: 'Baja probabilidad de abandono. Monitorea si vuelve antes de tomar acción.' };
-                chips.push(`<span style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:12px;font-size:11px;font-weight:600;background:${riskColor}22;color:${riskColor};border:1px solid ${riskColor}44;cursor:default;" data-tooltip-html="${escapeHtml(buildRichTooltipHtml('Insights', insightRows, insightRec))}"><i class="fa-solid fa-gauge-high" style="font-size:10px;"></i> Insights · Risk ${riskScore}/100</span>`);
+                const deviceType = signals.deviceType || null;
+                const insightRows = [];
+
+                if (purchaseMode) {
+                    // Purchase mode: frame metrics as purchase context, not abandonment risk.
+                    const frictionLabel = riskScore >= 70 ? 'Alta — compró a pesar de la fricción, oportunidad para limpiar UX'
+                        : riskScore >= 40 ? 'Media — señales de duda resueltas durante la compra'
+                        : 'Baja — experiencia fluida, cliente comprometido';
+                    insightRows.push(['🎯', 'Fricción durante compra', `${riskScore} / 100`]);
+                    insightRows.push(['📊', 'Nivel', frictionLabel]);
+                    if (pattern) insightRows.push(['🔍', 'Patrón', pm?.label || pattern]);
+                    if (archetype && archetype !== pattern) insightRows.push(['🧠', 'Arquetipo', archetype.replace(/_/g, ' ')]);
+                    if (deviceType) insightRows.push(['📱', 'Dispositivo', deviceType]);
+                    if (dur) insightRows.push(['⏱️', 'Duración', dur]);
+                    if (rageClicks > 0) insightRows.push(['👊', 'Rage clicks superados', String(rageClicks)]);
+                    if (exitIntents > 0) insightRows.push(['🚪', 'Intenciones de salida', String(exitIntents)]);
+                    if (formAbandon > 0) insightRows.push(['📝', 'Forms reintentados', String(formAbandon)]);
+                    if (hesitationMs > 2000) insightRows.push(['⏳', 'Hesitación total', fmtMs(hesitationMs)]);
+                    if (scrollPct != null) insightRows.push(['📜', 'Scroll depth', `${Math.round(scrollPct)}%`]);
+                    if (scrollBackCount > 0) insightRows.push(['↕️', 'Scroll backs', String(scrollBackCount)]);
+                    if (cartViewCount > 0) insightRows.push(['🛒', 'Revisiones de carrito', String(cartViewCount)]);
+                    if (mouseLeaveCount > 0) insightRows.push(['🖱️', 'Salidas de ventana', `${mouseLeaveCount}×`]);
+                    if (narrative) insightRows.push(['💬', 'Narrativa', narrative]);
+                    const insightRec = narrative
+                        ? null
+                        : riskScore >= 40
+                            ? { text: 'Hay fricción que convendría resolver. Clic en "Generar con IA" para una recomendación de re-engagement específica.' }
+                            : { text: 'Compra limpia. Clic en "Generar con IA" para una sugerencia de retención basada en el historial del cliente.' };
+                    chips.push(`<span style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:12px;font-size:11px;font-weight:600;background:${riskColor}22;color:${riskColor};border:1px solid ${riskColor}44;cursor:default;" data-tooltip-html="${escapeHtml(buildRichTooltipHtml('Insights de compra', insightRows, insightRec))}"><i class="fa-solid fa-gauge-high" style="font-size:10px;"></i> Insights · Fricción ${riskScore}/100</span>`);
+                } else {
+                    // Abandonment framing (original)
+                    const riskLabel = riskScore >= 70 ? 'Alto — recuperable con acción inmediata'
+                        : riskScore >= 40 ? 'Medio — requiere seguimiento'
+                        : 'Bajo — comprador comprometido';
+                    insightRows.push(['🎯', 'Risk score', `${riskScore} / 100`]);
+                    insightRows.push(['📊', 'Nivel', riskLabel]);
+                    if (pattern) insightRows.push(['🔍', 'Patrón', pm?.label || pattern]);
+                    if (archetype && archetype !== pattern) insightRows.push(['🧠', 'Arquetipo', archetype.replace(/_/g, ' ')]);
+                    if (deviceType) insightRows.push(['📱', 'Dispositivo', deviceType]);
+                    if (dur) insightRows.push(['⏱️', 'Duración', dur]);
+                    if (rageClicks > 0) insightRows.push(['👊', 'Rage clicks', String(rageClicks)]);
+                    if (exitIntents > 0) insightRows.push(['🚪', 'Exit intents', String(exitIntents)]);
+                    if (formAbandon > 0) insightRows.push(['📝', 'Form abandons', String(formAbandon)]);
+                    if (hesitationMs > 2000) insightRows.push(['⏳', 'Hesitación', fmtMs(hesitationMs)]);
+                    if (scrollPct != null) insightRows.push(['📜', 'Scroll depth', `${Math.round(scrollPct)}%`]);
+                    if (scrollBackCount > 0) insightRows.push(['↕️', 'Scroll backs', String(scrollBackCount)]);
+                    if (cartViewCount > 0) insightRows.push(['🛒', 'Cart views', String(cartViewCount)]);
+                    insightRows.push(['✅', 'Llegó a checkout', checkoutReach ? 'Sí' : 'No']);
+                    if (mouseLeaveCount > 0) insightRows.push(['🖱️', 'Cursor fuera', `${mouseLeaveCount}×`]);
+                    if (narrative) insightRows.push(['💬', 'Narrativa', narrative]);
+                    const insightRec = narrative
+                        ? null
+                        : riskScore >= 40
+                            ? { text: pm?.rec || 'Clic en "Key recommendation" en la tarjeta para generar una recomendación con IA.' }
+                            : { text: 'Baja probabilidad de abandono. Monitorea si vuelve antes de tomar acción.' };
+                    chips.push(`<span style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:12px;font-size:11px;font-weight:600;background:${riskColor}22;color:${riskColor};border:1px solid ${riskColor}44;cursor:default;" data-tooltip-html="${escapeHtml(buildRichTooltipHtml('Insights', insightRows, insightRec))}"><i class="fa-solid fa-gauge-high" style="font-size:10px;"></i> Insights · Risk ${riskScore}/100</span>`);
+                }
             }
 
             // ── Pattern chip ──
             if (patternLabel) {
-                const patRows = [['🔍', 'Patrón', patternLabel], ['💡', 'Qué pasó', pm.tip]];
+                const patRows = [['🔍', 'Patrón', patternLabel], ['💡', purchaseMode ? 'Qué pasó en la compra' : 'Qué pasó', pm.tip]];
                 if (rageClicks > 0) patRows.push(['👊', 'Rage clicks', String(rageClicks)]);
                 if (exitIntents > 0) patRows.push(['🚪', 'Exit intents', String(exitIntents)]);
                 if (formAbandon > 0) patRows.push(['📝', 'Form abandons', String(formAbandon)]);
-                chips.push(`<span style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:12px;font-size:11px;background:#312e81;color:#c4b5fd;border:1px solid #4c1d9544;cursor:default;" data-tooltip-html="${escapeHtml(buildRichTooltipHtml('Behavioral Pattern', patRows, { text: pm.rec }))}"><span style="font-size:11px;">${escapeHtml(patternLabel)}</span></span>`);
+                chips.push(`<span style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:12px;font-size:11px;background:#312e81;color:#c4b5fd;border:1px solid #4c1d9544;cursor:default;" data-tooltip-html="${escapeHtml(buildRichTooltipHtml(purchaseMode ? 'Patrón de compra' : 'Behavioral Pattern', patRows, { text: pm.rec }))}"><span style="font-size:11px;">${escapeHtml(patternLabel)}</span></span>`);
             }
 
             // ── Duration chip — rich with session summary ──
@@ -6001,26 +6043,39 @@
                 if (scrollDepth !== null) durRows.push(['📜', 'Scroll depth', scrollPct != null ? `${Math.round(scrollPct)}%` : `${scrollDepth}px`]);
                 if (scrollBackCount > 0) durRows.push(['↕️', 'Scroll backs', String(scrollBackCount)]);
                 if (cartViewCount > 0) durRows.push(['🛒', 'Vistas de carrito', String(cartViewCount)]);
-                durRows.push(['✅', 'Llegó a checkout', checkoutReach ? 'Sí' : 'No']);
+                if (!purchaseMode) durRows.push(['✅', 'Llegó a checkout', checkoutReach ? 'Sí' : 'No']);
                 if (mouseLeaveCount > 0) durRows.push(['🖱️', 'Cursor fuera', `${mouseLeaveCount}× salió de ventana`]);
-                const durRec = !checkoutReach
-                    ? { warn: true, text: 'Nunca llegó al checkout — el abandono fue antes de ver precios de envío o total.' }
-                    : hesitationMs > 15000
-                        ? { text: `${fmtMs(hesitationMs)} de hesitación en checkout — alto potencial de recuperación con email inmediato.` }
+                let durRec;
+                if (purchaseMode) {
+                    durRec = hesitationMs > 15000
+                        ? { text: `${fmtMs(hesitationMs)} de hesitación en la compra — resolver esta fricción (envío gratis, social proof) sube probabilidad de recompra.` }
                         : null;
+                } else {
+                    durRec = !checkoutReach
+                        ? { warn: true, text: 'Nunca llegó al checkout — el abandono fue antes de ver precios de envío o total.' }
+                        : hesitationMs > 15000
+                            ? { text: `${fmtMs(hesitationMs)} de hesitación en checkout — alto potencial de recuperación con email inmediato.` }
+                            : null;
+                }
                 chips.push(`<span style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:12px;font-size:11px;background:#111827;color:#6b7280;border:1px solid #37415144;cursor:default;" data-tooltip-html="${escapeHtml(buildRichTooltipHtml('Session Recording', durRows, durRec))}"><i class="fa-solid fa-video" style="font-size:10px;"></i> ${dur}</span>`);
             }
 
             // ── Rage clicks chip ──
             if (rageClicks > 0 && !patternLabel) {
                 const rcRows = [['👊', 'Clusters', String(rageClicks)], ['💡', 'Qué son', 'Clics repetidos y rápidos en el mismo elemento — señal de frustración.']];
-                chips.push(`<span style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:12px;font-size:11px;background:#4c1d1d;color:#fca5a5;border:1px solid #7f1d1d44;cursor:default;" data-tooltip-html="${escapeHtml(buildRichTooltipHtml('Rage Clicks', rcRows, { text: 'Revisa el elemento clickeado — puede ser un botón desactivado, un link roto o un precio confuso.' }))}"><i class="fa-solid fa-hand-fist" style="font-size:10px;"></i> ${rageClicks} rage click${rageClicks > 1 ? 's' : ''}</span>`);
+                const rcRec = purchaseMode
+                    ? { text: 'Compró a pesar del problema — resuelve el elemento problemático antes de que regrese para que la recompra sea fluida.' }
+                    : { text: 'Revisa el elemento clickeado — puede ser un botón desactivado, un link roto o un precio confuso.' };
+                chips.push(`<span style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:12px;font-size:11px;background:#4c1d1d;color:#fca5a5;border:1px solid #7f1d1d44;cursor:default;" data-tooltip-html="${escapeHtml(buildRichTooltipHtml('Rage Clicks', rcRows, rcRec))}"><i class="fa-solid fa-hand-fist" style="font-size:10px;"></i> ${rageClicks} rage click${rageClicks > 1 ? 's' : ''}</span>`);
             }
 
             // ── Exit intent chip ──
             if (exitIntents > 0 && !patternLabel) {
                 const eiRows = [['🚪', 'Detecciones', String(exitIntents)], ['💡', 'Qué son', 'El cursor se movió repetidamente hacia la barra superior del navegador.']];
-                chips.push(`<span style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:12px;font-size:11px;background:#1c2e1c;color:#86efac;border:1px solid #14532d44;cursor:default;" data-tooltip-html="${escapeHtml(buildRichTooltipHtml('Exit Intent', eiRows, { text: 'Considera mostrar un popup de "¿Te vas?" con un descuento o garantía de devolución.' }))}"><i class="fa-solid fa-arrow-right-from-bracket" style="font-size:10px;"></i> ${exitIntents} exit intent${exitIntents > 1 ? 's' : ''}</span>`);
+                const eiRec = purchaseMode
+                    ? { text: 'Casi se va pero igual compró — asegura que la experiencia post-compra (confirmación, onboarding) refuerce la decisión.' }
+                    : { text: 'Considera mostrar un popup de "¿Te vas?" con un descuento o garantía de devolución.' };
+                chips.push(`<span style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:12px;font-size:11px;background:#1c2e1c;color:#86efac;border:1px solid #14532d44;cursor:default;" data-tooltip-html="${escapeHtml(buildRichTooltipHtml('Exit Intent', eiRows, eiRec))}"><i class="fa-solid fa-arrow-right-from-bracket" style="font-size:10px;"></i> ${exitIntents} exit intent${exitIntents > 1 ? 's' : ''}</span>`);
             }
 
             if (!chips.length) return '';
@@ -6677,15 +6732,43 @@
                     return;
                 }
                 const ins = data.insight;
-                const archetype = ins.archetype ? `<span style="display:inline-block;background:#312e81;color:#c4b5fd;padding:2px 8px;border-radius:8px;font-size:10px;font-weight:600;margin-bottom:8px;">${escapeHtml(ins.archetype.replace(/_/g,' '))}</span>` : '';
+                const archetypeBadge = ins.archetype ? `<span style="display:inline-block;background:#312e81;color:#c4b5fd;padding:2px 8px;border-radius:8px;font-size:10px;font-weight:600;margin-right:6px;">${escapeHtml(ins.archetype.replace(/_/g,' '))}</span>` : '';
+                const tierBadge = ins.customer_tier ? `<span style="display:inline-block;background:${ins.customer_tier==='vip'?'#7c2d12':ins.customer_tier==='returning'?'#064e3b':'#1e3a8a'};color:#fff;padding:2px 8px;border-radius:8px;font-size:10px;font-weight:600;margin-right:6px;">${ins.customer_tier.toUpperCase()}</span>` : '';
                 const friction = Array.isArray(ins.friction_signals) && ins.friction_signals.length
                     ? `<p class="text-xs text-gray-500 mt-2">Fricciones detectadas: <span class="text-gray-300">${ins.friction_signals.map((s) => escapeHtml(s.replace(/_/g,' '))).join(' · ')}</span></p>`
                     : '';
                 const cacheBadge = data.cached ? '<span class="text-[10px] text-gray-500 ml-2">(desde caché)</span>' : '';
+
+                // Next best action block (richer structured action)
+                let nextActionBlock = '';
+                const nba = ins.next_best_action;
+                if (nba && nba.type && nba.type !== 'none' && nba.content) {
+                    const typeIcon = nba.type === 'email' ? '📧' : nba.type === 'sms' ? '💬' : nba.type === 'retargeting' ? '🎯' : nba.type === 'coupon' ? '🎟️' : nba.type === 'loyalty_invite' ? '⭐' : '💡';
+                    const typeLabel = nba.type === 'loyalty_invite' ? 'Loyalty' : nba.type.charAt(0).toUpperCase() + nba.type.slice(1);
+                    const prioColor = nba.priority === 'high' ? '#f87171' : nba.priority === 'medium' ? '#fbbf24' : '#9ca3af';
+                    const timingLabel = nba.timing_days === 0 ? 'Inmediato' : nba.timing_days === 1 ? 'En 1 día' : `En ${nba.timing_days} días`;
+                    nextActionBlock = `
+                        <div style="margin-top:10px;padding:10px;background:#0b1220;border:1px solid #1e293b;border-radius:8px;">
+                            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px;">
+                                <span style="font-size:13px;">${typeIcon}</span>
+                                <span style="font-size:11px;font-weight:600;color:#e5e7eb;">${escapeHtml(typeLabel)}</span>
+                                <span style="font-size:10px;color:#9ca3af;">· ${escapeHtml(timingLabel)}</span>
+                                <span style="font-size:10px;font-weight:600;padding:1px 6px;border-radius:6px;background:${prioColor}22;color:${prioColor};margin-left:auto;">${nba.priority.toUpperCase()}</span>
+                            </div>
+                            <p class="text-xs text-gray-300 leading-snug">${escapeHtml(nba.content)}</p>
+                        </div>`;
+                }
+
+                const retentionBlock = ins.retention_insight
+                    ? `<p class="text-xs text-emerald-300 mt-2 leading-snug"><i class="fa-solid fa-lightbulb" style="margin-right:4px;"></i>${escapeHtml(ins.retention_insight)}</p>`
+                    : '';
+
                 content.innerHTML = `
-                    ${archetype}
+                    <div style="margin-bottom:6px;">${tierBadge}${archetypeBadge}</div>
                     <p class="text-sm text-gray-200 leading-snug">${escapeHtml(ins.narrative || '')}</p>
                     <p class="text-sm text-purple-300 mt-2 leading-snug"><strong>Acción sugerida:</strong> ${escapeHtml(ins.recommended_action || '')}</p>
+                    ${nextActionBlock}
+                    ${retentionBlock}
                     ${friction}
                     <p class="text-[10px] text-gray-500 mt-2">Confianza: ${Math.round((ins.confidence_score || 0) * 100)}%${cacheBadge}</p>`;
                 btn.textContent = 'Regenerar';
@@ -9758,6 +9841,16 @@ function renderRecentPurchases(purchases) {
                 const deviceIcon = r.deviceType === 'mobile' ? '📱' :
                                    r.deviceType === 'tablet' ? '📱' :
                                    r.deviceType === 'desktop' ? '🖥' : '';
+
+                // ── Customer identity (Task 6) ──
+                const customerDisplay = r.customerName
+                    || (r.customerId ? `Cliente #${String(r.customerId).slice(-6)}` : null)
+                    || r.customerEmailMasked
+                    || 'Anónimo';
+                const sessionBadge = (r.sessionCount30d && r.sessionCount30d > 1)
+                    ? `<span style="font-size:10px;color:#c4b5fd;background:#312e81;padding:2px 6px;border-radius:6px;" data-tooltip="${r.sessionCount30d} sesiones grabadas de este usuario en los últimos 30 días">${r.sessionCount30d} sesiones</span>`
+                    : '';
+
                 return `
                 <div style="background:#111827;border:1px solid #1f2937;border-radius:10px;padding:14px;display:flex;flex-direction:column;gap:10px;">
                     <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
@@ -9767,6 +9860,11 @@ function renderRecentPurchases(purchases) {
                             ${deviceIcon ? `<span style="color:#6b7280;">${deviceIcon}</span>` : ''}
                         </span>
                         ${rLabel ? `<span style="font-size:10px;font-weight:600;padding:2px 7px;border-radius:9px;background:${rColor}22;color:${rColor};">${rLabel}</span>` : ''}
+                    </div>
+                    <div style="display:flex;align-items:center;gap:8px;font-size:12px;color:#e5e7eb;min-height:18px;">
+                        <i class="fa-solid fa-user" style="color:#6b7280;font-size:11px;"></i>
+                        <span style="font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;" title="${escapeHtmlAttr(customerDisplay)}">${escapeHtml(customerDisplay)}</span>
+                        ${sessionBadge}
                     </div>
                     ${outcomeLabel || signals?.pattern ? `
                     <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:11px;">
