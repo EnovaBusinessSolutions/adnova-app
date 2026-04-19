@@ -3208,10 +3208,49 @@
                     <i class="fa-solid fa-rotate-right"></i> Actualizar
                 </button>
             </div>
+            <div id="recordings-filters" class="flex items-center gap-2 mb-4 flex-wrap text-xs">
+                <select id="rec-filter-outcome" class="rec-filter" onchange="renderRecordingsList()">
+                    <option value="">Resultado: Todos</option>
+                    <option value="PURCHASED">Compraron</option>
+                    <option value="ABANDONED">Abandonaron</option>
+                    <option value="STILL_BROWSING">Explorando</option>
+                </select>
+                <select id="rec-filter-device" class="rec-filter" onchange="renderRecordingsList()">
+                    <option value="">Dispositivo: Todos</option>
+                    <option value="mobile">Móvil</option>
+                    <option value="tablet">Tablet</option>
+                    <option value="desktop">Desktop</option>
+                </select>
+                <select id="rec-filter-duration" class="rec-filter" onchange="renderRecordingsList()">
+                    <option value="">Duración: Toda</option>
+                    <option value="short">&lt; 30s</option>
+                    <option value="medium">30s – 2min</option>
+                    <option value="long">&gt; 2min</option>
+                </select>
+                <select id="rec-filter-risk" class="rec-filter" onchange="renderRecordingsList()">
+                    <option value="">Riesgo: Todos</option>
+                    <option value="high">Alto</option>
+                    <option value="medium">Medio</option>
+                    <option value="low">Bajo</option>
+                </select>
+                <span id="rec-filter-count" class="ml-auto text-gray-400"></span>
+            </div>
             <div id="recordings-list" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
                 <p class="text-sm text-gray-400 col-span-full">Cargando grabaciones...</p>
             </div>
         </div>
+        <style>
+            .rec-filter {
+                background: #111827;
+                color: #e5e7eb;
+                border: 1px solid #1f2937;
+                border-radius: 6px;
+                padding: 5px 10px;
+                font-size: 11px;
+                cursor: pointer;
+            }
+            .rec-filter:focus { outline: 1px solid #7c3aed; }
+        </style>
 
         <section id="session-detail-panel" class="hidden" aria-hidden="true">
             <div class="ops-panel overflow-hidden border border-gray-200">
@@ -5820,6 +5859,20 @@
                         <span class="journey-chip" data-tooltip="How many stitched sessions currently support this purchase path."><i class="fa-solid fa-layer-group"></i>${sessionCount} sessions</span>
                     </div>
                     ${renderBehavioralSignalsBadge(purchase.behavioralSignals, purchase.recordingStatus, purchase.recordingDurationMs)}
+                    ${purchase.rrwebRecordingId ? `
+                    <div class="insights-block" data-recording-id="${escapeHtmlAttr(purchase.rrwebRecordingId)}" style="background:#0f172a;border:1px solid #1e293b;border-radius:10px;padding:12px;">
+                        <div class="flex items-center justify-between gap-2 mb-2">
+                            <p class="font-medium text-gray-200" style="font-size:12px;">🤖 Key recommendation</p>
+                            <button type="button" class="insights-generate-btn"
+                                onclick="adrayGenerateInsight('${escapeInlineSingleQuotedJs(purchase.rrwebRecordingId)}', this)"
+                                style="background:#7c3aed;color:#fff;border:none;border-radius:6px;padding:4px 10px;font-size:11px;font-weight:600;cursor:pointer;">
+                                Generar con IA
+                            </button>
+                        </div>
+                        <div class="insights-content text-xs text-gray-400">
+                            Haz clic en "Generar con IA" para recibir una recomendación accionable basada en las métricas de esta sesión.
+                        </div>
+                    </div>` : ''}
                     <div>
                         <p class="font-medium text-gray-900 mb-1">UTM URL history for this journey</p>
                         ${renderTrackedUtmHistory(purchaseUtmHistory, { emptyMessage: 'No UTM URLs have been captured yet for this selected journey.' })}
@@ -5829,13 +5882,6 @@
                         <button type="button" class="journey-export-btn"
                            style="background:#7c3aed;color:#fff;display:inline-flex;align-items:center;gap:6px;"
                            onclick="adrayOpenPlayer('${escapeInlineSingleQuotedJs(purchase.rrwebRecordingId)}','${escapeInlineSingleQuotedJs(purchase.sessionId || '')}')">
-                            <i class="fa-solid fa-circle-play"></i>
-                            Ver grabación
-                        </button>` :
-                        (typeof purchase.clarityPlaybackUrl === 'string' && purchase.clarityPlaybackUrl.startsWith('http')) ? `
-                        <button type="button" class="journey-export-btn"
-                           style="background:#5c2d91;color:#fff;display:inline-flex;align-items:center;gap:6px;"
-                           onclick="adrayOpenClarityModal('${escapeInlineSingleQuotedJs(purchase.clarityPlaybackUrl)}')">
                             <i class="fa-solid fa-circle-play"></i>
                             Ver grabación
                         </button>` : ''}
@@ -5899,19 +5945,36 @@
 
             const chips = [];
 
-            // ── Risk Score chip ──
+            // ── Insights chip (full session summary) ──
             if (riskScore !== null) {
                 const riskLabel = riskScore >= 70 ? 'Alto — recuperable con acción inmediata'
                     : riskScore >= 40 ? 'Medio — requiere seguimiento'
                     : 'Bajo — comprador comprometido';
-                const riskRows = [['🎯', 'Score', `${riskScore} / 100`], ['📊', 'Nivel', riskLabel]];
-                if (pattern) riskRows.push(['🔍', 'Patrón', pm?.label || pattern]);
-                if (archetype && archetype !== pattern) riskRows.push(['🧠', 'Arquetipo', archetype.replace(/_/g, ' ')]);
-                if (narrative) riskRows.push(['💬', 'Insight', narrative]);
-                const riskRec = riskScore >= 40
-                    ? { text: pm?.rec || 'Envía un email de recuperación en las próximas 2 horas mientras la sesión está fresca.' }
-                    : { text: 'Baja probabilidad de abandono. Monitorea si vuelve antes de tomar acción.' };
-                chips.push(`<span style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:12px;font-size:11px;font-weight:600;background:${riskColor}22;color:${riskColor};border:1px solid ${riskColor}44;cursor:default;" data-tooltip-html="${escapeHtml(buildRichTooltipHtml('Abandonment Risk Score', riskRows, riskRec))}"><i class="fa-solid fa-gauge-high" style="font-size:10px;"></i> Risk ${riskScore}/100</span>`);
+                const deviceType      = signals.deviceType || null;
+                const insightRows = [
+                    ['🎯', 'Risk score', `${riskScore} / 100`],
+                    ['📊', 'Nivel', riskLabel],
+                ];
+                if (pattern) insightRows.push(['🔍', 'Patrón', pm?.label || pattern]);
+                if (archetype && archetype !== pattern) insightRows.push(['🧠', 'Arquetipo', archetype.replace(/_/g, ' ')]);
+                if (deviceType) insightRows.push(['📱', 'Dispositivo', deviceType]);
+                if (dur) insightRows.push(['⏱️', 'Duración', dur]);
+                if (rageClicks > 0) insightRows.push(['👊', 'Rage clicks', String(rageClicks)]);
+                if (exitIntents > 0) insightRows.push(['🚪', 'Exit intents', String(exitIntents)]);
+                if (formAbandon > 0) insightRows.push(['📝', 'Form abandons', String(formAbandon)]);
+                if (hesitationMs > 2000) insightRows.push(['⏳', 'Hesitación', fmtMs(hesitationMs)]);
+                if (scrollPct != null) insightRows.push(['📜', 'Scroll depth', `${Math.round(scrollPct)}%`]);
+                if (scrollBackCount > 0) insightRows.push(['↕️', 'Scroll backs', String(scrollBackCount)]);
+                if (cartViewCount > 0) insightRows.push(['🛒', 'Cart views', String(cartViewCount)]);
+                insightRows.push(['✅', 'Llegó a checkout', checkoutReach ? 'Sí' : 'No']);
+                if (mouseLeaveCount > 0) insightRows.push(['🖱️', 'Cursor fuera', `${mouseLeaveCount}×`]);
+                if (narrative) insightRows.push(['💬', 'Narrativa', narrative]);
+                const insightRec = narrative
+                    ? null
+                    : riskScore >= 40
+                        ? { text: pm?.rec || 'Clic en "Key recommendation" en la tarjeta para generar una recomendación con IA.' }
+                        : { text: 'Baja probabilidad de abandono. Monitorea si vuelve antes de tomar acción.' };
+                chips.push(`<span style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:12px;font-size:11px;font-weight:600;background:${riskColor}22;color:${riskColor};border:1px solid ${riskColor}44;cursor:default;" data-tooltip-html="${escapeHtml(buildRichTooltipHtml('Insights', insightRows, insightRec))}"><i class="fa-solid fa-gauge-high" style="font-size:10px;"></i> Insights · Risk ${riskScore}/100</span>`);
             }
 
             // ── Pattern chip ──
@@ -6587,6 +6650,46 @@
             modal.style.display = 'flex';
         }
 
+        async function adrayGenerateInsight(recordingId, btn) {
+            if (!recordingId || !currentShopId) return;
+            const block = btn.closest('.insights-block');
+            const content = block?.querySelector('.insights-content');
+            if (!content) return;
+            const originalBtnText = btn.textContent;
+            btn.disabled = true;
+            btn.textContent = 'Generando...';
+            content.innerHTML = '<span class="text-gray-400">Analizando señales y grabación con IA…</span>';
+            try {
+                const resp = await fetch(`/api/recording/${encodeURIComponent(currentShopId)}/${encodeURIComponent(recordingId)}/insights`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                });
+                const data = await resp.json();
+                if (!data.ok || !data.insight) {
+                    content.innerHTML = `<span class="text-red-400">No se pudo generar: ${escapeHtml(data.error || 'error desconocido')}</span>`;
+                    return;
+                }
+                const ins = data.insight;
+                const archetype = ins.archetype ? `<span style="display:inline-block;background:#312e81;color:#c4b5fd;padding:2px 8px;border-radius:8px;font-size:10px;font-weight:600;margin-bottom:8px;">${escapeHtml(ins.archetype.replace(/_/g,' '))}</span>` : '';
+                const friction = Array.isArray(ins.friction_signals) && ins.friction_signals.length
+                    ? `<p class="text-xs text-gray-500 mt-2">Fricciones detectadas: <span class="text-gray-300">${ins.friction_signals.map((s) => escapeHtml(s.replace(/_/g,' '))).join(' · ')}</span></p>`
+                    : '';
+                const cacheBadge = data.cached ? '<span class="text-[10px] text-gray-500 ml-2">(desde caché)</span>' : '';
+                content.innerHTML = `
+                    ${archetype}
+                    <p class="text-sm text-gray-200 leading-snug">${escapeHtml(ins.narrative || '')}</p>
+                    <p class="text-sm text-purple-300 mt-2 leading-snug"><strong>Acción sugerida:</strong> ${escapeHtml(ins.recommended_action || '')}</p>
+                    ${friction}
+                    <p class="text-[10px] text-gray-500 mt-2">Confianza: ${Math.round((ins.confidence_score || 0) * 100)}%${cacheBadge}</p>`;
+                btn.textContent = 'Regenerar';
+            } catch (err) {
+                content.innerHTML = `<span class="text-red-400">Error: ${escapeHtml(err.message || String(err))}</span>`;
+                btn.textContent = originalBtnText;
+            } finally {
+                btn.disabled = false;
+            }
+        }
+
         async function adrayOpenPlayer(recordingId, sessionId) {
             _adrayShowModal('Grabación de sesión');
             const content = document.getElementById('adray-modal-content');
@@ -6748,31 +6851,6 @@
             }
         }
 
-        function adrayOpenClarityModal(url) {
-            _adrayShowModal('Grabación de sesión · Microsoft Clarity');
-            const content = document.getElementById('adray-modal-content');
-            content.style.cssText = 'flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:40px;background:#111827;border-radius:0 0 12px 12px;';
-
-            const isValidUrl = typeof url === 'string' && url.startsWith('http');
-            if (!isValidUrl) {
-                content.innerHTML = `
-                    <i class="fa-solid fa-link-slash" style="font-size:36px;color:#6b7280;margin-bottom:16px;"></i>
-                    <p style="color:#e5e7eb;font-size:14px;font-weight:600;margin-bottom:6px;">Grabación no disponible</p>
-                    <p style="color:#9ca3af;font-size:12px;text-align:center;max-width:300px;">El enlace de esta grabación no es válido o expiró.</p>`;
-                return;
-            }
-
-            const safeUrl = url.replace(/"/g, '&quot;');
-            content.innerHTML = `
-                <i class="fa-solid fa-circle-play" style="font-size:40px;color:#7c3aed;margin-bottom:16px;"></i>
-                <p style="color:#e5e7eb;font-size:14px;font-weight:600;margin-bottom:6px;">Grabación en Microsoft Clarity</p>
-                <p style="color:#9ca3af;font-size:12px;margin-bottom:24px;text-align:center;max-width:320px;">Esta grabación está almacenada en Clarity y no puede reproducirse aquí.<br>Ábrela en una nueva pestaña.</p>
-                <a href="${safeUrl}" target="_blank" rel="noopener noreferrer"
-                   onclick="adrayCloseModal()"
-                   style="display:inline-flex;align-items:center;gap:8px;padding:10px 22px;background:#5c2d91;color:#fff;border-radius:8px;text-decoration:none;font-size:13px;font-weight:600;">
-                    <i class="fa-solid fa-arrow-up-right-from-square"></i> Abrir en Clarity
-                </a>`;
-        }
         // ─── End Recording Modal Player ───────────────────────────────────────────
 
         function rebuildJourneyProfileLookup(profiles = []) {
@@ -7061,13 +7139,20 @@
             const allWooProfiles = Array.isArray(wooProfilesState.profiles) ? wooProfilesState.profiles : [];
             const normalizedSearch = normalizeProfileName(attributionJourneyState.profileSearch || '');
             const visibleProfilesBase = allWooProfiles.filter((profile) => {
-                if (!hasReadableWooProfileIdentity(profile)) return false;
-                if (!normalizedSearch) return true;
+                // A profile is "readable" if we can render something meaningful for it:
+                // either its own identity fields OR an identity stitched from recent purchases.
                 const resolvedLabel = resolveProfileDisplayName(profile);
                 if (!resolvedLabel) return false;
+                if (!normalizedSearch) return true;
                 const label = normalizeProfileName(resolvedLabel || '');
                 const customerId = normalizeCustomerId(profile.customerId);
-                return label.includes(normalizedSearch) || customerId.includes(normalizedSearch);
+                const emailPreview = normalizeEmailPreview(profile.customerEmailPreview || profile.emailPreview || '');
+                const recentIdentity = customerId ? (recentCustomerIdentityById.get(customerId) || {}) : {};
+                const recentEmail = normalizeEmailPreview(recentIdentity.email || '');
+                return label.includes(normalizedSearch)
+                    || customerId.includes(normalizedSearch)
+                    || (emailPreview && emailPreview.includes(normalizedSearch))
+                    || (recentEmail && recentEmail.includes(normalizedSearch));
             });
 
             const visibleProfiles = visibleProfilesBase.slice().sort((a, b) => {
@@ -7850,15 +7935,14 @@
                 <p><strong>GA4 Session Source:</strong> ${session.ga4SessionSource || '-'}</p>
                 <p><strong>Referrer:</strong> ${session.referrer || '-'}</p>
                 <p><strong>IP Hash:</strong> ${session.ipHash ? `${String(session.ipHash).slice(0, 10)}...` : '-'}</p>
-                ${(typeof session.clarityPlaybackUrl === 'string' && session.clarityPlaybackUrl.startsWith('http')) ? `
+                ${session.rrwebRecordingId ? `
                 <div class="mt-3">
                     <button type="button"
                        class="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium"
-                       style="background:#5c2d91;color:#fff;border:none;cursor:pointer;"
-                       onclick="adrayOpenClarityModal('${escapeInlineSingleQuotedJs(session.clarityPlaybackUrl)}')">
+                       style="background:#7c3aed;color:#fff;border:none;cursor:pointer;"
+                       onclick="adrayOpenPlayer('${escapeInlineSingleQuotedJs(session.rrwebRecordingId)}','${escapeInlineSingleQuotedJs(session.sessionId || '')}')">
                         ▶ Ver grabación de sesión
                     </button>
-                    <p class="text-xs text-gray-400 mt-1">Microsoft Clarity · ID: ${session.claritySessionId || '-'}</p>
                 </div>` : `
                 <div class="mt-3">
                     <span class="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs text-gray-400"
@@ -9511,6 +9595,8 @@ function renderRecentPurchases(purchases) {
             }).join('');
         }
 
+        let _adrayAllRecordings = [];
+
         async function loadRecordingsList() {
             const container = document.getElementById('recordings-list');
             if (!container) return;
@@ -9523,36 +9609,88 @@ function renderRecentPurchases(purchases) {
                 const res = await fetch(`/api/recording/${encodeURIComponent(currentShopId)}/list`);
                 const data = await res.json();
                 if (!data.ok || !Array.isArray(data.recordings) || data.recordings.length === 0) {
+                    _adrayAllRecordings = [];
                     container.innerHTML = '<p class="text-sm text-gray-400 col-span-full">No hay grabaciones disponibles aún.</p>';
+                    const countEl = document.getElementById('rec-filter-count');
+                    if (countEl) countEl.textContent = '';
                     return;
                 }
-                container.innerHTML = data.recordings.map((r) => {
-                    const dur = r.durationMs ? `${Math.round(r.durationMs / 1000)}s` : '-';
-                    const date = r.createdAt ? formatDateTimeMx(new Date(r.createdAt)) : '-';
-                    const signals = r.behavioralSignals;
-                    const risk = signals?.riskLevel || null;
-                    const riskColor = risk === 'high' ? '#f87171' : risk === 'medium' ? '#fb923c' : '#4ade80';
-                    const riskLabel = risk ? risk.charAt(0).toUpperCase() + risk.slice(1) : null;
-                    return `
-                    <div style="background:#111827;border:1px solid #1f2937;border-radius:10px;padding:14px;display:flex;flex-direction:column;gap:10px;">
-                        <div style="display:flex;align-items:center;justify-content:space-between;gap:6px;">
-                            <span style="color:#9ca3af;font-size:11px;">${date}</span>
-                            ${riskLabel ? `<span style="font-size:10px;font-weight:600;padding:2px 7px;border-radius:9px;background:${riskColor}22;color:${riskColor};">${riskLabel} risk</span>` : ''}
-                        </div>
-                        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-                            <span style="color:#6b7280;font-size:11px;"><i class="fa-solid fa-clock" style="margin-right:3px;"></i>${dur}</span>
-                            ${signals?.pattern ? `<span style="color:#a78bfa;font-size:11px;">${signals.pattern.replace(/_/g,' ')}</span>` : ''}
-                        </div>
-                        <button type="button"
-                            style="background:#7c3aed;color:#fff;border:none;border-radius:7px;padding:7px 12px;font-size:12px;font-weight:600;cursor:pointer;display:inline-flex;align-items:center;gap:6px;width:100%;justify-content:center;"
-                            onclick="adrayOpenPlayer('${escapeInlineSingleQuotedJs(r.recordingId)}','${escapeInlineSingleQuotedJs(r.sessionId || '')}')">
-                            <i class="fa-solid fa-circle-play"></i> Ver grabación
-                        </button>
-                    </div>`;
-                }).join('');
+                _adrayAllRecordings = data.recordings;
+                renderRecordingsList();
             } catch (e) {
                 container.innerHTML = `<p class="text-sm text-red-400 col-span-full">Error al cargar grabaciones: ${e.message}</p>`;
             }
+        }
+
+        function renderRecordingsList() {
+            const container = document.getElementById('recordings-list');
+            if (!container) return;
+            const outcome = document.getElementById('rec-filter-outcome')?.value || '';
+            const device  = document.getElementById('rec-filter-device')?.value || '';
+            const dur     = document.getElementById('rec-filter-duration')?.value || '';
+            const risk    = document.getElementById('rec-filter-risk')?.value || '';
+
+            const filtered = (_adrayAllRecordings || []).filter((r) => {
+                if (outcome && (r.outcome || 'STILL_BROWSING') !== outcome) return false;
+                if (device && (r.deviceType || '').toLowerCase() !== device) return false;
+                if (dur) {
+                    const s = Math.round((r.durationMs || 0) / 1000);
+                    if (dur === 'short'  && s >= 30)  return false;
+                    if (dur === 'medium' && (s < 30 || s > 120)) return false;
+                    if (dur === 'long'   && s <= 120) return false;
+                }
+                if (risk) {
+                    const rl = (r.behavioralSignals?.riskLevel || '').toLowerCase();
+                    if (rl !== risk) return false;
+                }
+                return true;
+            });
+
+            const countEl = document.getElementById('rec-filter-count');
+            if (countEl) countEl.textContent = `${filtered.length} de ${_adrayAllRecordings.length}`;
+
+            if (filtered.length === 0) {
+                container.innerHTML = '<p class="text-sm text-gray-400 col-span-full">Ninguna grabación coincide con los filtros.</p>';
+                return;
+            }
+
+            container.innerHTML = filtered.map((r) => {
+                const durS = r.durationMs ? `${Math.round(r.durationMs / 1000)}s` : '-';
+                const date = r.createdAt ? formatDateTimeMx(new Date(r.createdAt)) : '-';
+                const signals = r.behavioralSignals;
+                const rLevel = signals?.riskLevel || null;
+                const rColor = rLevel === 'high' ? '#f87171' : rLevel === 'medium' ? '#fb923c' : '#4ade80';
+                const rLabel = rLevel ? rLevel.charAt(0).toUpperCase() + rLevel.slice(1) : null;
+                const outcomeLabel = r.outcome === 'PURCHASED' ? '💰 Compra' :
+                                     r.outcome === 'ABANDONED' ? '🚪 Abandono' :
+                                     r.outcome === 'STILL_BROWSING' ? '👀 Explorando' : null;
+                const outcomeColor = r.outcome === 'PURCHASED' ? '#4ade80' :
+                                     r.outcome === 'ABANDONED' ? '#f87171' : '#9ca3af';
+                const deviceIcon = r.deviceType === 'mobile' ? '📱' :
+                                   r.deviceType === 'tablet' ? '📱' :
+                                   r.deviceType === 'desktop' ? '🖥' : '';
+                return `
+                <div style="background:#111827;border:1px solid #1f2937;border-radius:10px;padding:14px;display:flex;flex-direction:column;gap:10px;">
+                    <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
+                        <span style="color:#9ca3af;font-size:11px;display:inline-flex;align-items:center;gap:8px;">
+                            ${date}
+                            <span style="color:#6b7280;"><i class="fa-solid fa-clock" style="margin-right:3px;"></i>${durS}</span>
+                            ${deviceIcon ? `<span style="color:#6b7280;">${deviceIcon}</span>` : ''}
+                        </span>
+                        ${rLabel ? `<span style="font-size:10px;font-weight:600;padding:2px 7px;border-radius:9px;background:${rColor}22;color:${rColor};">${rLabel}</span>` : ''}
+                    </div>
+                    ${outcomeLabel || signals?.pattern ? `
+                    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:11px;">
+                        ${outcomeLabel ? `<span style="color:${outcomeColor};font-weight:600;">${outcomeLabel}</span>` : ''}
+                        ${signals?.pattern ? `<span style="color:#a78bfa;">${signals.pattern.replace(/_/g,' ')}</span>` : ''}
+                    </div>` : ''}
+                    <button type="button"
+                        style="background:#7c3aed;color:#fff;border:none;border-radius:7px;padding:7px 12px;font-size:12px;font-weight:600;cursor:pointer;display:inline-flex;align-items:center;gap:6px;width:100%;justify-content:center;"
+                        onclick="adrayOpenPlayer('${escapeInlineSingleQuotedJs(r.recordingId)}','${escapeInlineSingleQuotedJs(r.sessionId || '')}')">
+                        <i class="fa-solid fa-circle-play"></i> Ver grabación
+                    </button>
+                </div>`;
+            }).join('');
         }
 
         function renderAttributionChart(attributionData, paidMedia = {}) {

@@ -1656,6 +1656,13 @@
     } catch(_) {}
   }
 
+  function _adrayDetectDevice() {
+    var ua = (navigator.userAgent || '').toLowerCase();
+    if (/ipad|tablet|playbook|silk/i.test(ua)) return 'tablet';
+    if (/mobi|android|iphone|ipod|phone/i.test(ua)) return 'mobile';
+    return 'desktop';
+  }
+
   // ── Chunk retry: fetch with up to 5 retries, exponential backoff (handles server cold-start) ──
   // Delays: 2s, 4s, 8s, 16s, 32s — total ~62s max wait
   // keepalive has a 64 KB body limit — anything larger (e.g. chunk 0 with FullSnapshot) fails
@@ -1764,9 +1771,10 @@
         recording_id: _adrayRecordingId,
         session_id: getOrCreateSessionId(),
         browser_id: getOrCreateBrowserId(),
-        trigger_event: 'add_to_cart',
+        trigger_event: (cartPayload && cartPayload.trigger) || 'add_to_cart',
         cart_value: cartPayload && cartPayload.cart_value ? cartPayload.cart_value : null,
         checkout_token: cartPayload && cartPayload.checkout_token ? cartPayload.checkout_token : null,
+        device_type: _adrayDetectDevice(),
         timestamp: new Date().toISOString()
       })
     }).then(function(r) {
@@ -1861,15 +1869,15 @@
   window.addEventListener('pagehide', _adrayHandleUnload);
   window.addEventListener('beforeunload', _adrayHandleUnload);
 
-  // Hook into sendEvent: trigger recording on add_to_cart, stop on purchase
+  // Hook into sendEvent: trigger recording on add_to_cart / begin_checkout, stop on purchase
   console.log('[ADRAY-REC] BRI recording module initialized. Hooking sendEvent...');
   var _adrayOrigSendEvent = sendEvent;
   sendEvent = function(eventName, eventData) {
     var result = _adrayOrigSendEvent.apply(this, arguments);
     console.log('[ADRAY-REC] sendEvent intercepted:', eventName);
     try {
-      if (eventName === 'add_to_cart') {
-        console.log('[ADRAY-REC] add_to_cart detected → loading rrweb');
+      if (eventName === 'add_to_cart' || eventName === 'begin_checkout') {
+        console.log('[ADRAY-REC] ' + eventName + ' detected → loading rrweb');
         _adrayLoadRrweb(function() { _adrayStartRecording(eventData || {}); });
       }
       if (eventName === 'purchase') {
@@ -1881,6 +1889,19 @@
     }
     return result;
   };
+
+  // Auto-resume: if this page load has a persisted recording in sessionStorage,
+  // the user navigated mid-flow (cart → checkout). Resume without waiting for a
+  // new add_to_cart — otherwise the checkout pages aren't captured.
+  (function _adrayAutoResume() {
+    try {
+      var persisted = sessionStorage.getItem(_SS_REC_KEY);
+      if (persisted) {
+        console.log('[ADRAY-REC] persisted recording detected → auto-resuming', persisted);
+        _adrayLoadRrweb(function() { _adrayStartRecording({ trigger: 'resumed' }); });
+      }
+    } catch(_) {}
+  })();
 
   // =========================================================================
   // END ADRAY BRI Recording Module

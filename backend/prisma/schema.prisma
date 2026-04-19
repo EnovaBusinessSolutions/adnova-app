@@ -300,6 +300,7 @@ model SessionRecording {
   outcome             RecordingOutcome?
   outcomeAt           DateTime?         @map("outcome_at")
   orderId             String?           @map("order_id")
+  deviceType          String?           @map("device_type")
   behavioralSignals   Json?             @map("behavioral_signals")
   rawErasedAt         DateTime?         @map("raw_erased_at")
   maskingEnabled      Boolean           @default(true) @map("masking_enabled")

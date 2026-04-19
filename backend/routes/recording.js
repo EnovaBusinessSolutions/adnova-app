@@ -48,6 +48,7 @@ router.post('/init', async (req, res) => {
       trigger_event = 'add_to_cart',
       cart_value,
       checkout_token,
+      device_type,
       timestamp,
     } = req.body || {};
 
@@ -90,8 +91,9 @@ router.post('/init', async (req, res) => {
     const triggerAt = timestamp ? new Date(timestamp) : new Date();
     const r2Prefix = chunksPrefix(account_id, recording_id);
 
-    await prisma.sessionRecording.create({
-      data: {
+    await prisma.sessionRecording.upsert({
+      where: { recordingId: recording_id },
+      create: {
         recordingId: recording_id,
         accountId: account_id,
         sessionId: session_id,
@@ -105,6 +107,14 @@ router.post('/init', async (req, res) => {
         r2Bucket: process.env.R2_BUCKET || 'adray-recordings',
         status: 'RECORDING',
         maskingEnabled: true,
+        deviceType: device_type || null,
+      },
+      // If /buf already auto-created the row, just enrich it with the init-only fields
+      update: {
+        cartValue: cart_value ? parseFloat(cart_value) : undefined,
+        checkoutToken: checkout_token || undefined,
+        attributionSnapshot: attributionSnapshot || undefined,
+        deviceType: device_type || undefined,
       },
     });
 
@@ -281,7 +291,7 @@ router.get('/:account_id/list', async (req, res) => {
         recordingId: true, sessionId: true, status: true,
         durationMs: true, triggerAt: true, createdAt: true,
         behavioralSignals: true, outcome: true, cartValue: true,
-        r2Key: true,
+        deviceType: true, r2Key: true,
       },
       orderBy: { createdAt: 'desc' },
       take,
@@ -356,6 +366,61 @@ router.get('/:account_id/:recording_id', async (req, res) => {
     });
   } catch (err) {
     console.error('[recording GET] Error:', err.message);
+    return res.status(500).json({ ok: false, error: 'Internal error' });
+  }
+});
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * POST /api/recording/:account_id/:recording_id/insights
+ * On-demand AI-generated key recommendation for a single recording.
+ * Result is cached in Redis for 1h keyed by recordingId.
+ * ───────────────────────────────────────────────────────────────────────────── */
+router.post('/:account_id/:recording_id/insights', async (req, res) => {
+  try {
+    const { account_id, recording_id } = req.params;
+    const cacheKey = `adray:rec:insight:${recording_id}`;
+
+    if (redisClient) {
+      const cached = await redisClient.get(cacheKey).catch(() => null);
+      if (cached) {
+        try { return res.json({ ok: true, cached: true, insight: JSON.parse(cached) }); } catch (_) {}
+      }
+    }
+
+    const rec = await prisma.sessionRecording.findUnique({
+      where: { recordingId: recording_id },
+      select: {
+        accountId: true, cartValue: true, durationMs: true,
+        behavioralSignals: true, deviceType: true, attributionSnapshot: true,
+      },
+    });
+
+    if (!rec || rec.accountId !== account_id) {
+      return res.status(404).json({ ok: false, error: 'Recording not found' });
+    }
+
+    const { generateNarrative } = require('../services/recordingNarrativeService');
+    const signals = rec.behavioralSignals || {};
+    const attributedChannel = rec.attributionSnapshot?.channel || null;
+
+    const narrative = await generateNarrative({
+      signals,
+      cartValue: rec.cartValue,
+      attributedChannel,
+      sessionDurationMs: rec.durationMs,
+    });
+
+    if (!narrative) {
+      return res.status(503).json({ ok: false, error: 'Could not generate insight at this time' });
+    }
+
+    if (redisClient) {
+      await redisClient.set(cacheKey, JSON.stringify(narrative), 'EX', 60 * 60).catch(() => {});
+    }
+
+    return res.json({ ok: true, cached: false, insight: narrative });
+  } catch (err) {
+    console.error('[recording/insights] Error:', err.message);
     return res.status(500).json({ ok: false, error: 'Internal error' });
   }
 });
