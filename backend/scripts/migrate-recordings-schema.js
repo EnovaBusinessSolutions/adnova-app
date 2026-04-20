@@ -21,7 +21,23 @@ async function run() {
     console.log('[migrate-recordings-schema] OK — sessions columns ensured.');
   } catch (err) {
     console.error('[migrate-recordings-schema] ERROR (non-fatal):', err.message);
-    // Do not exit(1) — allow startup chain to continue to prisma:push
+  }
+
+  // session_recordings.device_type — belt-and-suspenders. Normally added by
+  // `prisma db push`, but if that step fails or lags we still want /init to
+  // work. Harmless if the table doesn't exist yet (wrapped in its own catch).
+  try {
+    await prisma.$executeRawUnsafe(`
+      ALTER TABLE session_recordings
+        ADD COLUMN IF NOT EXISTS device_type TEXT;
+    `);
+    console.log('[migrate-recordings-schema] OK — session_recordings.device_type ensured.');
+  } catch (err) {
+    if (String(err.message).includes('session_recordings" does not exist')) {
+      console.log('[migrate-recordings-schema] session_recordings table not yet created — skipping device_type ALTER');
+    } else {
+      console.error('[migrate-recordings-schema] device_type ALTER ERROR (non-fatal):', err.message);
+    }
   } finally {
     await prisma.$disconnect();
   }

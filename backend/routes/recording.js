@@ -107,12 +107,23 @@ router.post('/init', async (req, res) => {
       maskingEnabled: true,
     };
     // Include deviceType only if the column exists — retry without it on schema mismatch.
+    // Important: pass `select` to control what Prisma returns in the RETURNING
+    // clause. Without an explicit select, Prisma generates RETURNING * which
+    // references every column including device_type — so a plain retry without
+    // deviceType in data still fails if the column itself doesn't exist.
     const createWithDevice = { ...createData, deviceType: device_type || null };
+    const isSchemaColumnMissing = (e) => {
+      if (!e) return false;
+      if (e.code === 'P2022') return true; // Prisma: column does not exist
+      const msg = e.message || '';
+      return msg.includes('deviceType') || msg.includes('device_type');
+    };
+
     try {
-      await prisma.sessionRecording.create({ data: createWithDevice });
+      await prisma.sessionRecording.create({ data: createWithDevice, select: { id: true } });
     } catch (createErr) {
-      // P2002: unique constraint — row already exists (likely from /buf auto-create)
       if (createErr?.code === 'P2002') {
+        // Row already exists (e.g. /buf auto-created it first) — update instead.
         await prisma.sessionRecording.update({
           where: { recordingId: recording_id },
           data: {
@@ -121,9 +132,9 @@ router.post('/init', async (req, res) => {
             attributionSnapshot: attributionSnapshot || undefined,
             deviceType: device_type || undefined,
           },
+          select: { id: true },
         }).catch((updateErr) => {
-          // Tolerate missing deviceType column during deploy lag
-          if (updateErr?.message?.includes('deviceType') || updateErr?.message?.includes('device_type')) {
+          if (isSchemaColumnMissing(updateErr)) {
             return prisma.sessionRecording.update({
               where: { recordingId: recording_id },
               data: {
@@ -131,13 +142,16 @@ router.post('/init', async (req, res) => {
                 checkoutToken: checkout_token || undefined,
                 attributionSnapshot: attributionSnapshot || undefined,
               },
+              select: { id: true },
             });
           }
           throw updateErr;
         });
-      } else if (createErr?.message?.includes('deviceType') || createErr?.message?.includes('device_type')) {
-        // Column not deployed yet — create without it
-        await prisma.sessionRecording.create({ data: createData }).catch((e2) => {
+      } else if (isSchemaColumnMissing(createErr)) {
+        // Column not deployed yet — create without it. `select:{id:true}` keeps
+        // the RETURNING clause from referencing device_type.
+        console.warn('[recording/init] device_type column missing, creating without it');
+        await prisma.sessionRecording.create({ data: createData, select: { id: true } }).catch((e2) => {
           if (e2?.code === 'P2002') return;
           throw e2;
         });
@@ -208,19 +222,22 @@ router.post('/buf', async (req, res) => {
 
       const r2Prefix = chunksPrefix(account_id, recording_id);
       try {
+        // `select: { id: true }` keeps RETURNING minimal so a missing optional
+        // column (e.g. device_type during deploy lag) doesn't break the insert.
         await prisma.sessionRecording.create({
           data: {
             recordingId: recording_id,
             accountId: account_id,
             sessionId: session_id || 'unknown',
             userKey: 'anonymous',
-            triggerEvent: 'add_to_cart',
+            triggerEvent: 'page_load',
             triggerAt: new Date(),
             r2ChunksPrefix: r2Prefix,
             r2Bucket: process.env.R2_BUCKET || 'adray-recordings',
             status: 'RECORDING',
             maskingEnabled: true,
           },
+          select: { id: true },
         });
       } catch (createErr) {
         // P2002: unique constraint — row was just created by a racing request. OK to continue.
