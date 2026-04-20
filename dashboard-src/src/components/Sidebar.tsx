@@ -26,6 +26,9 @@ const LOGOUT_PATH = "/logout";
 
 const PRIMARY: NavItem[] = [
   { icon: <Compass className="h-5 w-5" />, label: "Get started", path: START_PATH },
+];
+
+const ATTRIBUTION: NavItem[] = [
   { icon: <ChartColumn className="h-5 w-5" />, label: "Attribution", path: ATTRIBUTION_PATH },
 ];
 
@@ -460,6 +463,15 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onToggle }) => {
         {PRIMARY.map((item) => (
           <NavRow key={item.path} item={item} isOpen={isOpen} active={isActivePath(pathname, item.path)} />
         ))}
+
+        <div className="pt-3">
+          <div className="mb-3 h-px w-full bg-gradient-to-r from-transparent via-white/8 to-transparent" />
+          <div className="space-y-1">
+            {ATTRIBUTION.map((item) => (
+              <NavRow key={item.path} item={item} isOpen={isOpen} active={isActivePath(pathname, item.path)} />
+            ))}
+          </div>
+        </div>
 
         <div className="pt-3">
           <div className="mb-3 h-px w-full bg-gradient-to-r from-transparent via-white/8 to-transparent" />
