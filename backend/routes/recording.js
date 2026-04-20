@@ -426,31 +426,71 @@ router.get('/:account_id/list', async (req, res) => {
 router.get('/:account_id/by-user', async (req, res) => {
   try {
     const { account_id } = req.params;
-    let userKey = String(req.query.userKey || '').trim();
-    const recordingId = String(req.query.recordingId || '').trim();
+    const queryUserKey = String(req.query.userKey || '').trim();
+    const queryCustomerId = String(req.query.customerId || '').trim();
+    const queryRecordingId = String(req.query.recordingId || '').trim();
 
-    // If caller provided no usable userKey (or 'anonymous'), try to resolve it
-    // from a known recordingId. This handles the common case where the Order
-    // row has a different userKey than the recording rows (identity can shift
-    // between AddToCart and checkout) — we trust the recording's key.
-    if ((!userKey || userKey === 'anonymous') && recordingId) {
+    // ── 1. Build the seed userKey set ────────────────────────────────────
+    const seedUserKeys = new Set();
+    if (queryUserKey && queryUserKey !== 'anonymous') seedUserKeys.add(queryUserKey);
+
+    // Also seed from the passed recordingId (trust recording's own userKey)
+    if (queryRecordingId) {
       const ref = await prisma.sessionRecording.findUnique({
-        where: { recordingId },
-        select: { userKey: true, accountId: true },
+        where: { recordingId: queryRecordingId },
+        select: { userKey: true, accountId: true, orderId: true, checkoutToken: true },
       }).catch(() => null);
-      if (ref && ref.accountId === account_id && ref.userKey && ref.userKey !== 'anonymous') {
-        userKey = ref.userKey;
+      if (ref && ref.accountId === account_id) {
+        if (ref.userKey && ref.userKey !== 'anonymous') seedUserKeys.add(ref.userKey);
       }
     }
 
-    if (!userKey || userKey === 'anonymous') {
-      return res.json({ ok: true, recordings: [], resolvedUserKey: null });
+    // ── 2. Find the customerId/emailHash for this person ────────────────
+    // Identity can shift between AddToCart and checkout — the Order row has
+    // stable identifiers (customerId, emailHash). Any Order where the user's
+    // userKey appears tells us who the person is; from there we can find
+    // every other userKey they've ever used.
+    const customerIds = new Set();
+    const emailHashes = new Set();
+    if (queryCustomerId) customerIds.add(queryCustomerId);
+
+    if (seedUserKeys.size > 0) {
+      const seedOrders = await prisma.order.findMany({
+        where: { accountId: account_id, userKey: { in: Array.from(seedUserKeys) } },
+        select: { customerId: true, emailHash: true },
+        take: 50,
+      }).catch(() => []);
+      for (const o of seedOrders) {
+        if (o.customerId) customerIds.add(o.customerId);
+        if (o.emailHash) emailHashes.add(o.emailHash);
+      }
     }
 
+    // ── 3. Expand to all userKeys this person has used ──────────────────
+    const allUserKeys = new Set(seedUserKeys);
+    if (customerIds.size > 0 || emailHashes.size > 0) {
+      const personOr = [];
+      if (customerIds.size > 0) personOr.push({ customerId: { in: Array.from(customerIds) } });
+      if (emailHashes.size > 0) personOr.push({ emailHash: { in: Array.from(emailHashes) } });
+      const personOrders = await prisma.order.findMany({
+        where: { accountId: account_id, OR: personOr },
+        select: { userKey: true },
+        take: 200,
+      }).catch(() => []);
+      for (const o of personOrders) {
+        if (o.userKey && o.userKey !== 'anonymous') allUserKeys.add(o.userKey);
+      }
+    }
+
+    if (allUserKeys.size === 0) {
+      return res.json({ ok: true, recordings: [], resolvedUserKeys: [], customerIdMatches: 0 });
+    }
+
+    // ── 4. Fetch all READY recordings across the unified userKey set ────
     const recs = await prisma.sessionRecording.findMany({
       where: {
         accountId: account_id,
-        userKey,
+        userKey: { in: Array.from(allUserKeys) },
         status: 'READY',
         rawErasedAt: null,
       },
@@ -461,7 +501,12 @@ router.get('/:account_id/by-user', async (req, res) => {
       orderBy: { triggerAt: 'asc' },
       take: 50,
     });
-    return res.json({ ok: true, recordings: recs, resolvedUserKey: userKey });
+    return res.json({
+      ok: true,
+      recordings: recs,
+      resolvedUserKeys: Array.from(allUserKeys),
+      customerIdMatches: customerIds.size,
+    });
   } catch (err) {
     console.error('[recording/by-user] Error:', err.message);
     return res.status(500).json({ ok: false, error: err.message });
