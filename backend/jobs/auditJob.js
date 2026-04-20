@@ -822,12 +822,12 @@ async function runAuditFor({ userId, type, source = 'manual' }) {
 
     /* ---------- META ADS ---------- */
     if (t === 'meta') {
-      raw = await collectMeta(userId);
+      raw = await collectMeta(userId, { contextRangeDays: 30 });
 
       if (raw?.requiredSelection && String(raw?.reason || '').startsWith('SELECTION_REQUIRED')) {
         if (!selMeta.length) {
           const waited = await waitForSelectionIfOnboarding({ userId, type: 'meta', source });
-          if (waited) raw = await collectMeta(userId);
+          if (waited) raw = await collectMeta(userId, { contextRangeDays: 30 });
         }
 
         if (!selMeta.length) {
