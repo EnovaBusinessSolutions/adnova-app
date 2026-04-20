@@ -6982,13 +6982,17 @@
          */
         async function adrayOpenJourneyPlayer(userKey, fallbackRecordingId, sessionId) {
             const cleanUserKey = String(userKey || '').trim();
-            if (!cleanUserKey || cleanUserKey === 'anonymous') {
-                return adrayOpenPlayer(fallbackRecordingId, sessionId || '');
-            }
+            const hasRecording = !!fallbackRecordingId;
+            // If we have neither a userKey nor a recordingId, nothing to do.
+            if (!cleanUserKey && !hasRecording) return;
             try {
-                const resp = await fetch(`/api/recording/${encodeURIComponent(currentShopId)}/by-user?userKey=${encodeURIComponent(cleanUserKey)}`);
+                const qs = new URLSearchParams();
+                if (cleanUserKey) qs.set('userKey', cleanUserKey);
+                if (hasRecording) qs.set('recordingId', fallbackRecordingId);
+                const resp = await fetch(`/api/recording/${encodeURIComponent(currentShopId)}/by-user?${qs.toString()}`);
                 const data = await resp.json();
                 const ids = Array.isArray(data?.recordings) ? data.recordings.map((r) => r.recordingId).filter(Boolean) : [];
+                console.log('[adrayOpenJourneyPlayer] userKey:', cleanUserKey, 'resolved:', data?.resolvedUserKey, 'recordings found:', ids.length);
                 if (ids.length > 1) {
                     return adrayOpenStitchedPlayer(ids);
                 }

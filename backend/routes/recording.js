@@ -426,10 +426,27 @@ router.get('/:account_id/list', async (req, res) => {
 router.get('/:account_id/by-user', async (req, res) => {
   try {
     const { account_id } = req.params;
-    const userKey = String(req.query.userKey || '').trim();
-    if (!userKey || userKey === 'anonymous') {
-      return res.json({ ok: true, recordings: [] });
+    let userKey = String(req.query.userKey || '').trim();
+    const recordingId = String(req.query.recordingId || '').trim();
+
+    // If caller provided no usable userKey (or 'anonymous'), try to resolve it
+    // from a known recordingId. This handles the common case where the Order
+    // row has a different userKey than the recording rows (identity can shift
+    // between AddToCart and checkout) — we trust the recording's key.
+    if ((!userKey || userKey === 'anonymous') && recordingId) {
+      const ref = await prisma.sessionRecording.findUnique({
+        where: { recordingId },
+        select: { userKey: true, accountId: true },
+      }).catch(() => null);
+      if (ref && ref.accountId === account_id && ref.userKey && ref.userKey !== 'anonymous') {
+        userKey = ref.userKey;
+      }
     }
+
+    if (!userKey || userKey === 'anonymous') {
+      return res.json({ ok: true, recordings: [], resolvedUserKey: null });
+    }
+
     const recs = await prisma.sessionRecording.findMany({
       where: {
         accountId: account_id,
@@ -444,7 +461,7 @@ router.get('/:account_id/by-user', async (req, res) => {
       orderBy: { triggerAt: 'asc' },
       take: 50,
     });
-    return res.json({ ok: true, recordings: recs });
+    return res.json({ ok: true, recordings: recs, resolvedUserKey: userKey });
   } catch (err) {
     console.error('[recording/by-user] Error:', err.message);
     return res.status(500).json({ ok: false, error: err.message });
