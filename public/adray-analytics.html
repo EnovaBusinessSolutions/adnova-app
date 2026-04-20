@@ -6862,7 +6862,30 @@
                 // 3. Fetch events from R2 presigned URL
                 content.innerHTML = '<p style="color:#9ca3af;font-size:13px;padding:40px 0;text-align:center;">Descargando eventos…</p>';
                 const eventsResp = await fetch(data.presignedUrl);
-                const eventsRaw = await eventsResp.json();
+                if (!eventsResp.ok) {
+                    const reason = eventsResp.status === 404
+                        ? 'el archivo no existe en storage (probablemente fue purgado o el finalize falló)'
+                        : `HTTP ${eventsResp.status}`;
+                    console.warn('[adrayOpenPlayer] R2 fetch failed:', reason, 'recordingId:', recordingId);
+                    content.innerHTML = `
+                        <div style="padding:40px;text-align:center;">
+                            <p style="color:#fbbf24;font-size:13px;margin-bottom:10px;">⚠️ Grabación no disponible</p>
+                            <p style="color:#9ca3af;font-size:11px;">${escapeHtml(reason)}.</p>
+                        </div>`;
+                    return;
+                }
+                const eventsText = await eventsResp.text();
+                if (eventsText.trim().startsWith('<')) {
+                    console.warn('[adrayOpenPlayer] R2 returned non-JSON (XML) for', recordingId);
+                    content.innerHTML = `<p style="color:#f87171;font-size:13px;padding:40px;text-align:center;">Respuesta inválida del storage.</p>`;
+                    return;
+                }
+                let eventsRaw;
+                try { eventsRaw = JSON.parse(eventsText); } catch (parseErr) {
+                    console.warn('[adrayOpenPlayer] JSON parse failed:', parseErr.message);
+                    content.innerHTML = `<p style="color:#f87171;font-size:13px;padding:40px;text-align:center;">Grabación corrupta (no se pudo parsear).</p>`;
+                    return;
+                }
                 const eventsArr = Array.isArray(eventsRaw) ? eventsRaw : (eventsRaw?.events || []);
 
                 // ── Diagnostic logs ──────────────────────────────────────────
@@ -7129,7 +7152,36 @@
 
             try {
                 const eventsResp = await fetch(meta.presignedUrl);
-                const raw = await eventsResp.json();
+                if (!eventsResp.ok) {
+                    // R2 can return 404 XML when the object was evicted/never uploaded.
+                    const reason = eventsResp.status === 404 ? 'el archivo no existe en storage (probablemente fue purgado o el finalize falló)' : `HTTP ${eventsResp.status}`;
+                    console.warn('[playlist render] segment', idx+1, 'broken:', reason, 'recordingId:', rec.recordingId);
+                    content.innerHTML = `
+                        ${_adrayPlaylistNavHtml(idx, total)}
+                        <div style="padding:40px;text-align:center;">
+                            <p style="color:#fbbf24;font-size:13px;margin-bottom:10px;">⚠️ Esta grabación no está disponible</p>
+                            <p style="color:#9ca3af;font-size:11px;">${escapeHtml(reason)}.</p>
+                            <p style="color:#6b7280;font-size:11px;margin-top:8px;">Usa las flechas para navegar a otra sesión.</p>
+                        </div>`;
+                    return;
+                }
+                const text = await eventsResp.text();
+                // Guard against XML/HTML error payloads that happen to return 200.
+                if (text.trim().startsWith('<')) {
+                    console.warn('[playlist render] segment', idx+1, 'returned non-JSON body');
+                    content.innerHTML = `
+                        ${_adrayPlaylistNavHtml(idx, total)}
+                        <p style="color:#f87171;font-size:13px;padding:40px;text-align:center;">Respuesta inválida del storage para esta sesión.</p>`;
+                    return;
+                }
+                let raw;
+                try { raw = JSON.parse(text); } catch (parseErr) {
+                    console.warn('[playlist render] JSON parse failed:', parseErr.message);
+                    content.innerHTML = `
+                        ${_adrayPlaylistNavHtml(idx, total)}
+                        <p style="color:#f87171;font-size:13px;padding:40px;text-align:center;">Sesión corrupta (no se pudo parsear).</p>`;
+                    return;
+                }
                 const events = Array.isArray(raw) ? raw : (raw?.events || []);
                 if (!events.length || !events.some((e) => e.type === 2)) {
                     content.innerHTML = `
