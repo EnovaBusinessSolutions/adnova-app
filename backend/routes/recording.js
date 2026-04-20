@@ -527,7 +527,8 @@ router.get('/:account_id/:recording_id', async (req, res) => {
       select: {
         recordingId: true, sessionId: true, accountId: true, status: true,
         outcome: true, cartValue: true, durationMs: true, triggerAt: true,
-        behavioralSignals: true, attributionSnapshot: true, r2Key: true, createdAt: true,
+        behavioralSignals: true, attributionSnapshot: true, r2Key: true,
+        createdAt: true, lastChunkAt: true,
       },
     });
 
@@ -535,11 +536,14 @@ router.get('/:account_id/:recording_id', async (req, res) => {
       return res.status(404).json({ ok: false, error: 'Recording not found' });
     }
 
-    // Auto-finalize: if stuck in RECORDING for >5 min, enqueue finalize job
+    // Auto-finalize: finalize when inactive >5min (arch v2). A long active
+    // session (>5min old but still chunking) must NOT be killed — use
+    // lastChunkAt, not createdAt.
     if (rec.status === 'RECORDING' && recordingQueue) {
-      const ageMs = Date.now() - new Date(rec.createdAt).getTime();
-      if (ageMs > 5 * 60 * 1000) {
-        console.log(`[recording GET] ${recording_id} stuck in RECORDING for ${Math.round(ageMs/1000)}s — auto-finalizing`);
+      const lastActivity = rec.lastChunkAt ? new Date(rec.lastChunkAt).getTime() : new Date(rec.createdAt).getTime();
+      const inactiveMs = Date.now() - lastActivity;
+      if (inactiveMs > 5 * 60 * 1000) {
+        console.log(`[recording GET] ${recording_id} inactive ${Math.round(inactiveMs/1000)}s — auto-finalizing`);
         recordingQueue.add('recording:finalize', {
           recordingId: recording_id,
           accountId: account_id,
@@ -783,14 +787,20 @@ router.post('/sweep', async (req, res) => {
   }
 
   try {
-    const cutoff = new Date(Date.now() - 10 * 60 * 1000); // 10 min ago
+    // Arch v2: finalize by inactivity, not by age. A recording is "complete"
+    // when 5 minutes have elapsed since the last chunk arrived. `createdAt`
+    // fallback covers recordings that never produced any chunk.
+    const inactivityCutoff = new Date(Date.now() - 5 * 60 * 1000); // 5 min ago
     // ERROR recordings get 1 retry chance (in case failure was transient)
     const errorCutoff = new Date(Date.now() - 30 * 60 * 1000); // 30 min ago for ERROR
 
     const stuck = await prisma.sessionRecording.findMany({
       where: {
         OR: [
-          { status: { in: ['RECORDING', 'FINALIZING'] }, createdAt: { lt: cutoff } },
+          // Active recordings whose last chunk arrived >5min ago → session ended.
+          { status: { in: ['RECORDING', 'FINALIZING'] }, lastChunkAt: { lt: inactivityCutoff } },
+          // Recordings that never chunked (orphans) after 5min → finalize/ERROR.
+          { status: { in: ['RECORDING', 'FINALIZING'] }, lastChunkAt: null, createdAt: { lt: inactivityCutoff } },
           { status: 'ERROR', chunkCount: { gt: 0 }, createdAt: { lt: errorCutoff }, rawErasedAt: null },
         ],
       },
