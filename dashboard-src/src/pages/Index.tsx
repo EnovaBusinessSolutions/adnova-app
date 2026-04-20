@@ -5,6 +5,7 @@ import { DashboardLayout } from "@/components/DashboardLayout";
 import { PixelSetupWizard } from "@/components/PixelSetupWizard";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   ArrowRight,
   Check,
@@ -352,6 +353,7 @@ function StepRow({
   desc,
   state,
   lockedLabel,
+  lockedTooltip,
   todoLabel,
   ctaLabel,
   onCta,
@@ -364,6 +366,7 @@ function StepRow({
   desc: string;
   state: StepState;
   lockedLabel?: string;
+  lockedTooltip?: string;
   todoLabel?: string;
   ctaLabel: string;
   onCta: () => void;
@@ -455,21 +458,49 @@ function StepRow({
           </div>
         </div>
 
-        <Button
-          variant="outline"
-          disabled={isLocked || !!ctaDisabled}
-          onClick={onCta}
-          className={[
-            "h-11 shrink-0 rounded-2xl border px-4 backdrop-blur-md",
-            "disabled:opacity-100 disabled:cursor-default",
-            isDone && !!ctaDisabled
-              ? theme.buttonDone
-              : "border-white/10 bg-white/[0.04] text-white hover:bg-white/[0.08]",
-          ].join(" ")}
-        >
-          {ctaLabel}
-          {!(isDone && !!ctaDisabled) ? <ArrowRight className="ml-2 h-4 w-4" /> : null}
-        </Button>
+        {isLocked && lockedTooltip ? (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span tabIndex={0} className="inline-flex shrink-0">
+                <Button
+                  variant="outline"
+                  disabled
+                  onClick={onCta}
+                  className={[
+                    "h-11 shrink-0 rounded-2xl border px-4 backdrop-blur-md",
+                    "disabled:opacity-100 disabled:cursor-not-allowed",
+                    "border-white/10 bg-white/[0.04] text-white/70",
+                  ].join(" ")}
+                >
+                  {ctaLabel}
+                </Button>
+              </span>
+            </TooltipTrigger>
+            <TooltipContent
+              side="top"
+              align="center"
+              className="border border-white/10 bg-[#0B0B0D] text-[#E5D3FF] shadow-[0_0_22px_rgba(181,92,255,0.10)]"
+            >
+              {lockedTooltip}
+            </TooltipContent>
+          </Tooltip>
+        ) : (
+          <Button
+            variant="outline"
+            disabled={isLocked || !!ctaDisabled}
+            onClick={onCta}
+            className={[
+              "h-11 shrink-0 rounded-2xl border px-4 backdrop-blur-md",
+              "disabled:opacity-100 disabled:cursor-default",
+              isDone && !!ctaDisabled
+                ? theme.buttonDone
+                : "border-white/10 bg-white/[0.04] text-white hover:bg-white/[0.08]",
+            ].join(" ")}
+          >
+            {ctaLabel}
+            {!(isDone && !!ctaDisabled) ? <ArrowRight className="ml-2 h-4 w-4" /> : null}
+          </Button>
+        )}
       </div>
 
       <div className="relative sm:hidden">
@@ -498,21 +529,49 @@ function StepRow({
         </div>
 
         <div className="mt-4">
-          <Button
-            variant="outline"
-            disabled={isLocked || !!ctaDisabled}
-            onClick={onCta}
-            className={[
-              "h-11 w-full justify-center rounded-2xl border backdrop-blur-md",
-              "disabled:opacity-100 disabled:cursor-default",
-              isDone && !!ctaDisabled
-                ? theme.buttonDone
-                : "border-white/10 bg-white/[0.04] text-white hover:bg-white/[0.08]",
-            ].join(" ")}
-          >
-            {ctaLabel}
-            {!(isDone && !!ctaDisabled) ? <ArrowRight className="ml-2 h-4 w-4" /> : null}
-          </Button>
+          {isLocked && lockedTooltip ? (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span tabIndex={0} className="inline-flex w-full">
+                  <Button
+                    variant="outline"
+                    disabled
+                    onClick={onCta}
+                    className={[
+                      "h-11 w-full justify-center rounded-2xl border backdrop-blur-md",
+                      "disabled:opacity-100 disabled:cursor-not-allowed",
+                      "border-white/10 bg-white/[0.04] text-white/70",
+                    ].join(" ")}
+                  >
+                    {ctaLabel}
+                  </Button>
+                </span>
+              </TooltipTrigger>
+              <TooltipContent
+                side="top"
+                align="center"
+                className="border border-white/10 bg-[#0B0B0D] text-[#E5D3FF] shadow-[0_0_22px_rgba(181,92,255,0.10)]"
+              >
+                {lockedTooltip}
+              </TooltipContent>
+            </Tooltip>
+          ) : (
+            <Button
+              variant="outline"
+              disabled={isLocked || !!ctaDisabled}
+              onClick={onCta}
+              className={[
+                "h-11 w-full justify-center rounded-2xl border backdrop-blur-md",
+                "disabled:opacity-100 disabled:cursor-default",
+                isDone && !!ctaDisabled
+                  ? theme.buttonDone
+                  : "border-white/10 bg-white/[0.04] text-white hover:bg-white/[0.08]",
+              ].join(" ")}
+            >
+              {ctaLabel}
+              {!(isDone && !!ctaDisabled) ? <ArrowRight className="ml-2 h-4 w-4" /> : null}
+            </Button>
+          )}
         </div>
       </div>
     </div>
@@ -965,21 +1024,14 @@ export default function Index() {
       {
         key: "merchant",
         title: "Merchant Center",
-        desc: merchantReady
-          ? "Merchant Center account connected and ready for product intelligence."
-          : merchantNeedsPick
-            ? "Select your Merchant Center account to complete the setup."
-            : "Connect Merchant Center to unlock catalog and product feed insights.",
+        desc: "Connect Merchant Center to unlock catalog and product feed insights.",
         icon: <ShoppingBag className="h-4 w-4 text-[#B55CFF]" />,
-        state: merchantReady ? ("done" as StepState) : ("todo" as StepState),
-        todoLabel: merchantReady ? "Completed" : "Pending",
-        ctaLabel: merchantReady ? "Connected" : merchantNeedsPick ? "Select" : "Connect",
-        ctaDisabled: merchantReady,
-        onCta: () => {
-          if (merchantReady) return;
-          if (merchantNeedsPick) return openSelectorFor("merchant", { merchant: true }, true);
-          window.location.assign(connectGoogleMerchantUrl);
-        },
+        state: "locked" as StepState,
+        lockedLabel: "Coming Soon",
+        lockedTooltip: "Under development — available soon",
+        ctaLabel: "Coming Soon",
+        ctaDisabled: true,
+        onCta: () => {},
       },
     ];
   }, [
