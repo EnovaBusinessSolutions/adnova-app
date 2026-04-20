@@ -10,6 +10,8 @@ const {
   getChannelSummaryInput,
   getDateComparisonInput,
   validateDateRange,
+  resolveDateRangeDefaults,
+  resolveComparisonDefaults,
 } = require('../schemas/tool-schemas');
 
 const { createToolError, createToolErrorResponse, createToolResponse, ERROR_CODES } = require('../schemas/errors');
@@ -68,10 +70,23 @@ describe('Tool Input Schemas', () => {
     expect(result.date_from).toBe('2026-01-01');
   });
 
-  test('getChannelSummaryInput requires both dates', () => {
+  test('getChannelSummaryInput allows missing dates (handler applies defaults)', () => {
+    // date_from / date_to are nullable+optional so LLMs that send null or
+    // omit them altogether do not trigger a Zod validation error. The handler
+    // fills defaults via resolveDateRangeDefaults.
+    expect(() => getChannelSummaryInput.parse({})).not.toThrow();
+    expect(() => getChannelSummaryInput.parse({ date_from: '2026-01-01' })).not.toThrow();
+    expect(() => getChannelSummaryInput.parse({ date_from: null, date_to: null })).not.toThrow();
+  });
+
+  test('getAdPerformanceInput accepts null dates', () => {
     expect(() =>
-      getChannelSummaryInput.parse({ date_from: '2026-01-01' })
-    ).toThrow();
+      getAdPerformanceInput.parse({ channel: 'meta', date_from: null, date_to: null })
+    ).not.toThrow();
+  });
+
+  test('getShopifyRevenueInput accepts omitted dates', () => {
+    expect(() => getShopifyRevenueInput.parse({})).not.toThrow();
   });
 
   test('getDateComparisonInput accepts all channels', () => {
@@ -108,6 +123,92 @@ describe('validateDateRange', () => {
 
   test('returns error for invalid date', () => {
     expect(validateDateRange('not-a-date', '2026-01-01')).toContain('Invalid');
+  });
+});
+
+describe('resolveDateRangeDefaults', () => {
+  const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+
+  test('fills in defaults when both args are null', () => {
+    const { date_from, date_to } = resolveDateRangeDefaults(null, null);
+    expect(date_from).toMatch(ISO_DATE);
+    expect(date_to).toMatch(ISO_DATE);
+    expect(date_from < date_to).toBe(true);
+  });
+
+  test('fills in defaults when both args are undefined', () => {
+    const { date_from, date_to } = resolveDateRangeDefaults(undefined, undefined);
+    expect(date_from).toMatch(ISO_DATE);
+    expect(date_to).toMatch(ISO_DATE);
+  });
+
+  test('defaults date_from relative to explicit date_to', () => {
+    const { date_from, date_to } = resolveDateRangeDefaults(null, '2026-03-15');
+    expect(date_to).toBe('2026-03-15');
+    // 30 days before 2026-03-15 = 2026-02-13
+    expect(date_from).toBe('2026-02-13');
+  });
+
+  test('defaults date_to to today when date_from is explicit', () => {
+    const todayStr = new Date().toISOString().slice(0, 10);
+    const { date_from, date_to } = resolveDateRangeDefaults('2026-01-01', null);
+    expect(date_from).toBe('2026-01-01');
+    expect(date_to).toBe(todayStr);
+  });
+
+  test('passes through when both args are provided', () => {
+    const { date_from, date_to } = resolveDateRangeDefaults('2026-01-01', '2026-01-31');
+    expect(date_from).toBe('2026-01-01');
+    expect(date_to).toBe('2026-01-31');
+  });
+
+  test('respects custom fallbackDays', () => {
+    const { date_from, date_to } = resolveDateRangeDefaults(null, '2026-03-15', 7);
+    expect(date_to).toBe('2026-03-15');
+    expect(date_from).toBe('2026-03-08');
+  });
+});
+
+describe('resolveComparisonDefaults', () => {
+  const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+
+  test('fills all four dates when everything is null', () => {
+    const out = resolveComparisonDefaults(null, null, null, null);
+    expect(out.period_a_from).toMatch(ISO_DATE);
+    expect(out.period_a_to).toMatch(ISO_DATE);
+    expect(out.period_b_from).toMatch(ISO_DATE);
+    expect(out.period_b_to).toMatch(ISO_DATE);
+    // period A precedes period B
+    expect(out.period_a_to < out.period_b_from).toBe(true);
+    // each period is a forward-ordered range
+    expect(out.period_a_from < out.period_a_to).toBe(true);
+    expect(out.period_b_from < out.period_b_to).toBe(true);
+  });
+
+  test('anchors defaults to the most recent known date', () => {
+    const out = resolveComparisonDefaults(null, null, null, '2026-03-15');
+    expect(out.period_b_to).toBe('2026-03-15');
+    // period_b_from = 30 days before period_b_to
+    expect(out.period_b_from).toBe('2026-02-13');
+    // period_a_to = day before period_b_from
+    expect(out.period_a_to).toBe('2026-02-12');
+    // period_a_from = 30 days before period_a_to
+    expect(out.period_a_from).toBe('2026-01-13');
+  });
+
+  test('passes through explicit values', () => {
+    const out = resolveComparisonDefaults(
+      '2026-01-01',
+      '2026-01-31',
+      '2026-02-01',
+      '2026-02-28'
+    );
+    expect(out).toEqual({
+      period_a_from: '2026-01-01',
+      period_a_to: '2026-01-31',
+      period_b_from: '2026-02-01',
+      period_b_to: '2026-02-28',
+    });
   });
 });
 

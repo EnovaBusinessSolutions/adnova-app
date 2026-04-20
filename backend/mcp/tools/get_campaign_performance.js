@@ -1,6 +1,6 @@
 'use strict';
 
-const { validateDateRange, getCampaignPerformanceInput } = require('../schemas/tool-schemas');
+const { validateDateRange, resolveDateRangeDefaults, getCampaignPerformanceInput } = require('../schemas/tool-schemas');
 const { createToolResponse, createToolErrorResponse } = require('../schemas/errors');
 const { runSnapshotFirstTool } = require('../snapshot/runSnapshotFirst');
 const { campaignPerformanceSnapshotOpts } = require('../services/adsPerformanceResolve');
@@ -26,7 +26,8 @@ function register(server, mcpUserId) {
         const sc = checkToolScopes(TOOL_NAME);
         if (!sc.ok) return createToolErrorResponse(sc.code, TOOL_NAME, sc.detail);
 
-        const rangeError = validateDateRange(params.date_from, params.date_to);
+        const { date_from, date_to } = resolveDateRangeDefaults(params.date_from, params.date_to);
+        const rangeError = validateDateRange(date_from, date_to);
         if (rangeError) return createToolErrorResponse('DATE_RANGE_TOO_LARGE', TOOL_NAME, rangeError);
 
         const lim = params.limit || 10;
@@ -36,8 +37,8 @@ function register(server, mcpUserId) {
           campaignPerformanceSnapshotOpts(
             userId,
             params.channel,
-            params.date_from,
-            params.date_to,
+            date_from,
+            date_to,
             lim,
             st
           )

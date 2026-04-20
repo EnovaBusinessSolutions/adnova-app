@@ -2,7 +2,7 @@
 
 const metaAdapter = require('../adapters/meta');
 const googleAdapter = require('../adapters/google');
-const { validateDateRange, getAdsetPerformanceInput } = require('../schemas/tool-schemas');
+const { validateDateRange, resolveDateRangeDefaults, getAdsetPerformanceInput } = require('../schemas/tool-schemas');
 const { createToolResponse, createToolErrorResponse } = require('../schemas/errors');
 const { isGoogleReadsFromDbOnly } = require('../snapshot/config');
 const { resolveToolUserId } = require('../mcpContext');
@@ -27,7 +27,8 @@ function register(server, mcpUserId) {
         const sc = checkToolScopes(TOOL_NAME);
         if (!sc.ok) return createToolErrorResponse(sc.code, TOOL_NAME, sc.detail);
 
-        const rangeError = validateDateRange(params.date_from, params.date_to);
+        const { date_from, date_to } = resolveDateRangeDefaults(params.date_from, params.date_to);
+        const rangeError = validateDateRange(date_from, date_to);
         if (rangeError) return createToolErrorResponse('DATE_RANGE_TOO_LARGE', TOOL_NAME, rangeError);
 
         if (params.channel === 'google' && isGoogleReadsFromDbOnly()) {
@@ -36,8 +37,8 @@ function register(server, mcpUserId) {
             campaign_id: params.campaign_id,
             campaign_name: null,
             adsets: [],
-            date_from: params.date_from,
-            date_to: params.date_to,
+            date_from,
+            date_to,
           });
         }
 
@@ -45,8 +46,8 @@ function register(server, mcpUserId) {
         const data = await adapter.getAdsetPerformance(
           userId,
           params.campaign_id,
-          params.date_from,
-          params.date_to
+          date_from,
+          date_to
         );
         return createToolResponse(data);
       } catch (err) {

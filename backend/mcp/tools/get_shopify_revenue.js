@@ -1,6 +1,6 @@
 'use strict';
 
-const { validateDateRange, getShopifyRevenueInput } = require('../schemas/tool-schemas');
+const { validateDateRange, resolveDateRangeDefaults, getShopifyRevenueInput } = require('../schemas/tool-schemas');
 const shopifyAdapter = require('../adapters/shopify');
 const { createToolErrorResponse } = require('../schemas/errors');
 const { runSnapshotFirstTool } = require('../snapshot/runSnapshotFirst');
@@ -27,7 +27,8 @@ function register(server, mcpUserId) {
         const sc = checkToolScopes(TOOL_NAME);
         if (!sc.ok) return createToolErrorResponse(sc.code, TOOL_NAME, sc.detail);
 
-        const rangeError = validateDateRange(params.date_from, params.date_to);
+        const { date_from, date_to } = resolveDateRangeDefaults(params.date_from, params.date_to);
+        const rangeError = validateDateRange(date_from, date_to);
         if (rangeError) return createToolErrorResponse('DATE_RANGE_TOO_LARGE', TOOL_NAME, rangeError);
 
         return runSnapshotFirstTool({
@@ -36,7 +37,7 @@ function register(server, mcpUserId) {
           refreshSource: null,
           buildSnapshot: async () => ({ ok: false }),
           execLive: () =>
-            shopifyAdapter.getShopifyRevenue(userId, params.date_from, params.date_to, params.granularity || 'total'),
+            shopifyAdapter.getShopifyRevenue(userId, date_from, date_to, params.granularity || 'total'),
         });
       } catch (err) {
         console.error(`[${TOOL_NAME}] error:`, err);

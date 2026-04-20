@@ -1,6 +1,6 @@
 'use strict';
 
-const { validateDateRange, getChannelSummaryInput } = require('../schemas/tool-schemas');
+const { validateDateRange, resolveDateRangeDefaults, getChannelSummaryInput } = require('../schemas/tool-schemas');
 const { createToolResponse, createToolErrorResponse } = require('../schemas/errors');
 const { resolveChannelSummaryPayload } = require('../services/adsPerformanceResolve');
 const { resolveToolUserId } = require('../mcpContext');
@@ -25,10 +25,11 @@ function register(server, mcpUserId) {
         const sc = checkToolScopes(TOOL_NAME);
         if (!sc.ok) return createToolErrorResponse(sc.code, TOOL_NAME, sc.detail);
 
-        const rangeError = validateDateRange(params.date_from, params.date_to);
+        const { date_from, date_to } = resolveDateRangeDefaults(params.date_from, params.date_to);
+        const rangeError = validateDateRange(date_from, date_to);
         if (rangeError) return createToolErrorResponse('DATE_RANGE_TOO_LARGE', TOOL_NAME, rangeError);
 
-        const result = await resolveChannelSummaryPayload(userId, params.date_from, params.date_to);
+        const result = await resolveChannelSummaryPayload(userId, date_from, date_to);
         return createToolResponse(result);
       } catch (err) {
         console.error(`[${TOOL_NAME}] error:`, err);
