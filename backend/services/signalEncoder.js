@@ -104,23 +104,109 @@ function buildEncodedContextText({
   addList('RISK_FLAGS', riskFlags);
   addList('PRIORITY_ACTIONS', priorityActions);
 
-  // --- DAILY INDEX (30-day day-by-day snapshot) ---
+  // --- DAILY INDEX (day-by-day granularity across all connected platforms) ---
+  //
+  // Rows come from mcpContextBuilder.buildMetaDailyRows / buildGoogleDailyRows /
+  // buildGa4DailyRows / buildBlendedDailyRows. Each row is per-platform per-date.
+  // We group by date and render one sub-line per platform so the LLM and the
+  // merchant get the full 30-day granular picture for each connected source.
+  //
+  // No slice cap: the user asked for day-1 to day-30 visibility, even at 3+
+  // sources (which produces ~30 days × 4 platform rows = ~120 sub-lines).
   if (Array.isArray(dailyIndex) && dailyIndex.length > 0) {
-    lines.push('');
-    lines.push('[DAILY_INDEX]');
-    for (const row of dailyIndex.slice(0, 30)) {
-      const date = row?.date || row?.day || '?';
+    const byDate = new Map();
+    for (const row of dailyIndex) {
+      const d = row && typeof row === 'object' ? safeStr(row.date).trim() : '';
+      if (!d) continue;
+      if (!byDate.has(d)) byDate.set(d, []);
+      byDate.get(d).push(row);
+    }
+
+    const sortedDates = Array.from(byDate.keys()).sort((a, b) => a.localeCompare(b));
+    const platformOrder = ['meta', 'google', 'ga4', 'blended'];
+
+    const fmtInt = (v) => (v == null ? null : String(Math.round(Number(v))));
+    const fmt2 = (v) => (v == null ? null : Number(v).toFixed(2));
+    const fmtPct = (v) => (v == null ? null : `${Number(v).toFixed(2)}%`);
+    const fmtShare = (v) => (v == null ? null : `${Math.round(Number(v) * 100)}%`);
+
+    const renderPlatformParts = (row) => {
+      const p = safeStr(row?.platform).trim().toLowerCase();
       const parts = [];
-      if (row?.meta_spend != null) parts.push(`meta_spend=${Number(row.meta_spend).toFixed(0)}`);
-      if (row?.meta_roas != null) parts.push(`meta_roas=${Number(row.meta_roas).toFixed(2)}`);
-      if (row?.meta_purchases != null) parts.push(`meta_purchases=${row.meta_purchases}`);
-      if (row?.google_spend != null) parts.push(`google_spend=${Number(row.google_spend).toFixed(0)}`);
-      if (row?.google_roas != null) parts.push(`google_roas=${Number(row.google_roas).toFixed(2)}`);
-      if (row?.google_conversions != null) parts.push(`google_conv=${Number(row.google_conversions).toFixed(0)}`);
-      if (row?.ga4_revenue != null) parts.push(`ga4_revenue=${Number(row.ga4_revenue).toFixed(0)}`);
-      if (row?.ga4_sessions != null) parts.push(`ga4_sessions=${row.ga4_sessions}`);
-      if (row?.ga4_conversions != null) parts.push(`ga4_conv=${row.ga4_conversions}`);
-      if (parts.length > 0) lines.push(`- ${date}: ${parts.join(' | ')}`);
+
+      if (p === 'meta' || p === 'google') {
+        if (row.spend != null) parts.push(`spend=${fmtInt(row.spend)}`);
+        if (row.impressions != null) parts.push(`imp=${fmtInt(row.impressions)}`);
+        if (row.clicks != null) parts.push(`clicks=${fmtInt(row.clicks)}`);
+        if (row.ctr != null) parts.push(`ctr=${fmtPct(row.ctr)}`);
+        if (row.cpc != null) parts.push(`cpc=${fmt2(row.cpc)}`);
+        if (row.cpm != null) parts.push(`cpm=${fmt2(row.cpm)}`);
+        if (row.conversions != null) parts.push(`conv=${fmtInt(row.conversions)}`);
+        if (row.conversion_value != null) parts.push(`cv=${fmtInt(row.conversion_value)}`);
+        if (row.roas_platform != null) parts.push(`roas=${fmt2(row.roas_platform)}`);
+        if (row.orders != null) parts.push(`orders=${fmtInt(row.orders)}`);
+        if (row.revenue != null) parts.push(`revenue=${fmtInt(row.revenue)}`);
+        if (row.roas_reconciled != null) parts.push(`roas_reconciled=${fmt2(row.roas_reconciled)}`);
+      } else if (p === 'ga4') {
+        if (row.sessions != null) parts.push(`sessions=${fmtInt(row.sessions)}`);
+        if (row.users != null) parts.push(`users=${fmtInt(row.users)}`);
+        if (row.engagement_rate != null) parts.push(`eng_rate=${fmtPct(row.engagement_rate)}`);
+        if (row.conversions != null) parts.push(`conv=${fmtInt(row.conversions)}`);
+        if (row.ga4_revenue != null) parts.push(`revenue=${fmtInt(row.ga4_revenue)}`);
+      } else if (p === 'blended') {
+        if (row.blended_spend != null) parts.push(`total_spend=${fmtInt(row.blended_spend)}`);
+        if (row.impressions != null) parts.push(`imp=${fmtInt(row.impressions)}`);
+        if (row.clicks != null) parts.push(`clicks=${fmtInt(row.clicks)}`);
+        if (row.blended_ctr != null) parts.push(`ctr=${fmtPct(row.blended_ctr)}`);
+        if (row.blended_cpc != null) parts.push(`cpc=${fmt2(row.blended_cpc)}`);
+        if (row.sessions != null) parts.push(`sessions=${fmtInt(row.sessions)}`);
+        if (row.users != null) parts.push(`users=${fmtInt(row.users)}`);
+        if (row.platform_spend_share && typeof row.platform_spend_share === 'object') {
+          const share = Object.entries(row.platform_spend_share)
+            .filter(([, v]) => v != null)
+            .map(([k, v]) => `${k}=${fmtShare(v)}`)
+            .join('/');
+          if (share) parts.push(`spend_share[${share}]`);
+        }
+      } else {
+        // Unknown platform fallback: dump generic numeric fields so we never drop data.
+        if (row.spend != null) parts.push(`spend=${fmtInt(row.spend)}`);
+        if (row.impressions != null) parts.push(`imp=${fmtInt(row.impressions)}`);
+        if (row.conversions != null) parts.push(`conv=${fmtInt(row.conversions)}`);
+        if (row.conversion_value != null) parts.push(`cv=${fmtInt(row.conversion_value)}`);
+      }
+
+      return parts;
+    };
+
+    let anyLineRendered = false;
+    const dailyLines = [];
+    for (const date of sortedDates) {
+      const rowsForDate = byDate.get(date) || [];
+      rowsForDate.sort((a, b) => {
+        const pa = platformOrder.indexOf(safeStr(a?.platform).trim().toLowerCase());
+        const pb = platformOrder.indexOf(safeStr(b?.platform).trim().toLowerCase());
+        return (pa === -1 ? 99 : pa) - (pb === -1 ? 99 : pb);
+      });
+
+      const renderedRows = [];
+      for (const row of rowsForDate) {
+        const parts = renderPlatformParts(row);
+        if (parts.length === 0) continue;
+        const platformLabel = safeStr(row?.platform).trim().toLowerCase() || 'unknown';
+        renderedRows.push(`  ${platformLabel}: ${parts.join(' | ')}`);
+      }
+
+      if (renderedRows.length === 0) continue;
+      anyLineRendered = true;
+      dailyLines.push(`- ${date}:`);
+      for (const line of renderedRows) dailyLines.push(line);
+    }
+
+    if (anyLineRendered) {
+      lines.push('');
+      lines.push('[DAILY_INDEX]');
+      for (const line of dailyLines) lines.push(line);
     }
   }
 
