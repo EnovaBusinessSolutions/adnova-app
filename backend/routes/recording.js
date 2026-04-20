@@ -418,6 +418,40 @@ router.get('/:account_id/list', async (req, res) => {
 });
 
 /* ─────────────────────────────────────────────────────────────────────────────
+ * GET /api/recording/:account_id/by-user?userKey=X
+ * Returns all READY recordings for a given userKey, ordered chronologically.
+ * Used by Selected Journey to offer a stitched playback across the user's
+ * fragmented recordings of the same purchase journey.
+ * ───────────────────────────────────────────────────────────────────────────── */
+router.get('/:account_id/by-user', async (req, res) => {
+  try {
+    const { account_id } = req.params;
+    const userKey = String(req.query.userKey || '').trim();
+    if (!userKey || userKey === 'anonymous') {
+      return res.json({ ok: true, recordings: [] });
+    }
+    const recs = await prisma.sessionRecording.findMany({
+      where: {
+        accountId: account_id,
+        userKey,
+        status: 'READY',
+        rawErasedAt: null,
+      },
+      select: {
+        recordingId: true, sessionId: true, durationMs: true,
+        outcome: true, triggerAt: true, createdAt: true, cartValue: true,
+      },
+      orderBy: { triggerAt: 'asc' },
+      take: 50,
+    });
+    return res.json({ ok: true, recordings: recs });
+  } catch (err) {
+    console.error('[recording/by-user] Error:', err.message);
+    return res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+/* ─────────────────────────────────────────────────────────────────────────────
  * GET /api/recording/:account_id/:recording_id
  * Returns recording metadata + presigned R2 URL for dashboard playback.
  * Requires session auth (enforced by sessionGuard in index.js).

@@ -5881,7 +5881,7 @@
                         ${purchase.rrwebRecordingId ? `
                         <button type="button" class="journey-export-btn"
                            style="background:#7c3aed;color:#fff;display:inline-flex;align-items:center;gap:6px;"
-                           onclick="adrayOpenPlayer('${escapeInlineSingleQuotedJs(purchase.rrwebRecordingId)}','${escapeInlineSingleQuotedJs(purchase.sessionId || '')}')">
+                           onclick="adrayOpenJourneyPlayer('${escapeInlineSingleQuotedJs(purchase.userKey || '')}','${escapeInlineSingleQuotedJs(purchase.rrwebRecordingId)}','${escapeInlineSingleQuotedJs(purchase.sessionId || '')}')">
                             <i class="fa-solid fa-circle-play"></i>
                             Ver grabación
                         </button>` :
@@ -6973,6 +6973,33 @@
          * y navegamos con flechas Prev/Next entre segmentos.
          */
         let _adrayPlaylistState = null; // { metas, index, playerRoot }
+
+        /**
+         * Opens the right player for a purchase journey: if the user has multiple
+         * READY recordings (pixel fragments each page-navigation into its own
+         * recording), opens the stitched playlist; otherwise the single-recording
+         * player. Falls back to the passed recordingId if the lookup fails.
+         */
+        async function adrayOpenJourneyPlayer(userKey, fallbackRecordingId, sessionId) {
+            const cleanUserKey = String(userKey || '').trim();
+            if (!cleanUserKey || cleanUserKey === 'anonymous') {
+                return adrayOpenPlayer(fallbackRecordingId, sessionId || '');
+            }
+            try {
+                const resp = await fetch(`/api/recording/${encodeURIComponent(currentShopId)}/by-user?userKey=${encodeURIComponent(cleanUserKey)}`);
+                const data = await resp.json();
+                const ids = Array.isArray(data?.recordings) ? data.recordings.map((r) => r.recordingId).filter(Boolean) : [];
+                if (ids.length > 1) {
+                    return adrayOpenStitchedPlayer(ids);
+                }
+                if (ids.length === 1) {
+                    return adrayOpenPlayer(ids[0], sessionId || '');
+                }
+            } catch (err) {
+                console.warn('[adrayOpenJourneyPlayer] by-user lookup failed, using fallback:', err.message);
+            }
+            return adrayOpenPlayer(fallbackRecordingId, sessionId || '');
+        }
 
         /**
          * Onclick bridge: reads the JSON array from the button's data attribute
