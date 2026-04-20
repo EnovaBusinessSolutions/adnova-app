@@ -1,6 +1,6 @@
 'use strict';
 
-const { validateDateRange, getShopifyProductsInput } = require('../schemas/tool-schemas');
+const { validateDateRange, resolveDateRangeDefaults, getShopifyProductsInput } = require('../schemas/tool-schemas');
 const shopifyAdapter = require('../adapters/shopify');
 const { createToolErrorResponse } = require('../schemas/errors');
 const { runSnapshotFirstTool } = require('../snapshot/runSnapshotFirst');
@@ -26,7 +26,8 @@ function register(server, mcpUserId) {
         const sc = checkToolScopes(TOOL_NAME);
         if (!sc.ok) return createToolErrorResponse(sc.code, TOOL_NAME, sc.detail);
 
-        const rangeError = validateDateRange(params.date_from, params.date_to);
+        const { date_from, date_to } = resolveDateRangeDefaults(params.date_from, params.date_to);
+        const rangeError = validateDateRange(date_from, date_to);
         if (rangeError) return createToolErrorResponse('DATE_RANGE_TOO_LARGE', TOOL_NAME, rangeError);
 
         return runSnapshotFirstTool({
@@ -37,8 +38,8 @@ function register(server, mcpUserId) {
           execLive: () =>
             shopifyAdapter.getShopifyProducts(
               userId,
-              params.date_from,
-              params.date_to,
+              date_from,
+              date_to,
               params.sort_by || 'revenue',
               params.limit || 10
             ),
