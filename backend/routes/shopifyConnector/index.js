@@ -265,6 +265,7 @@ function topLevelRedirect(res, url, label = 'Continuar con Shopify', host = '') 
     a{color:#9ecbff}
     code{font-size:12px;opacity:.9}
   </style>
+  <script src="https://cdn.shopify.com/shopifycloud/app-bridge.js" data-api-key="${SHOPIFY_API_KEY || ''}"></script>
   <script src="/connector/vendor/app-bridge.umd.js"></script>
 </head>
 <body>

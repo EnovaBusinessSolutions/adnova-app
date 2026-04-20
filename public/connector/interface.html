@@ -119,8 +119,12 @@
     }
   </style>
 
-  <!-- ✅ SELF-HOST: App Bridge UMD + Utils (para getSessionToken) -->
-  <!-- (Shopify Admin suele bloquear unpkg.com, por eso lo servimos desde /connector/vendor/*) -->
+  <!-- ✅ App Bridge desde CDN de Shopify (requerido por la revisión de la app).
+       Debe ser el PRIMER <script> del <head> y usar el atributo data-api-key.
+       Expone el global `shopify` (App Bridge v4) para session tokens y navegación. -->
+  <script src="https://cdn.shopify.com/shopifycloud/app-bridge.js" data-api-key="{{SHOPIFY_API_KEY}}"></script>
+
+  <!-- ✅ Fallback self-host (App Bridge v3 UMD) para la lógica legacy de interface.connector.js -->
   <script src="/connector/vendor/app-bridge.umd.js"></script>
   <script src="/connector/vendor/app-bridge-utils.umd.js"></script>
 
