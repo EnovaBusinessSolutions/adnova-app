@@ -65,6 +65,9 @@ function buildEncodedContextText({
   landingPagesDailyRows = [],
   anomalies = [],
   benchmarks = null,
+  campaigns = [],
+  adSets = [],
+  ads = [],
 }) {
   const lines = [
     '[ADRAY_ENCODED_SIGNAL_V1]',
@@ -210,39 +213,321 @@ function buildEncodedContextText({
     }
   }
 
-  // --- CAMPAIGNS DAILY (per-campaign day-by-day performance) ---
-  if (Array.isArray(campaignsDailyRows) && campaignsDailyRows.length > 0) {
-    lines.push('');
-    lines.push('[CAMPAIGNS_DAILY]');
-    for (const row of campaignsDailyRows.slice(0, 60)) {
-      const name = row?.campaign_name || row?.campaign_id || '?';
-      const source = row?.source ? `[${String(row.source).toUpperCase()}] ` : '';
-      const date = row?.date || '?';
+  // --- Shared formatters for aggregate + daily entity sections (CAMPAIGNS/AD_SETS/ADS/*DAILY) ---
+  // Declared here once; the [DAILY_INDEX] block above uses its own local shadows
+  // (that is intentional, don't touch them — Fase C is stable).
+  const fmtAggInt = (v) => (v == null ? null : String(Math.round(Number(v))));
+  const fmtAgg2 = (v) => (v == null ? null : Number(v).toFixed(2));
+  const fmtAggPct = (v) => (v == null ? null : `${Number(v).toFixed(2)}%`);
+
+  // --- CAMPAIGNS (aggregate per-campaign, all platforms) ---
+  //
+  // Data comes from mcpContextBuilder.buildCampaignsSchema (structured_signal.campaigns).
+  // Rows have: campaign_id, campaign_name, platform, objective, status, budget_*,
+  // last_7 | last_30 | all_60 (each with spend/imp/clicks/ctr/cpc/cpm/conv/cv/roas_platform),
+  // wow_*/mom_* deltas, efficiency_rank_7d, spend_share_pct, anomaly_flag.
+  //
+  // Sorted by last_30.spend desc (fallback all_60.spend) so top spenders surface first.
+  if (Array.isArray(campaigns) && campaigns.length > 0) {
+    const sorted = campaigns.slice().sort((a, b) => {
+      const sa = Number(a?.last_30?.spend ?? a?.all_60?.spend ?? 0) || 0;
+      const sb = Number(b?.last_30?.spend ?? b?.all_60?.spend ?? 0) || 0;
+      return sb - sa;
+    });
+
+    const renderHorizon = (label, kpis) => {
+      if (!kpis || typeof kpis !== 'object') return null;
       const parts = [];
-      if (row?.spend != null) parts.push(`spend=${Number(row.spend).toFixed(0)}`);
-      if (row?.roas != null) parts.push(`roas=${Number(row.roas).toFixed(2)}`);
-      if (row?.conversions != null) parts.push(`conv=${Number(row.conversions).toFixed(0)}`);
-      if (row?.impressions != null) parts.push(`imp=${row.impressions}`);
-      if (row?.clicks != null) parts.push(`clicks=${row.clicks}`);
-      if (parts.length > 0) lines.push(`- ${source}${name} | ${date} | ${parts.join(' | ')}`);
+      if (kpis.spend != null) parts.push(`spend=${fmtAggInt(kpis.spend)}`);
+      if (kpis.impressions != null) parts.push(`imp=${fmtAggInt(kpis.impressions)}`);
+      if (kpis.clicks != null) parts.push(`clicks=${fmtAggInt(kpis.clicks)}`);
+      if (kpis.ctr != null) parts.push(`ctr=${fmtAggPct(kpis.ctr)}`);
+      if (kpis.cpc != null) parts.push(`cpc=${fmtAgg2(kpis.cpc)}`);
+      if (kpis.cpm != null) parts.push(`cpm=${fmtAgg2(kpis.cpm)}`);
+      if (kpis.conversions != null) parts.push(`conv=${fmtAggInt(kpis.conversions)}`);
+      if (kpis.conversion_value != null) parts.push(`cv=${fmtAggInt(kpis.conversion_value)}`);
+      if (kpis.roas_platform != null) parts.push(`roas=${fmtAgg2(kpis.roas_platform)}`);
+      return parts.length > 0 ? `  ${label}: ${parts.join(' | ')}` : null;
+    };
+
+    const campaignLines = [];
+    for (const c of sorted) {
+      if (!c || typeof c !== 'object') continue;
+      const platform = safeStr(c.platform).trim().toUpperCase() || 'UNKNOWN';
+      const name = safeStr(c.campaign_name).trim() || safeStr(c.campaign_id).trim() || 'unnamed';
+      const status = safeStr(c.status).trim().toUpperCase();
+      const objective = safeStr(c.objective).trim().toUpperCase();
+      const id = safeStr(c.campaign_id).trim();
+
+      const headerParts = [];
+      if (id) headerParts.push(`id=${id}`);
+      if (status) headerParts.push(`status=${status}`);
+      if (objective) headerParts.push(`objective=${objective}`);
+
+      const bodyLines = [];
+      const h7 = renderHorizon('last_7', c.last_7);
+      const h30 = renderHorizon('last_30', c.last_30);
+      const h60 = renderHorizon('all_60', c.all_60);
+      if (h7) bodyLines.push(h7);
+      if (h30) bodyLines.push(h30);
+      if (h60) bodyLines.push(h60);
+
+      const metaParts = [];
+      if (c.wow_spend_pct != null) metaParts.push(`wow_spend=${fmtAgg2(c.wow_spend_pct)}%`);
+      if (c.wow_roas_pct != null) metaParts.push(`wow_roas=${fmtAgg2(c.wow_roas_pct)}%`);
+      if (c.mom_spend_pct != null) metaParts.push(`mom_spend=${fmtAgg2(c.mom_spend_pct)}%`);
+      if (c.mom_roas_pct != null) metaParts.push(`mom_roas=${fmtAgg2(c.mom_roas_pct)}%`);
+      if (c.efficiency_rank_7d != null) metaParts.push(`eff_rank_7d=${c.efficiency_rank_7d}`);
+      if (c.spend_share_pct != null) metaParts.push(`spend_share=${fmtAgg2(c.spend_share_pct)}%`);
+      if (c.budget_type) metaParts.push(`budget_type=${safeStr(c.budget_type)}`);
+      if (c.budget_amount != null) metaParts.push(`budget=${fmtAggInt(c.budget_amount)}`);
+      if (c.anomaly_flag === true) metaParts.push(`anomaly=true`);
+      if (metaParts.length > 0) bodyLines.push(`  meta: ${metaParts.join(' | ')}`);
+
+      if (bodyLines.length === 0) continue;
+      campaignLines.push(`- [${platform}] "${name}"${headerParts.length > 0 ? ` (${headerParts.join(' | ')})` : ''}`);
+      for (const l of bodyLines) campaignLines.push(l);
+    }
+
+    if (campaignLines.length > 0) {
+      lines.push('');
+      lines.push('[CAMPAIGNS]');
+      for (const l of campaignLines) lines.push(l);
     }
   }
 
-  // --- ADS DAILY (per-ad day-by-day performance, top ads) ---
-  if (Array.isArray(adsDailyRows) && adsDailyRows.length > 0) {
-    lines.push('');
-    lines.push('[ADS_DAILY]');
-    for (const row of adsDailyRows.slice(0, 40)) {
-      const name = row?.ad_name || row?.ad_id || '?';
-      const source = row?.source ? `[${String(row.source).toUpperCase()}] ` : '';
-      const date = row?.date || '?';
+  // --- AD_SETS (aggregate per ad set / ad group) ---
+  //
+  // Rendering ready for Fase D2 to populate via metaLlmFormatter / googleAdsLlmFormatter
+  // (adSetsDataset). Today this renders empty because structured_signal.ad_sets = [].
+  if (Array.isArray(adSets) && adSets.length > 0) {
+    const sorted = adSets.slice().sort((a, b) => {
+      const sa = Number(a?.last_30?.spend ?? a?.last_7?.spend ?? 0) || 0;
+      const sb = Number(b?.last_30?.spend ?? b?.last_7?.spend ?? 0) || 0;
+      return sb - sa;
+    });
+
+    const renderAdSetHorizon = (label, kpis) => {
+      if (!kpis || typeof kpis !== 'object') return null;
       const parts = [];
-      if (row?.spend != null) parts.push(`spend=${Number(row.spend).toFixed(0)}`);
-      if (row?.roas != null) parts.push(`roas=${Number(row.roas).toFixed(2)}`);
-      if (row?.impressions != null) parts.push(`imp=${row.impressions}`);
-      if (row?.clicks != null) parts.push(`clicks=${row.clicks}`);
-      if (row?.ctr != null) parts.push(`ctr=${Number(row.ctr).toFixed(2)}%`);
-      if (parts.length > 0) lines.push(`- ${source}${name} | ${date} | ${parts.join(' | ')}`);
+      if (kpis.spend != null) parts.push(`spend=${fmtAggInt(kpis.spend)}`);
+      if (kpis.impressions != null) parts.push(`imp=${fmtAggInt(kpis.impressions)}`);
+      if (kpis.clicks != null) parts.push(`clicks=${fmtAggInt(kpis.clicks)}`);
+      if (kpis.ctr != null) parts.push(`ctr=${fmtAggPct(kpis.ctr)}`);
+      if (kpis.cpc != null) parts.push(`cpc=${fmtAgg2(kpis.cpc)}`);
+      if (kpis.conversions != null) parts.push(`conv=${fmtAggInt(kpis.conversions)}`);
+      if (kpis.roas_platform != null) parts.push(`roas=${fmtAgg2(kpis.roas_platform)}`);
+      return parts.length > 0 ? `  ${label}: ${parts.join(' | ')}` : null;
+    };
+
+    const adSetLines = [];
+    for (const s of sorted) {
+      if (!s || typeof s !== 'object') continue;
+      const platform = safeStr(s.platform).trim().toUpperCase() || 'UNKNOWN';
+      const name = safeStr(s.ad_set_name).trim() || safeStr(s.ad_set_id).trim() || 'unnamed';
+      const campaignName = safeStr(s.campaign_name).trim();
+      const status = safeStr(s.status).trim().toUpperCase();
+      const audienceType = safeStr(s.audience_type).trim();
+
+      const headerParts = [];
+      if (s.ad_set_id) headerParts.push(`id=${safeStr(s.ad_set_id)}`);
+      if (status) headerParts.push(`status=${status}`);
+      if (audienceType) headerParts.push(`audience=${audienceType}`);
+      if (campaignName) headerParts.push(`campaign="${campaignName}"`);
+
+      const bodyLines = [];
+      const h7 = renderAdSetHorizon('last_7', s.last_7);
+      const h30 = renderAdSetHorizon('last_30', s.last_30);
+      if (h7) bodyLines.push(h7);
+      if (h30) bodyLines.push(h30);
+
+      const metaParts = [];
+      if (s.bid_strategy) metaParts.push(`bid_strategy=${safeStr(s.bid_strategy)}`);
+      if (s.bid_amount != null) metaParts.push(`bid=${fmtAgg2(s.bid_amount)}`);
+      if (s.daily_budget != null) metaParts.push(`daily_budget=${fmtAggInt(s.daily_budget)}`);
+      if (s.cpa_7d != null) metaParts.push(`cpa_7d=${fmtAgg2(s.cpa_7d)}`);
+      if (s.cpa_30d != null) metaParts.push(`cpa_30d=${fmtAgg2(s.cpa_30d)}`);
+      if (s.frequency_7d != null) metaParts.push(`freq_7d=${fmtAgg2(s.frequency_7d)}`);
+      if (s.frequency_30d != null) metaParts.push(`freq_30d=${fmtAgg2(s.frequency_30d)}`);
+      if (s.frequency_enriched_7d != null) metaParts.push(`freq_enriched_7d=${fmtAgg2(s.frequency_enriched_7d)}`);
+      if (s.frequency_warning === true) metaParts.push(`freq_warning=true`);
+      if (s.cpa_reconciled_30d != null) metaParts.push(`cpa_reconciled_30d=${fmtAgg2(s.cpa_reconciled_30d)}`);
+      if (s.targeting_summary) metaParts.push(`targeting="${safeStr(s.targeting_summary).trim()}"`);
+      if (metaParts.length > 0) bodyLines.push(`  meta: ${metaParts.join(' | ')}`);
+
+      if (bodyLines.length === 0) continue;
+      adSetLines.push(`- [${platform}] "${name}"${headerParts.length > 0 ? ` (${headerParts.join(' | ')})` : ''}`);
+      for (const l of bodyLines) adSetLines.push(l);
+    }
+
+    if (adSetLines.length > 0) {
+      lines.push('');
+      lines.push('[AD_SETS]');
+      for (const l of adSetLines) lines.push(l);
+    }
+  }
+
+  // --- ADS (aggregate per creative / ad) ---
+  //
+  // Rendering ready for Fase D2 to populate via metaLlmFormatter / googleAdsLlmFormatter
+  // (adsDataset). Today this renders empty because structured_signal.ads = [].
+  if (Array.isArray(ads) && ads.length > 0) {
+    const sorted = ads.slice().sort((a, b) => {
+      const sa = Number(a?.last_7_spend ?? 0) || 0;
+      const sb = Number(b?.last_7_spend ?? 0) || 0;
+      return sb - sa;
+    });
+
+    const adLines = [];
+    for (const ad of sorted) {
+      if (!ad || typeof ad !== 'object') continue;
+      const platform = safeStr(ad.platform).trim().toUpperCase() || 'UNKNOWN';
+      const name = safeStr(ad.ad_name).trim() || safeStr(ad.ad_id).trim() || 'unnamed';
+      const campaignName = safeStr(ad.campaign_name).trim();
+      const status = safeStr(ad.status).trim().toUpperCase();
+      const creativeType = safeStr(ad.creative_type).trim();
+      const headline = safeStr(ad.headline).trim();
+
+      const headerParts = [];
+      if (ad.ad_id) headerParts.push(`id=${safeStr(ad.ad_id)}`);
+      if (status) headerParts.push(`status=${status}`);
+      if (creativeType) headerParts.push(`creative=${creativeType}`);
+      if (campaignName) headerParts.push(`campaign="${campaignName}"`);
+
+      const bodyLines = [];
+      if (headline) bodyLines.push(`  headline: "${headline}"`);
+
+      const last7Parts = [];
+      if (ad.last_7_spend != null) last7Parts.push(`spend=${fmtAggInt(ad.last_7_spend)}`);
+      if (ad.last_7_impressions != null) last7Parts.push(`imp=${fmtAggInt(ad.last_7_impressions)}`);
+      if (ad.last_7_ctr != null) last7Parts.push(`ctr=${fmtAggPct(ad.last_7_ctr)}`);
+      if (ad.last_7_roas_platform != null) last7Parts.push(`roas=${fmtAgg2(ad.last_7_roas_platform)}`);
+      if (ad.last_7_frequency != null) last7Parts.push(`freq=${fmtAgg2(ad.last_7_frequency)}`);
+      if (ad.last_7_frequency_enriched != null) last7Parts.push(`freq_enriched=${fmtAgg2(ad.last_7_frequency_enriched)}`);
+      if (last7Parts.length > 0) bodyLines.push(`  last_7: ${last7Parts.join(' | ')}`);
+
+      const last30Parts = [];
+      if (ad.last_30_ctr != null) last30Parts.push(`ctr=${fmtAggPct(ad.last_30_ctr)}`);
+      if (ad.last_30_roas_platform != null) last30Parts.push(`roas=${fmtAgg2(ad.last_30_roas_platform)}`);
+      if (last30Parts.length > 0) bodyLines.push(`  last_30: ${last30Parts.join(' | ')}`);
+
+      const flagParts = [];
+      if (ad.ctr_vs_account_avg != null) flagParts.push(`ctr_vs_avg=${fmtAgg2(ad.ctr_vs_account_avg)}`);
+      if (ad.roas_vs_account_avg != null) flagParts.push(`roas_vs_avg=${fmtAgg2(ad.roas_vs_account_avg)}`);
+      if (ad.landing_page_cvr_7d != null) flagParts.push(`lpv_cvr_7d=${fmtAggPct(ad.landing_page_cvr_7d)}`);
+      if (ad.add_to_cart_rate_7d != null) flagParts.push(`atc_rate_7d=${fmtAggPct(ad.add_to_cart_rate_7d)}`);
+      if (ad.fatigue_flag === true) flagParts.push(`fatigue=true`);
+      if (ad.top_performer_flag === true) flagParts.push(`top_performer=true`);
+      if (flagParts.length > 0) bodyLines.push(`  flags: ${flagParts.join(' | ')}`);
+
+      if (ad.asset_url) bodyLines.push(`  asset_url: ${safeStr(ad.asset_url).trim()}`);
+
+      if (bodyLines.length === 0) continue;
+      adLines.push(`- [${platform}] "${name}"${headerParts.length > 0 ? ` (${headerParts.join(' | ')})` : ''}`);
+      for (const l of bodyLines) adLines.push(l);
+    }
+
+    if (adLines.length > 0) {
+      lines.push('');
+      lines.push('[ADS]');
+      for (const l of adLines) lines.push(l);
+    }
+  }
+
+  // --- CAMPAIGNS DAILY (per-campaign day-by-day performance) ---
+  //
+  // Rows come from mcpContextBuilder.buildCampaignsDailySchema. Each entry is
+  // per-campaign with a nested `days` array (one per date). We group visually by
+  // campaign and render each day underneath. No cap — user wants full day-by-day
+  // visibility when Fase D2 populates this upstream.
+  if (Array.isArray(campaignsDailyRows) && campaignsDailyRows.length > 0) {
+    const outLines = [];
+    for (const entry of campaignsDailyRows) {
+      if (!entry || typeof entry !== 'object') continue;
+      const platform = safeStr(entry.platform).trim().toUpperCase() || 'UNKNOWN';
+      const name = safeStr(entry.campaign_name).trim() || safeStr(entry.campaign_id).trim() || 'unnamed';
+      const days = Array.isArray(entry.days) ? entry.days : [];
+      if (days.length === 0) continue;
+
+      const dayLines = [];
+      const sortedDays = days.slice().sort((a, b) =>
+        safeStr(a?.date).localeCompare(safeStr(b?.date))
+      );
+      for (const d of sortedDays) {
+        if (!d || typeof d !== 'object') continue;
+        const date = safeStr(d.date).trim();
+        if (!date) continue;
+        const parts = [];
+        if (d.spend != null) parts.push(`spend=${fmtAggInt(d.spend)}`);
+        if (d.impressions != null) parts.push(`imp=${fmtAggInt(d.impressions)}`);
+        if (d.clicks != null) parts.push(`clicks=${fmtAggInt(d.clicks)}`);
+        if (d.ctr != null) parts.push(`ctr=${fmtAggPct(d.ctr)}`);
+        if (d.cpc != null) parts.push(`cpc=${fmtAgg2(d.cpc)}`);
+        if (d.cpm != null) parts.push(`cpm=${fmtAgg2(d.cpm)}`);
+        if (d.conversions != null) parts.push(`conv=${fmtAggInt(d.conversions)}`);
+        if (d.conversion_value != null) parts.push(`cv=${fmtAggInt(d.conversion_value)}`);
+        if (d.roas != null) parts.push(`roas=${fmtAgg2(d.roas)}`);
+        if (parts.length > 0) dayLines.push(`  ${date}: ${parts.join(' | ')}`);
+      }
+
+      if (dayLines.length === 0) continue;
+      outLines.push(`- [${platform}] "${name}":`);
+      for (const l of dayLines) outLines.push(l);
+    }
+
+    if (outLines.length > 0) {
+      lines.push('');
+      lines.push('[CAMPAIGNS_DAILY]');
+      for (const l of outLines) lines.push(l);
+    }
+  }
+
+  // --- ADS DAILY (per-ad day-by-day performance) ---
+  //
+  // Rows come from mcpContextBuilder.buildAdsDailySchema. Each entry is per-ad
+  // with a nested `days` array. Grouped visually by ad. No cap.
+  if (Array.isArray(adsDailyRows) && adsDailyRows.length > 0) {
+    const outLines = [];
+    for (const entry of adsDailyRows) {
+      if (!entry || typeof entry !== 'object') continue;
+      const platform = safeStr(entry.platform).trim().toUpperCase() || 'UNKNOWN';
+      const name = safeStr(entry.ad_name).trim() || safeStr(entry.ad_id).trim() || 'unnamed';
+      const campaignName = safeStr(entry.campaign_name).trim();
+      const days = Array.isArray(entry.days) ? entry.days : [];
+      if (days.length === 0) continue;
+
+      const dayLines = [];
+      const sortedDays = days.slice().sort((a, b) =>
+        safeStr(a?.date).localeCompare(safeStr(b?.date))
+      );
+      for (const d of sortedDays) {
+        if (!d || typeof d !== 'object') continue;
+        const date = safeStr(d.date).trim();
+        if (!date) continue;
+        const parts = [];
+        if (d.spend != null) parts.push(`spend=${fmtAggInt(d.spend)}`);
+        if (d.impressions != null) parts.push(`imp=${fmtAggInt(d.impressions)}`);
+        if (d.clicks != null) parts.push(`clicks=${fmtAggInt(d.clicks)}`);
+        if (d.ctr != null) parts.push(`ctr=${fmtAggPct(d.ctr)}`);
+        if (d.cpc != null) parts.push(`cpc=${fmtAgg2(d.cpc)}`);
+        if (d.conversions != null) parts.push(`conv=${fmtAggInt(d.conversions)}`);
+        if (d.conversion_value != null) parts.push(`cv=${fmtAggInt(d.conversion_value)}`);
+        if (d.roas != null) parts.push(`roas=${fmtAgg2(d.roas)}`);
+        if (parts.length > 0) dayLines.push(`  ${date}: ${parts.join(' | ')}`);
+      }
+
+      if (dayLines.length === 0) continue;
+      const header = campaignName
+        ? `- [${platform}] "${name}" (campaign="${campaignName}"):`
+        : `- [${platform}] "${name}":`;
+      outLines.push(header);
+      for (const l of dayLines) outLines.push(l);
+    }
+
+    if (outLines.length > 0) {
+      lines.push('');
+      lines.push('[ADS_DAILY]');
+      for (const l of outLines) lines.push(l);
     }
   }
 
@@ -391,6 +676,9 @@ function encodeSignalPayload({ signalPayload, unifiedBase, root, user }) {
     benchmarks: structuredSignal?.benchmarks && typeof structuredSignal.benchmarks === 'object'
       ? structuredSignal.benchmarks
       : null,
+    campaigns: Array.isArray(structuredSignal?.campaigns) ? structuredSignal.campaigns : [],
+    adSets: Array.isArray(structuredSignal?.ad_sets) ? structuredSignal.ad_sets : [],
+    ads: Array.isArray(structuredSignal?.ads) ? structuredSignal.ads : [],
   });
 
   const encodedContextMini = buildEncodedContextMini({
