@@ -1,6 +1,6 @@
 'use strict';
 
-const { validateDateRange, getAdPerformanceInput } = require('../schemas/tool-schemas');
+const { validateDateRange, resolveDateRangeDefaults, getAdPerformanceInput } = require('../schemas/tool-schemas');
 const { createToolResponse, createToolErrorResponse } = require('../schemas/errors');
 const { runSnapshotFirstTool } = require('../snapshot/runSnapshotFirst');
 const { resolveAdPerformance, adPerformanceSnapshotOpts } = require('../services/adsPerformanceResolve');
@@ -26,15 +26,16 @@ function register(server, mcpUserId) {
         const sc = checkToolScopes(TOOL_NAME);
         if (!sc.ok) return createToolErrorResponse(sc.code, TOOL_NAME, sc.detail);
 
-        const rangeError = validateDateRange(params.date_from, params.date_to);
+        const { date_from, date_to } = resolveDateRangeDefaults(params.date_from, params.date_to);
+        const rangeError = validateDateRange(date_from, date_to);
         if (rangeError) return createToolErrorResponse('DATE_RANGE_TOO_LARGE', TOOL_NAME, rangeError);
 
         const gran = params.granularity || 'total';
 
         if (params.channel === 'all') {
           const [rMeta, rGoogle] = await Promise.allSettled([
-            resolveAdPerformance(userId, 'meta', params.date_from, params.date_to, gran),
-            resolveAdPerformance(userId, 'google', params.date_from, params.date_to, gran),
+            resolveAdPerformance(userId, 'meta', date_from, date_to, gran),
+            resolveAdPerformance(userId, 'google', date_from, date_to, gran),
           ]);
           const results = [];
           if (rMeta.status === 'fulfilled') results.push(rMeta.value);
@@ -43,7 +44,7 @@ function register(server, mcpUserId) {
         }
 
         return runSnapshotFirstTool(
-          adPerformanceSnapshotOpts(userId, params.channel, params.date_from, params.date_to, gran)
+          adPerformanceSnapshotOpts(userId, params.channel, date_from, date_to, gran)
         );
       } catch (err) {
         console.error(`[${TOOL_NAME}] error:`, err);

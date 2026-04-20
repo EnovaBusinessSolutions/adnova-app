@@ -1,6 +1,6 @@
 'use strict';
 
-const { validateDateRange, getDateComparisonInput } = require('../schemas/tool-schemas');
+const { validateDateRange, resolveComparisonDefaults, getDateComparisonInput } = require('../schemas/tool-schemas');
 const { createToolResponse, createToolErrorResponse } = require('../schemas/errors');
 const { resolveDateComparisonPayload } = require('../services/adsPerformanceResolve');
 const { resolveToolUserId } = require('../mcpContext');
@@ -25,18 +25,30 @@ function register(server, mcpUserId) {
         const sc = checkToolScopes(TOOL_NAME);
         if (!sc.ok) return createToolErrorResponse(sc.code, TOOL_NAME, sc.detail);
 
-        const errA = validateDateRange(params.period_a_from, params.period_a_to);
+        const {
+          period_a_from,
+          period_a_to,
+          period_b_from,
+          period_b_to,
+        } = resolveComparisonDefaults(
+          params.period_a_from,
+          params.period_a_to,
+          params.period_b_from,
+          params.period_b_to
+        );
+
+        const errA = validateDateRange(period_a_from, period_a_to);
         if (errA) return createToolErrorResponse('DATE_RANGE_TOO_LARGE', TOOL_NAME, errA);
-        const errB = validateDateRange(params.period_b_from, params.period_b_to);
+        const errB = validateDateRange(period_b_from, period_b_to);
         if (errB) return createToolErrorResponse('DATE_RANGE_TOO_LARGE', TOOL_NAME, errB);
 
         const result = await resolveDateComparisonPayload(
           userId,
           params.channel,
-          params.period_a_from,
-          params.period_a_to,
-          params.period_b_from,
-          params.period_b_to
+          period_a_from,
+          period_a_to,
+          period_b_from,
+          period_b_to
         );
         return createToolResponse(result);
       } catch (err) {
