@@ -164,16 +164,15 @@ async function revokeMetaPermissionsBestEffort(accessToken) {
 }
 
 async function resolveMetaRangeDaysByPlan(userId) {
-  try {
-    const u = await User.findById(userId).select('plan').lean();
-    const plan = String(u?.plan || 'gratis').toLowerCase();
-
-    if (plan === 'gratis' || plan === 'free') return 60;
-    if (plan === 'pro' || plan === 'crecimiento' || plan === 'growth' || plan === 'enterprise') return 90;
-    return 60;
-  } catch {
-    return 60;
-  }
+  // Aligned with backend/workers/mcpWorker.resolveContextRangeDaysByPlan:
+  // all plans now use a unified 30-day rolling context window. Previously this
+  // function returned 60/90 for legacy reasons and caused Meta collections
+  // triggered via OAuth (routes/meta.js enqueueMetaCollectBestEffort) to pull
+  // 60 days of data, which then super-seeded the user's manual 30-day signal
+  // via triggerSignalRebuildAfterCollect.
+  //
+  // userId is kept in the signature in case we reintroduce per-user overrides.
+  return 30;
 }
 
 function pickSelectedMetaAccountMeta(adAccounts, accountId) {

@@ -25,7 +25,7 @@ const DEFAULT_STORAGE_RANGE_DAYS = clampInt(
 );
 
 const DEFAULT_CONTEXT_RANGE_DAYS = clampInt(
-  process.env.MCP_CONTEXT_RANGE_DAYS || 60,
+  process.env.MCP_CONTEXT_RANGE_DAYS || 30,
   7,
   365
 );
