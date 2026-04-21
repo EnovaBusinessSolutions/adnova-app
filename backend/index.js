@@ -989,18 +989,10 @@ app.get('/.well-known/oauth-authorization-server', (req, res) => {
     revocation_endpoint: `${base}/oauth/revoke`,
     registration_endpoint: `${base}/oauth/register`,
     response_types_supported: ['code'],
-    response_modes_supported: ['query'],
-    grant_types_supported: [
-      'authorization_code',
-      'refresh_token',
-      'urn:ietf:params:oauth:grant-type:token-exchange',
-    ],
+    grant_types_supported: ['authorization_code', 'refresh_token'],
     code_challenge_methods_supported: ['S256'],
     token_endpoint_auth_methods_supported: ['client_secret_post', 'none'],
     scopes_supported: ['read:ads_performance', 'read:shopify_orders'],
-    // RFC 8707 — required by MCP spec 2025-06-18+ so clients (Claude.ai, etc.)
-    // know they can audience-bind tokens to this specific resource server.
-    resource_indicators_supported: true,
   });
 });
 
