@@ -3197,60 +3197,6 @@
             </div>
         </div>
 
-        <!-- Recordings Panel -->
-        <div class="mt-8 ops-panel p-6" id="recordings-panel">
-            <div class="flex items-center justify-between mb-4 flex-wrap gap-3">
-                <div>
-                    <p class="panel-kicker">Session Replay</p>
-                    <h3 class="panel-title text-base leading-6 font-medium text-gray-900">Grabaciones de sesiones</h3>
-                </div>
-                <button onclick="loadRecordingsList()" class="ops-secondary-btn inline-flex items-center gap-2 px-4 py-2 text-sm font-medium">
-                    <i class="fa-solid fa-rotate-right"></i> Actualizar
-                </button>
-            </div>
-            <div id="recordings-filters" class="flex items-center gap-2 mb-4 flex-wrap text-xs">
-                <select id="rec-filter-outcome" class="rec-filter" onchange="renderRecordingsList()">
-                    <option value="">Resultado: Todos</option>
-                    <option value="PURCHASED">Compraron</option>
-                    <option value="ABANDONED">Abandonaron</option>
-                    <option value="STILL_BROWSING">Explorando</option>
-                </select>
-                <select id="rec-filter-device" class="rec-filter" onchange="renderRecordingsList()">
-                    <option value="">Dispositivo: Todos</option>
-                    <option value="mobile">Móvil</option>
-                    <option value="tablet">Tablet</option>
-                    <option value="desktop">Desktop</option>
-                </select>
-                <select id="rec-filter-duration" class="rec-filter" onchange="renderRecordingsList()">
-                    <option value="">Duración: Toda</option>
-                    <option value="short">&lt; 30s</option>
-                    <option value="medium">30s – 2min</option>
-                    <option value="long">&gt; 2min</option>
-                </select>
-                <select id="rec-filter-risk" class="rec-filter" onchange="renderRecordingsList()">
-                    <option value="">Riesgo: Todos</option>
-                    <option value="high">Alto</option>
-                    <option value="medium">Medio</option>
-                    <option value="low">Bajo</option>
-                </select>
-                <span id="rec-filter-count" class="ml-auto text-gray-400"></span>
-            </div>
-            <div id="recordings-list" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
-                <p class="text-sm text-gray-400 col-span-full">Cargando grabaciones...</p>
-            </div>
-        </div>
-        <style>
-            .rec-filter {
-                background: #111827;
-                color: #e5e7eb;
-                border: 1px solid #1f2937;
-                border-radius: 6px;
-                padding: 5px 10px;
-                font-size: 11px;
-                cursor: pointer;
-            }
-            .rec-filter:focus { outline: 1px solid #7c3aed; }
-        </style>
 
         <section id="session-detail-panel" class="hidden" aria-hidden="true">
             <div class="ops-panel overflow-hidden border border-gray-200">
@@ -5859,39 +5805,11 @@
                         <span class="journey-chip" data-tooltip="How many stitched sessions currently support this purchase path."><i class="fa-solid fa-layer-group"></i>${sessionCount} sessions</span>
                     </div>
                     ${renderBehavioralSignalsBadge(purchase.behavioralSignals, purchase.recordingStatus, purchase.recordingDurationMs, { purchaseMode: true })}
-                    ${purchase.rrwebRecordingId ? `
-                    <div class="insights-block" data-recording-id="${escapeHtmlAttr(purchase.rrwebRecordingId)}" style="background:#0f172a;border:1px solid #1e293b;border-radius:10px;padding:12px;">
-                        <div class="flex items-center justify-between gap-2 mb-2">
-                            <p class="font-medium text-gray-200" style="font-size:12px;">🤖 Key recommendation</p>
-                            <button type="button" class="insights-generate-btn"
-                                onclick="adrayGenerateInsight('${escapeInlineSingleQuotedJs(purchase.rrwebRecordingId)}', this)"
-                                style="background:#7c3aed;color:#fff;border:none;border-radius:6px;padding:4px 10px;font-size:11px;font-weight:600;cursor:pointer;">
-                                Generar con IA
-                            </button>
-                        </div>
-                        <div class="insights-content text-xs text-gray-400">
-                            Haz clic en "Generar con IA" para recibir una recomendación accionable basada en las métricas de esta sesión.
-                        </div>
-                    </div>` : ''}
                     <div>
                         <p class="font-medium text-gray-900 mb-1">UTM URL history for this journey</p>
                         ${renderTrackedUtmHistory(purchaseUtmHistory, { emptyMessage: 'No UTM URLs have been captured yet for this selected journey.' })}
                     </div>
                     <div class="flex items-center justify-end gap-2 flex-wrap">
-                        ${purchase.rrwebRecordingId ? `
-                        <button type="button" class="journey-export-btn"
-                           style="background:#7c3aed;color:#fff;display:inline-flex;align-items:center;gap:6px;"
-                           onclick="adrayOpenJourneyPlayer('${escapeInlineSingleQuotedJs(purchase.userKey || '')}','${escapeInlineSingleQuotedJs(purchase.rrwebRecordingId)}','${escapeInlineSingleQuotedJs(purchase.sessionId || '')}','${escapeInlineSingleQuotedJs(purchase.customerId || '')}')">
-                            <i class="fa-solid fa-circle-play"></i>
-                            Ver grabación
-                        </button>` :
-                        (typeof purchase.clarityPlaybackUrl === 'string' && purchase.clarityPlaybackUrl.startsWith('http')) ? `
-                        <button type="button" class="journey-export-btn"
-                           style="background:#5c2d91;color:#fff;display:inline-flex;align-items:center;gap:6px;"
-                           onclick="adrayOpenClarityModal('${escapeInlineSingleQuotedJs(purchase.clarityPlaybackUrl)}')">
-                            <i class="fa-solid fa-circle-play"></i>
-                            Ver grabación
-                        </button>` : ''}
                         <button type="button" class="journey-export-btn" onclick="downloadSingleJourneyCsv('${escapeInlineSingleQuotedJs(selectionKey)}')">
                             <i class="fa-solid fa-file-arrow-down"></i>
                             Download CSV
