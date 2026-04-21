@@ -136,6 +136,9 @@ const publicCSPHelmet = helmet({
         // ✅ Tag Assistant Extension (ContentSquare)
         ...tagAssistantExtraScript,
 
+        // Cloudflare Turnstile (captcha en /login, /getstarted)
+        'https://challenges.cloudflare.com',
+
         // Intercom
         ...intercomScript,
       ],
@@ -169,6 +172,9 @@ const publicCSPHelmet = helmet({
 
         // ✅ Tag Assistant Extension (ContentSquare)
         ...tagAssistantExtraScript,
+
+        // Cloudflare Turnstile (captcha en /login, /getstarted)
+        'https://challenges.cloudflare.com',
 
         // Intercom
         ...intercomScript,
@@ -232,6 +238,9 @@ const publicCSPHelmet = helmet({
         // ✅ Tag Assistant Extension (ContentSquare)
         ...tagAssistantExtraConnect,
 
+        // Cloudflare Turnstile (siteverify endpoint)
+        'https://challenges.cloudflare.com',
+
         // Intercom
         ...intercomConnect,
       ],
@@ -289,6 +298,9 @@ const publicCSPHelmet = helmet({
         'https://www.googletagmanager.com',
         'https://tagassistant.google.com',
         'https://*.google.com',
+
+        // Cloudflare Turnstile (iframe del widget captcha)
+        'https://challenges.cloudflare.com',
 
         // Intercom
         ...intercomFrame,
