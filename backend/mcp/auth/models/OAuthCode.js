@@ -12,10 +12,6 @@ const OAuthCodeSchema = new Schema(
     scopes: { type: [String], default: [] },
     codeChallenge: { type: String, default: null },
     codeChallengeMethod: { type: String, default: null },
-    // RFC 8707 Resource Indicator. Optional — legacy codes without this still
-    // work. When set, it is the canonical URI of the resource server (e.g.
-    // "https://adray.ai/mcp") the client will call with the issued token.
-    resource: { type: String, default: null },
     expiresAt: { type: Date, required: true },
     used: { type: Boolean, default: false },
   },
