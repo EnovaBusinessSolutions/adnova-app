@@ -443,8 +443,8 @@ export function PixelSetupWizard({ open, onOpenChange, currentShop, onDisconnect
                     <div className="min-w-0">
                       <h3 className="text-lg font-semibold text-white">Enter your storefront domain</h3>
                       <p className="mt-1 text-sm leading-6 text-white/58">
-                        Paste a raw domain like <span className="text-white/78">shogun.mx</span> or a full URL like{" "}
-                        <span className="text-white/78">https://shogun.mx</span>. We will detect the storefront type from the homepage.
+                        Paste a raw domain like <span className="text-white/78">yourstore.com</span> or a full URL like{" "}
+                        <span className="text-white/78">https://yourstore.com</span>. We will detect the storefront type from the homepage.
                       </p>
                     </div>
                   </div>

@@ -186,10 +186,9 @@ router.use('/:account_id', async (req, res, next) => {
     const requestedShop = normalizeShopDomain(accountId);
     
     // Quick admin bypass can go here if needed, otherwise strict match
-    const isAdmin = req.user.email?.includes('@adray.ai') || 
-                    req.user.email?.includes('@enova') || 
-                    req.user.email?.includes('german') ||
-                    req.user.email?.includes('shogun');
+    const isAdmin = req.user.email?.includes('@adray.ai') ||
+                    req.user.email?.includes('@enova') ||
+                    req.user.email?.includes('german');
 
     // Temporal bypass para entornos Staging / desarrollo
     const _env = String(process.env.NODE_ENV || '').toLowerCase();
@@ -221,10 +220,9 @@ router.use('/:account_id', async (req, res, next) => {
                     (process.env.RENDER_EXTERNAL_URL?.includes('staging')) || 
                     (req.headers.host?.includes('staging'));
                     
-  const isAdmin = req.user?.email?.includes('@adray.ai') || 
-                 req.user?.email?.includes('@enova') || 
-                 req.user?.email?.includes('german') || 
-                 req.user?.email?.includes('shogun');
+  const isAdmin = req.user?.email?.includes('@adray.ai') ||
+                 req.user?.email?.includes('@enova') ||
+                 req.user?.email?.includes('german');
 
   if (isAdmin || isStaging || isAccountAllowed(accountId)) return next();
   return res.status(403).json({
