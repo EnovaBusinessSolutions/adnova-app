@@ -20,6 +20,7 @@ import GenerateAudit from "./pages/GenerateAudit";
 import NotFound from "./pages/NotFound";
 import Studio from "./pages/Studio";
 import LastStep from "./pages/LastStep";
+import Signal from "./pages/Signal";
 import ChatGptMcp from "./pages/ChatGptMcp";
 import ClaudeMcp from "./pages/ClaudeMcp";
 import GeminiMcp from "./pages/GeminiMcp";
@@ -279,6 +280,7 @@ function AppRoutes() {
       <Route index element={<Index />} />
 
       <Route path="laststep" element={<LastStep />} />
+      <Route path="signal" element={<Signal />} />
       <Route path="chatgptmcp" element={<ChatGptMcp />} />
       <Route path="claudemcp" element={<ClaudeMcp />} />
       <Route path="geminimcp" element={<GeminiMcp />} />
