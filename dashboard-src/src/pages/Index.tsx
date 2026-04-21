@@ -606,6 +606,15 @@ export default function Index() {
     refreshConnections();
   }, []);
 
+  useEffect(() => {
+    const qs = getQS();
+    if (qs.get("openPixelWizard") === "1") {
+      setPixelWizardOpen(true);
+      qs.delete("openPixelWizard");
+      replaceQS(qs);
+    }
+  }, []);
+
   const st = status?.status;
 
   const metaConnected = !!st?.meta?.connected;
