@@ -1487,9 +1487,24 @@ function buildMetaContext(chunks, contextRangeDays) {
   return {
     dailyDataset: chunks.find((chunk) => chunk?.dataset === 'meta.daily_trends_ai') || null,
     rankedDataset: chunks.find((chunk) => chunk?.dataset === 'meta.campaigns_ranked') || null,
-    adSetsDataset: chunks.find((c) => c?.dataset === 'meta.ad_sets') || null,
-    adsDataset: chunks.find((c) => c?.dataset === 'meta.ads') || null,
-    adsDailyDataset: chunks.find((c) => c?.dataset === 'meta.ads_daily') || null,
+    adSetsDataset: (() => {
+      const c = chunks.find((x) => x?.dataset === 'meta.ad_sets');
+      if (!c) console.warn('[mcpContextBuilder/buildMetaContext] MISSING chunk: meta.ad_sets');
+      else console.log('[mcpContextBuilder/buildMetaContext] found meta.ad_sets with', c?.data?.ad_sets?.length || 0, 'rows');
+      return c || null;
+    })(),
+    adsDataset: (() => {
+      const c = chunks.find((x) => x?.dataset === 'meta.ads');
+      if (!c) console.warn('[mcpContextBuilder/buildMetaContext] MISSING chunk: meta.ads');
+      else console.log('[mcpContextBuilder/buildMetaContext] found meta.ads with', c?.data?.ads?.length || 0, 'rows');
+      return c || null;
+    })(),
+    adsDailyDataset: (() => {
+      const c = chunks.find((x) => x?.dataset === 'meta.ads_daily');
+      if (!c) console.warn('[mcpContextBuilder/buildMetaContext] MISSING chunk: meta.ads_daily');
+      else console.log('[mcpContextBuilder/buildMetaContext] found meta.ads_daily with', c?.data?.ads_daily?.length || 0, 'rows');
+      return c || null;
+    })(),
     chunks,
     full: formatMetaForLlm({
       datasets: chunks,
@@ -2419,6 +2434,10 @@ function buildAdsDailySchema({ metaPack, googlePack }) {
   const dateRange = generateDateRange(DAYS);
   const result = [];
 
+  const metaRawLen = metaPack?.adsDailyDataset?.data?.ads_daily?.length || 0;
+  const googleRawLen = googlePack?.adsDailyDataset?.data?.ads_daily?.length || 0;
+  console.log('[buildAdsDailySchema] input — meta:', metaRawLen, 'rows, google:', googleRawLen, 'rows');
+
   const processPlatform = (pack, platform) => {
     const rawRows = Array.isArray(pack?.adsDailyDataset?.data?.ads_daily)
       ? pack.adsDailyDataset.data.ads_daily
@@ -2480,6 +2499,7 @@ function buildAdsDailySchema({ metaPack, googlePack }) {
   processPlatform(metaPack, 'meta');
   processPlatform(googlePack, 'google');
 
+  console.log('[buildAdsDailySchema] output — entries:', result.length, 'platforms:', Array.from(new Set(result.map(r => r?.platform))).join(','));
   return result;
 }
 
@@ -3009,6 +3029,7 @@ function buildStructuredAdSets({ metaPack }) {
   const raw = Array.isArray(metaPack?.adSetsDataset?.data?.ad_sets)
     ? metaPack.adSetsDataset.data.ad_sets
     : [];
+  console.log('[buildStructuredAdSets] input rows:', raw.length, '(metaPack.adSetsDataset present:', !!metaPack?.adSetsDataset, ')');
   return raw.slice(0, 200);
 }
 
@@ -3016,6 +3037,7 @@ function buildStructuredAds({ metaPack }) {
   const raw = Array.isArray(metaPack?.adsDataset?.data?.ads)
     ? metaPack.adsDataset.data.ads
     : [];
+  console.log('[buildStructuredAds] input rows:', raw.length, '(metaPack.adsDataset present:', !!metaPack?.adsDataset, ')');
   return raw.slice(0, 300);
 }
 
