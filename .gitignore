@@ -3,6 +3,10 @@
 .claude/settings.local.json
 .claude/scheduled_tasks.lock
 
+# AI agent skills — dev tooling, no forma parte del repo
+.agents/
+skills-lock.json
+
 # Ignora variables de entorno
 .env
 
