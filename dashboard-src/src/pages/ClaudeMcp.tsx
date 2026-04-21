@@ -19,9 +19,10 @@ import {
   Check,
   Copy,
   ExternalLink,
-  Gem,
   PlayCircle,
 } from "lucide-react";
+import { ParticleField } from "@/components/ParticleField";
+import claudeLogo from "@/assets/logos/claude.png";
 
 const ADRAY_MCP_URL = "https://adray.ai/mcp";
 const CLAUDE_CONNECTORS_URL = "https://claude.ai/customize/connectors";
@@ -173,6 +174,8 @@ export default function ClaudeMcp() {
             <div className="absolute inset-0 translate-x-[-120%] bg-[linear-gradient(110deg,transparent,rgba(255,255,255,0.03),transparent)] animate-[adray-shimmer_6s_ease-in-out_infinite]" />
           </div>
 
+          <ParticleField variant="purple" count={36} />
+
           <CardContent className="relative p-5 sm:p-8">
             <p className="text-[11px] uppercase tracking-[0.22em] text-[#D8B8FF]/65">
               Claude · MCP Connector
@@ -196,7 +199,12 @@ export default function ClaudeMcp() {
           <CardContent className="relative p-5 sm:p-8">
             <div className="flex items-center gap-2">
               <span className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-[#B55CFF]/28 bg-[#B55CFF]/10">
-                <Gem className="h-3.5 w-3.5 text-[#D8B8FF]" />
+                <img
+                  src={claudeLogo}
+                  alt="Claude"
+                  className="h-3.5 w-3.5 object-contain"
+                  draggable={false}
+                />
               </span>
               <p className="text-[11px] uppercase tracking-[0.22em] text-[#D8B8FF]/65">
                 Setup Instructions

@@ -13,13 +13,10 @@
 import { Link } from "react-router-dom";
 import { DashboardLayout } from "@/components/DashboardLayout";
 import { Card, CardContent } from "@/components/ui/card";
-import {
-  Bot,
-  Gem,
-  FileText,
-  ArrowRight,
-  Check,
-} from "lucide-react";
+import { ParticleField } from "@/components/ParticleField";
+import chatgptLogo from "@/assets/logos/chatgpt.png";
+import claudeLogo from "@/assets/logos/claude.png";
+import { ArrowRight, Check, FileText } from "lucide-react";
 
 type Accent = "emerald" | "purple" | "blue";
 type TagTone = "emerald" | "purple" | "neutral";
@@ -43,7 +40,14 @@ const PROVIDERS: Provider[] = [
       "Use your signal in a custom GPT built for Adray. Works with any ChatGPT account.",
     tag: "Open to all",
     tagTone: "emerald",
-    icon: <Bot className="h-5 w-5" />,
+    icon: (
+      <img
+        src={chatgptLogo}
+        alt="ChatGPT"
+        className="h-5 w-5 object-contain"
+        draggable={false}
+      />
+    ),
     to: "/chatgptmcp",
     accent: "emerald",
   },
@@ -54,7 +58,14 @@ const PROVIDERS: Provider[] = [
       "Connect via MCP for a live, structured data feed directly inside Claude. Requires a Claude Pro or Teams plan.",
     tag: "Requires Claude Pro",
     tagTone: "purple",
-    icon: <Gem className="h-5 w-5" />,
+    icon: (
+      <img
+        src={claudeLogo}
+        alt="Claude"
+        className="h-5 w-5 object-contain"
+        draggable={false}
+      />
+    ),
     to: "/claudemcp",
     accent: "purple",
   },
@@ -224,6 +235,8 @@ export default function LastStep() {
             <div className="absolute -bottom-24 left-0 h-56 w-56 rounded-full bg-[#4FE3C1]/6 blur-3xl" />
             <div className="absolute inset-0 translate-x-[-120%] bg-[linear-gradient(110deg,transparent,rgba(255,255,255,0.03),transparent)] animate-[adray-shimmer_6s_ease-in-out_infinite]" />
           </div>
+
+          <ParticleField variant="multiverse" count={40} />
 
           <CardContent className="relative p-5 sm:p-8">
             <StepPills />
