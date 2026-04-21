@@ -1928,7 +1928,7 @@ export default function Signal() {
 
                         <Button
                           variant="ghost"
-                          onClick={() => nav("/")}
+                          onClick={() => nav("/laststep")}
                           className="w-full justify-center rounded-xl border border-white/10 bg-white/[0.03] text-white/85 hover:bg-white/[0.08] sm:w-auto sm:justify-start"
                         >
                           <ArrowLeft className="mr-2 h-4 w-4" />
