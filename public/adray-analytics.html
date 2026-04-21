@@ -3197,60 +3197,6 @@
             </div>
         </div>
 
-        <!-- Recordings Panel -->
-        <div class="mt-8 ops-panel p-6" id="recordings-panel">
-            <div class="flex items-center justify-between mb-4 flex-wrap gap-3">
-                <div>
-                    <p class="panel-kicker">Session Replay</p>
-                    <h3 class="panel-title text-base leading-6 font-medium text-gray-900">Grabaciones de sesiones</h3>
-                </div>
-                <button onclick="loadRecordingsList()" class="ops-secondary-btn inline-flex items-center gap-2 px-4 py-2 text-sm font-medium">
-                    <i class="fa-solid fa-rotate-right"></i> Actualizar
-                </button>
-            </div>
-            <div id="recordings-filters" class="flex items-center gap-2 mb-4 flex-wrap text-xs">
-                <select id="rec-filter-outcome" class="rec-filter" onchange="renderRecordingsList()">
-                    <option value="">Resultado: Todos</option>
-                    <option value="PURCHASED">Compraron</option>
-                    <option value="ABANDONED">Abandonaron</option>
-                    <option value="STILL_BROWSING">Explorando</option>
-                </select>
-                <select id="rec-filter-device" class="rec-filter" onchange="renderRecordingsList()">
-                    <option value="">Dispositivo: Todos</option>
-                    <option value="mobile">Móvil</option>
-                    <option value="tablet">Tablet</option>
-                    <option value="desktop">Desktop</option>
-                </select>
-                <select id="rec-filter-duration" class="rec-filter" onchange="renderRecordingsList()">
-                    <option value="">Duración: Toda</option>
-                    <option value="short">&lt; 30s</option>
-                    <option value="medium">30s – 2min</option>
-                    <option value="long">&gt; 2min</option>
-                </select>
-                <select id="rec-filter-risk" class="rec-filter" onchange="renderRecordingsList()">
-                    <option value="">Riesgo: Todos</option>
-                    <option value="high">Alto</option>
-                    <option value="medium">Medio</option>
-                    <option value="low">Bajo</option>
-                </select>
-                <span id="rec-filter-count" class="ml-auto text-gray-400"></span>
-            </div>
-            <div id="recordings-list" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
-                <p class="text-sm text-gray-400 col-span-full">Cargando grabaciones...</p>
-            </div>
-        </div>
-        <style>
-            .rec-filter {
-                background: #111827;
-                color: #e5e7eb;
-                border: 1px solid #1f2937;
-                border-radius: 6px;
-                padding: 5px 10px;
-                font-size: 11px;
-                cursor: pointer;
-            }
-            .rec-filter:focus { outline: 1px solid #7c3aed; }
-        </style>
 
         <section id="session-detail-panel" class="hidden" aria-hidden="true">
             <div class="ops-panel overflow-hidden border border-gray-200">
@@ -5859,39 +5805,11 @@
                         <span class="journey-chip" data-tooltip="How many stitched sessions currently support this purchase path."><i class="fa-solid fa-layer-group"></i>${sessionCount} sessions</span>
                     </div>
                     ${renderBehavioralSignalsBadge(purchase.behavioralSignals, purchase.recordingStatus, purchase.recordingDurationMs, { purchaseMode: true })}
-                    ${purchase.rrwebRecordingId ? `
-                    <div class="insights-block" data-recording-id="${escapeHtmlAttr(purchase.rrwebRecordingId)}" style="background:#0f172a;border:1px solid #1e293b;border-radius:10px;padding:12px;">
-                        <div class="flex items-center justify-between gap-2 mb-2">
-                            <p class="font-medium text-gray-200" style="font-size:12px;">🤖 Key recommendation</p>
-                            <button type="button" class="insights-generate-btn"
-                                onclick="adrayGenerateInsight('${escapeInlineSingleQuotedJs(purchase.rrwebRecordingId)}', this)"
-                                style="background:#7c3aed;color:#fff;border:none;border-radius:6px;padding:4px 10px;font-size:11px;font-weight:600;cursor:pointer;">
-                                Generar con IA
-                            </button>
-                        </div>
-                        <div class="insights-content text-xs text-gray-400">
-                            Haz clic en "Generar con IA" para recibir una recomendación accionable basada en las métricas de esta sesión.
-                        </div>
-                    </div>` : ''}
                     <div>
                         <p class="font-medium text-gray-900 mb-1">UTM URL history for this journey</p>
                         ${renderTrackedUtmHistory(purchaseUtmHistory, { emptyMessage: 'No UTM URLs have been captured yet for this selected journey.' })}
                     </div>
                     <div class="flex items-center justify-end gap-2 flex-wrap">
-                        ${purchase.rrwebRecordingId ? `
-                        <button type="button" class="journey-export-btn"
-                           style="background:#7c3aed;color:#fff;display:inline-flex;align-items:center;gap:6px;"
-                           onclick="adrayOpenPlayer('${escapeInlineSingleQuotedJs(purchase.rrwebRecordingId)}','${escapeInlineSingleQuotedJs(purchase.sessionId || '')}')">
-                            <i class="fa-solid fa-circle-play"></i>
-                            Ver grabación
-                        </button>` :
-                        (typeof purchase.clarityPlaybackUrl === 'string' && purchase.clarityPlaybackUrl.startsWith('http')) ? `
-                        <button type="button" class="journey-export-btn"
-                           style="background:#5c2d91;color:#fff;display:inline-flex;align-items:center;gap:6px;"
-                           onclick="adrayOpenClarityModal('${escapeInlineSingleQuotedJs(purchase.clarityPlaybackUrl)}')">
-                            <i class="fa-solid fa-circle-play"></i>
-                            Ver grabación
-                        </button>` : ''}
                         <button type="button" class="journey-export-btn" onclick="downloadSingleJourneyCsv('${escapeInlineSingleQuotedJs(selectionKey)}')">
                             <i class="fa-solid fa-file-arrow-down"></i>
                             Download CSV
@@ -6862,7 +6780,30 @@
                 // 3. Fetch events from R2 presigned URL
                 content.innerHTML = '<p style="color:#9ca3af;font-size:13px;padding:40px 0;text-align:center;">Descargando eventos…</p>';
                 const eventsResp = await fetch(data.presignedUrl);
-                const eventsRaw = await eventsResp.json();
+                if (!eventsResp.ok) {
+                    const reason = eventsResp.status === 404
+                        ? 'el archivo no existe en storage (probablemente fue purgado o el finalize falló)'
+                        : `HTTP ${eventsResp.status}`;
+                    console.warn('[adrayOpenPlayer] R2 fetch failed:', reason, 'recordingId:', recordingId);
+                    content.innerHTML = `
+                        <div style="padding:40px;text-align:center;">
+                            <p style="color:#fbbf24;font-size:13px;margin-bottom:10px;">⚠️ Grabación no disponible</p>
+                            <p style="color:#9ca3af;font-size:11px;">${escapeHtml(reason)}.</p>
+                        </div>`;
+                    return;
+                }
+                const eventsText = await eventsResp.text();
+                if (eventsText.trim().startsWith('<')) {
+                    console.warn('[adrayOpenPlayer] R2 returned non-JSON (XML) for', recordingId);
+                    content.innerHTML = `<p style="color:#f87171;font-size:13px;padding:40px;text-align:center;">Respuesta inválida del storage.</p>`;
+                    return;
+                }
+                let eventsRaw;
+                try { eventsRaw = JSON.parse(eventsText); } catch (parseErr) {
+                    console.warn('[adrayOpenPlayer] JSON parse failed:', parseErr.message);
+                    content.innerHTML = `<p style="color:#f87171;font-size:13px;padding:40px;text-align:center;">Grabación corrupta (no se pudo parsear).</p>`;
+                    return;
+                }
                 const eventsArr = Array.isArray(eventsRaw) ? eventsRaw : (eventsRaw?.events || []);
 
                 // ── Diagnostic logs ──────────────────────────────────────────
@@ -6974,6 +6915,57 @@
          */
         let _adrayPlaylistState = null; // { metas, index, playerRoot }
 
+        /**
+         * Opens the right player for a purchase journey: if the user has multiple
+         * READY recordings (pixel fragments each page-navigation into its own
+         * recording), opens the stitched playlist; otherwise the single-recording
+         * player. Falls back to the passed recordingId if the lookup fails.
+         */
+        async function adrayOpenJourneyPlayer(userKey, fallbackRecordingId, sessionId, customerId) {
+            const cleanUserKey = String(userKey || '').trim();
+            const cleanCustomerId = String(customerId || '').trim();
+            const hasRecording = !!fallbackRecordingId;
+            if (!cleanUserKey && !hasRecording && !cleanCustomerId) return;
+            try {
+                const qs = new URLSearchParams();
+                if (cleanUserKey) qs.set('userKey', cleanUserKey);
+                if (cleanCustomerId) qs.set('customerId', cleanCustomerId);
+                if (hasRecording) qs.set('recordingId', fallbackRecordingId);
+                const resp = await fetch(`/api/recording/${encodeURIComponent(currentShopId)}/by-user?${qs.toString()}`);
+                const data = await resp.json();
+                const ids = Array.isArray(data?.recordings) ? data.recordings.map((r) => r.recordingId).filter(Boolean) : [];
+                console.log('[adrayOpenJourneyPlayer] seed:', { userKey: cleanUserKey, customerId: cleanCustomerId, recordingId: fallbackRecordingId },
+                    'resolved userKeys:', data?.resolvedUserKeys, 'recordings found:', ids.length);
+                if (ids.length > 1) {
+                    return adrayOpenStitchedPlayer(ids);
+                }
+                if (ids.length === 1) {
+                    return adrayOpenPlayer(ids[0], sessionId || '');
+                }
+            } catch (err) {
+                console.warn('[adrayOpenJourneyPlayer] by-user lookup failed, using fallback:', err.message);
+            }
+            return adrayOpenPlayer(fallbackRecordingId, sessionId || '');
+        }
+
+        /**
+         * Onclick bridge: reads the JSON array from the button's data attribute
+         * and forwards to adrayOpenStitchedPlayer. Avoids HTML-attribute quoting
+         * issues when the recordingId list would otherwise be inlined into onclick.
+         */
+        function adrayOpenStitchedPlayerFromAttr(btn) {
+            if (!btn) return;
+            let ids = [];
+            try {
+                ids = JSON.parse(btn.getAttribute('data-adray-group-ids') || '[]');
+            } catch (e) {
+                console.error('[adrayOpenStitchedPlayerFromAttr] invalid data-adray-group-ids:', e.message);
+                return;
+            }
+            if (!Array.isArray(ids) || ids.length === 0) return;
+            return adrayOpenStitchedPlayer(ids);
+        }
+
         async function adrayOpenStitchedPlayer(recordingIds) {
             if (!Array.isArray(recordingIds) || recordingIds.length === 0) return;
             if (recordingIds.length === 1) return adrayOpenPlayer(recordingIds[0], '');
@@ -7078,7 +7070,36 @@
 
             try {
                 const eventsResp = await fetch(meta.presignedUrl);
-                const raw = await eventsResp.json();
+                if (!eventsResp.ok) {
+                    // R2 can return 404 XML when the object was evicted/never uploaded.
+                    const reason = eventsResp.status === 404 ? 'el archivo no existe en storage (probablemente fue purgado o el finalize falló)' : `HTTP ${eventsResp.status}`;
+                    console.warn('[playlist render] segment', idx+1, 'broken:', reason, 'recordingId:', rec.recordingId);
+                    content.innerHTML = `
+                        ${_adrayPlaylistNavHtml(idx, total)}
+                        <div style="padding:40px;text-align:center;">
+                            <p style="color:#fbbf24;font-size:13px;margin-bottom:10px;">⚠️ Esta grabación no está disponible</p>
+                            <p style="color:#9ca3af;font-size:11px;">${escapeHtml(reason)}.</p>
+                            <p style="color:#6b7280;font-size:11px;margin-top:8px;">Usa las flechas para navegar a otra sesión.</p>
+                        </div>`;
+                    return;
+                }
+                const text = await eventsResp.text();
+                // Guard against XML/HTML error payloads that happen to return 200.
+                if (text.trim().startsWith('<')) {
+                    console.warn('[playlist render] segment', idx+1, 'returned non-JSON body');
+                    content.innerHTML = `
+                        ${_adrayPlaylistNavHtml(idx, total)}
+                        <p style="color:#f87171;font-size:13px;padding:40px;text-align:center;">Respuesta inválida del storage para esta sesión.</p>`;
+                    return;
+                }
+                let raw;
+                try { raw = JSON.parse(text); } catch (parseErr) {
+                    console.warn('[playlist render] JSON parse failed:', parseErr.message);
+                    content.innerHTML = `
+                        ${_adrayPlaylistNavHtml(idx, total)}
+                        <p style="color:#f87171;font-size:13px;padding:40px;text-align:center;">Sesión corrupta (no se pudo parsear).</p>`;
+                    return;
+                }
                 const events = Array.isArray(raw) ? raw : (raw?.events || []);
                 if (!events.length || !events.some((e) => e.type === 2)) {
                     content.innerHTML = `
@@ -10077,9 +10098,14 @@ function renderRecentPurchases(purchases) {
                     ? `<span style="font-size:10px;color:#9ca3af;background:#0f172a;padding:2px 6px;border-radius:6px;display:inline-flex;align-items:center;gap:4px;"><i class="fa-solid fa-link"></i> Timeline combinado</span>`
                     : '';
 
+                // Group IDs live in an attribute so we avoid the HTML-in-onclick
+                // quoting trap (double quotes inside onclick="..." close the attribute).
                 const onClickPayload = isGroup
-                    ? `adrayOpenStitchedPlayer(${JSON.stringify(r.groupedIds)})`
+                    ? `adrayOpenStitchedPlayerFromAttr(this)`
                     : `adrayOpenPlayer('${escapeInlineSingleQuotedJs(r.recordingId)}','${escapeInlineSingleQuotedJs(r.sessionId || '')}')`;
+                const groupIdsAttr = isGroup
+                    ? ` data-adray-group-ids="${escapeHtmlAttr(JSON.stringify(r.groupedIds))}"`
+                    : '';
                 const btnLabel = isGroup ? `Ver ${r.groupSize} grabaciones` : 'Ver grabación';
 
                 return `
@@ -10105,7 +10131,7 @@ function renderRecentPurchases(purchases) {
                     </div>` : ''}
                     <button type="button"
                         style="background:#7c3aed;color:#fff;border:none;border-radius:7px;padding:7px 12px;font-size:12px;font-weight:600;cursor:pointer;display:inline-flex;align-items:center;gap:6px;width:100%;justify-content:center;"
-                        onclick="${onClickPayload}">
+                        onclick="${onClickPayload}"${groupIdsAttr}>
                         <i class="fa-solid fa-circle-play"></i> ${btnLabel}
                     </button>
                 </div>`;
