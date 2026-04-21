@@ -4,6 +4,7 @@ import "./globals.css";
 import Navbar from "@/components/layout/Navbar";
 import Footer from "@/components/layout/Footer";
 import { pub } from "@/lib/paths";
+import Script from "next/script";
 
 const ulmGroteskFontUrl = pub("/fonts/UlmGrotesk-Bold.otf");
 
@@ -100,6 +101,39 @@ export default function RootLayout({
         <Navbar />
         <main className="min-h-screen">{children}</main>
         <Footer />
+
+        {/* ============ INTERCOM (Landing - Anónimo) ============ */}
+        <Script id="intercom-settings" strategy="afterInteractive">
+          {`window.intercomSettings = { app_id: "sqexnuzh", app_area: "landing" };`}
+        </Script>
+        <Script id="intercom-loader" strategy="afterInteractive">
+          {`
+            (function(){
+              var w=window;var ic=w.Intercom;
+              if(typeof ic==="function"){
+                ic("reattach_activator");
+                ic("update",w.intercomSettings);
+              } else {
+                var d=document;
+                var i=function(){i.c(arguments);};
+                i.q=[];
+                i.c=function(args){i.q.push(args);};
+                w.Intercom=i;
+                function l(){
+                  var s=d.createElement("script");
+                  s.type="text/javascript";
+                  s.async=true;
+                  s.src="https://widget.intercom.io/widget/sqexnuzh";
+                  var x=d.getElementsByTagName("script")[0];
+                  x.parentNode.insertBefore(s,x);
+                }
+                if(d.readyState==="complete"){l();}
+                else if(w.attachEvent){w.attachEvent("onload",l);}
+                else{w.addEventListener("load",l,false);}
+              }
+            })();
+          `}
+        </Script>
       </body>
     </html>
   );
