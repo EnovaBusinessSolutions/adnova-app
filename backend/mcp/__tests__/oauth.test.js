@@ -67,3 +67,72 @@ describe('OAuth Scopes', () => {
     expect(parsed).toEqual(VALID_SCOPES);
   });
 });
+
+describe('RFC 8707 Resource Indicator', () => {
+  // APP_URL must be set before the module is required because the canonical
+  // URI is computed at load time.
+  const originalAppUrl = process.env.APP_URL;
+  beforeAll(() => {
+    process.env.APP_URL = 'https://adray.ai';
+    jest.resetModules();
+  });
+  afterAll(() => {
+    process.env.APP_URL = originalAppUrl;
+  });
+
+  function loadNormalizer() {
+    // eslint-disable-next-line global-require
+    return require('../auth/oauth-server').normalizeResourceIndicator;
+  }
+
+  test('absent resource is allowed (legacy clients)', () => {
+    const normalize = loadNormalizer();
+    expect(normalize(undefined)).toEqual({ ok: true, value: null });
+    expect(normalize(null)).toEqual({ ok: true, value: null });
+    expect(normalize('')).toEqual({ ok: true, value: null });
+  });
+
+  test('canonical resource URI is accepted', () => {
+    const normalize = loadNormalizer();
+    expect(normalize('https://adray.ai/mcp')).toEqual({
+      ok: true,
+      value: 'https://adray.ai/mcp',
+    });
+  });
+
+  test('trailing slash is tolerated and normalized away', () => {
+    const normalize = loadNormalizer();
+    expect(normalize('https://adray.ai/mcp/')).toEqual({
+      ok: true,
+      value: 'https://adray.ai/mcp',
+    });
+  });
+
+  test('rejects a different host', () => {
+    const normalize = loadNormalizer();
+    const r = normalize('https://evil.example.com/mcp');
+    expect(r.ok).toBe(false);
+    expect(r.reason).toBe('resource_mismatch');
+  });
+
+  test('rejects a different path', () => {
+    const normalize = loadNormalizer();
+    const r = normalize('https://adray.ai/other');
+    expect(r.ok).toBe(false);
+    expect(r.reason).toBe('resource_mismatch');
+  });
+
+  test('rejects URIs with a fragment', () => {
+    const normalize = loadNormalizer();
+    const r = normalize('https://adray.ai/mcp#frag');
+    expect(r.ok).toBe(false);
+    expect(r.reason).toBe('has_fragment');
+  });
+
+  test('rejects malformed URIs', () => {
+    const normalize = loadNormalizer();
+    const r = normalize('not-a-url');
+    expect(r.ok).toBe(false);
+    expect(r.reason).toBe('malformed');
+  });
+});
