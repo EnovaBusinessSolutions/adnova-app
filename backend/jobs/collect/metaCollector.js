@@ -1630,7 +1630,15 @@ async function collectMeta(userId, opts = {}) {
           });
         }
       }
-    } catch (e) {
+    } catch (err) {
+      console.error('[metaCollector] ad_sets extraction FAILED', {
+        userId: String(userId),
+        accountIds,
+        error: err?.message || String(err),
+        status: err?.response?.status || null,
+        fbError: err?.response?.data?.error?.message || null,
+        fbCode: err?.response?.data?.error?.code || null,
+      });
       adSetsData = [];
     }
   }
@@ -1726,7 +1734,15 @@ async function collectMeta(userId, opts = {}) {
           });
         }
       }
-    } catch (e) {
+    } catch (err) {
+      console.error('[metaCollector] ads extraction FAILED', {
+        userId: String(userId),
+        accountIds,
+        error: err?.message || String(err),
+        status: err?.response?.status || null,
+        fbError: err?.response?.data?.error?.message || null,
+        fbCode: err?.response?.data?.error?.code || null,
+      });
       adsData = [];
     }
   }
@@ -1861,7 +1877,7 @@ async function collectMeta(userId, opts = {}) {
     }
   }
 
-  if (buildAdSets && adSetsData.length > 0) {
+  if (buildAdSets) {
     datasets.push({
       source: 'metaAds',
       dataset: 'meta.ad_sets',
@@ -1872,9 +1888,10 @@ async function collectMeta(userId, opts = {}) {
         ad_sets: adSetsData,
       },
     });
+    console.log('[metaCollector] saved meta.ad_sets chunk with', adSetsData.length, 'rows');
   }
 
-  if (buildAds && adsData.length > 0) {
+  if (buildAds) {
     datasets.push({
       source: 'metaAds',
       dataset: 'meta.ads',
@@ -1885,9 +1902,10 @@ async function collectMeta(userId, opts = {}) {
         ads: adsData,
       },
     });
+    console.log('[metaCollector] saved meta.ads chunk with', adsData.length, 'rows');
   }
 
-  if (buildAds && adsDailyData.length > 0) {
+  if (buildAds) {
     datasets.push({
       source: 'metaAds',
       dataset: 'meta.ads_daily',
@@ -1898,6 +1916,7 @@ async function collectMeta(userId, opts = {}) {
         ads_daily: adsDailyData,
       },
     });
+    console.log('[metaCollector] saved meta.ads_daily chunk with', adsDailyData.length, 'rows');
   }
 
   return {
