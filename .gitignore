@@ -5,6 +5,7 @@
 
 # AI agent skills — dev tooling, no forma parte del repo
 .agents/
+.claude/
 skills-lock.json
 
 # Ignora variables de entorno
