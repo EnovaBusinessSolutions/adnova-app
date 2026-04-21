@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { Navigate, useSearchParams } from "react-router-dom";
 
 import { DashboardLayout } from "@/components/DashboardLayout";
 
@@ -10,40 +10,30 @@ type AnalyticsShopChangedMessage = {
   shop?: string | null;
 };
 
-type SessionResponse = {
-  authenticated?: boolean;
-  user?: {
-    shop?: string | null;
-    resolvedShop?: string | null;
+type OnboardingStatusResponse = {
+  ok?: boolean;
+  status?: {
+    pixel?: { connected?: boolean; shop?: string | null };
   };
 };
 
-type AuthorizedShopsResponse = {
-  defaultShop?: string | null;
-  shops?: Array<{
-    shop?: string | null;
-    isDefault?: boolean;
-  }>;
+type PixelStatus = {
+  connected: boolean;
+  shop: string;
 };
 
 function normalizeShop(value?: string | null) {
   return String(value || "").trim();
 }
 
-function readStoredShop() {
-  try {
-    return normalizeShop(window.localStorage.getItem(SHOP_STORAGE_KEY));
-  } catch {
-    return "";
-  }
-}
-
 function persistShop(shop: string) {
   try {
-    window.localStorage.setItem(SHOP_STORAGE_KEY, shop);
-  } catch { }
+    if (shop) window.localStorage.setItem(SHOP_STORAGE_KEY, shop);
+    else window.localStorage.removeItem(SHOP_STORAGE_KEY);
+  } catch {
+    // storage may be unavailable (private mode, disabled); safe to ignore
+  }
 }
-
 
 function buildShopParams(searchParams: URLSearchParams, shop: string) {
   const nextParams = new URLSearchParams(searchParams);
@@ -56,104 +46,74 @@ function buildShopParams(searchParams: URLSearchParams, shop: string) {
 
 export default function AttributionEmbed() {
   const [searchParams, setSearchParams] = useSearchParams();
-  const [storedShop, setStoredShop] = useState(() => readStoredShop());
-  const [sessionShop, setSessionShop] = useState("");
   const [iframeLoaded, setIframeLoaded] = useState(false);
-  // null = resolving, "" = no shop/not connected, "domain" = pixel setup completed
-  const [resolvedShop, setResolvedShop] = useState<string | null>(null);
-
-  const shopFromUrl = useMemo(
-    () => normalizeShop(searchParams.get("shop") || searchParams.get("shopId") || searchParams.get("store")),
-    [searchParams]
-  );
-
-  useEffect(() => {
-    if (!shopFromUrl) return;
-    setStoredShop(shopFromUrl);
-    persistShop(shopFromUrl);
-  }, [shopFromUrl]);
+  // null = resolving, otherwise a decided pixel status.
+  const [pixelStatus, setPixelStatus] = useState<PixelStatus | null>(null);
 
   useEffect(() => {
     let cancelled = false;
 
-    async function loadSessionShop() {
-      // ── Resolve which shop to show ──
-      let nextShop = "";
+    async function resolvePixel() {
+      let connected = false;
+      let shop = "";
       try {
         const r = await fetch("/api/onboarding/status", { credentials: "include" });
-        const data = await r.json().catch(() => ({}));
-        nextShop = normalizeShop(data?.pixel?.shop);
-      } catch { }
-
-      if (cancelled) return;
-
-      if (!nextShop) {
-        try {
-          const response = await fetch("/api/session", { credentials: "include" });
-          const data = (await response.json().catch(() => ({}))) as SessionResponse;
-          if (cancelled) return;
-          nextShop = normalizeShop(data?.user?.shop || data?.user?.resolvedShop);
-        } catch { }
-      }
-
-      if (!nextShop) {
-        try {
-          const response = await fetch("/api/analytics/shops", { credentials: "include" });
-          const data = (await response.json().catch(() => ({}))) as AuthorizedShopsResponse;
-          if (cancelled) return;
-          nextShop = normalizeShop(
-            data?.defaultShop || data?.shops?.find((item) => item?.isDefault)?.shop || data?.shops?.[0]?.shop
-          );
-        } catch { }
+        const data = (await r.json().catch(() => ({}))) as OnboardingStatusResponse;
+        const pixel = data?.status?.pixel;
+        connected = !!pixel?.connected;
+        shop = normalizeShop(pixel?.shop);
+      } catch {
+        // network error: fall through with connected=false → redirect to wizard
       }
 
       if (cancelled) return;
 
-      if (nextShop) {
-        setSessionShop(nextShop);
-        if (!shopFromUrl && !readStoredShop()) {
-          setStoredShop(nextShop);
-          persistShop(nextShop);
-          setSearchParams(buildShopParams(searchParams, nextShop), { replace: true });
+      // Keep localStorage in sync with server truth so other surfaces
+      // (e.g. the analytics iframe) never read a stale shop.
+      persistShop(connected && shop ? shop : "");
+
+      setPixelStatus({ connected: connected && !!shop, shop });
+
+      if (connected && shop) {
+        const currentShopInUrl = normalizeShop(
+          searchParams.get("shop") || searchParams.get("shopId") || searchParams.get("store")
+        );
+        if (currentShopInUrl !== shop) {
+          setSearchParams(buildShopParams(searchParams, shop), { replace: true });
         }
       }
-
-      const final = shopFromUrl || readStoredShop() || nextShop;
-      setResolvedShop(final);
     }
 
-    loadSessionShop();
+    resolvePixel();
     return () => { cancelled = true; };
-  }, [searchParams, setSearchParams, shopFromUrl]);
+  }, [searchParams, setSearchParams]);
 
   useEffect(() => {
     function handleMessage(event: MessageEvent<AnalyticsShopChangedMessage>) {
       if (event.origin !== window.location.origin) return;
       if (!event.data || event.data.type !== "adray:analytics:shop-changed") return;
       const nextShop = normalizeShop(event.data.shop);
-      setStoredShop(nextShop);
-      if (nextShop) persistShop(nextShop);
+      persistShop(nextShop);
       setSearchParams(buildShopParams(searchParams, nextShop), { replace: true });
     }
     window.addEventListener("message", handleMessage);
     return () => window.removeEventListener("message", handleMessage);
   }, [searchParams, setSearchParams]);
 
-  const activeShop = shopFromUrl || storedShop || sessionShop;
-
   const iframeSrc = useMemo(() => {
+    if (!pixelStatus?.connected || !pixelStatus.shop) return "";
     const params = new URLSearchParams();
     params.set("embedded", "1");
-    if (activeShop) params.set("shop", activeShop);
+    params.set("shop", pixelStatus.shop);
     return `/adray-analytics.html?${params.toString()}`;
-  }, [activeShop]);
+  }, [pixelStatus]);
 
   useEffect(() => {
     setIframeLoaded(false);
   }, [iframeSrc]);
 
-  // Still resolving shop (brief spinner while we fetch /api/onboarding/status)
-  if (resolvedShop === null) {
+  // Still resolving pixel connection.
+  if (pixelStatus === null) {
     return (
       <DashboardLayout>
         <div className="flex h-screen items-center justify-center bg-[#050508]">
@@ -166,7 +126,12 @@ export default function AttributionEmbed() {
     );
   }
 
-  // Show dashboard regardless of pixel connection status
+  // No pixel installed yet — send the user to the setup wizard instead of
+  // rendering analytics for some unrelated shop.
+  if (!pixelStatus.connected) {
+    return <Navigate to="/?openPixelWizard=1" replace />;
+  }
+
   return (
     <DashboardLayout>
       <div className="relative h-[calc(100vh-6rem)] overflow-hidden bg-[#050508] md:h-screen">
@@ -183,7 +148,7 @@ export default function AttributionEmbed() {
                 Loading attribution dashboard
               </h2>
               <p className="mt-2 text-sm leading-6 text-[#BFAFD6]">
-                Preparing analytics for {activeShop}. You will see the embedded dashboard as soon as the first data payload arrives.
+                Preparing analytics for {pixelStatus.shop}. You will see the embedded dashboard as soon as the first data payload arrives.
               </p>
               <div className="mt-5 overflow-hidden rounded-full bg-[rgba(255,255,255,0.07)]">
                 <div className="h-2 w-1/2 animate-[loaderSlide_1.3s_ease-in-out_infinite] rounded-full bg-[linear-gradient(90deg,#B55CFF_0%,#7EF0C8_100%)]" />
