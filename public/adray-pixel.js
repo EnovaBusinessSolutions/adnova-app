@@ -1611,6 +1611,34 @@
   var _ADRAY_REC_BASE = ADRAY_ENDPOINT.replace('/collect', '');
   var _ADRAY_RRWEB_CDN = _ADRAY_REC_BASE + '/static/dom-observer.min.js';
 
+  // ── Blocked pages: Shopify prohibits DOM recording on checkout/payment pages
+  //    without the read_advanced_dom_pixel_events scope. We exclude them entirely.
+  function _adrayIsBlockedPage() {
+    try {
+      var host = window.location.hostname;
+      var path = window.location.pathname;
+
+      // Shopify hosted checkout domain (separate origin from the storefront)
+      if (/checkout\.shopify\.com$/i.test(host)) return true;
+      if (/shop\.app$/i.test(host)) return true;
+
+      // Shopify checkout paths on *.myshopify.com
+      if (/^\/checkouts?\//i.test(path)) return true;
+      if (/\/thank_you/i.test(path)) return true;
+      if (/\/orders\//i.test(path)) return true;
+
+      // WooCommerce checkout & order pages
+      if (/^\/checkout(\/|$)/i.test(path)) return true;
+      if (/\/order-received\//i.test(path)) return true;
+      if (/\/order-pay\//i.test(path)) return true;
+
+      // Generic payment/account sensitive pages
+      if (/^\/account\/(login|register|password)/i.test(path)) return true;
+
+      return false;
+    } catch(_) { return false; }
+  }
+
   // ── Session persistence: resume recording across SPA/checkout navigations ──
   var _SS_REC_KEY  = 'adray_rec_id';
   var _SS_CIDX_KEY = 'adray_rec_cidx';
@@ -1905,12 +1933,15 @@
     try {
       if (eventName === 'add_to_cart' || eventName === 'begin_checkout' || eventName === 'remove_from_cart') {
         // Inject into the active stream; fallback: start recording if not yet running.
+        // Never start recording on blocked pages (checkout, payment, etc.).
         if (!_adrayEmitCustom(eventName, eventData || {})) {
-          _adrayLoadRrweb(function() {
-            _adrayStartRecording({ trigger: eventName });
-            // rrweb takes a tick to expose addCustomEvent after record() — retry.
-            setTimeout(function() { _adrayEmitCustom(eventName, eventData || {}); }, 100);
-          });
+          if (!_adrayIsBlockedPage()) {
+            _adrayLoadRrweb(function() {
+              _adrayStartRecording({ trigger: eventName });
+              // rrweb takes a tick to expose addCustomEvent after record() — retry.
+              setTimeout(function() { _adrayEmitCustom(eventName, eventData || {}); }, 100);
+            });
+          }
         }
       }
       if (eventName === 'purchase') {
@@ -1973,13 +2004,17 @@
   })();
 
   // Boot: start recording on page load (arch v2). Resume if sessionStorage has
-  // a persisted recordingId; otherwise create a fresh one. Consent gate: if the
-  // merchant has set adrayConsent('denied'), skip rrweb entirely (ecommerce
-  // events still fire via sendEvent).
+  // a persisted recordingId; otherwise create a fresh one.
+  // Skips recording on checkout/payment pages (Shopify blocks DOM recording there
+  // without read_advanced_dom_pixel_events scope). Ecommerce events still fire.
   (function _adrayBootRecording() {
     try {
       if (_adrayGetConsent() === 'denied') {
         console.log('[ADRAY-REC] consent=denied → skipping rrweb');
+        return;
+      }
+      if (_adrayIsBlockedPage()) {
+        console.log('[ADRAY-REC] blocked page → skipping rrweb', window.location.pathname);
         return;
       }
       var persisted = sessionStorage.getItem(_SS_REC_KEY);
