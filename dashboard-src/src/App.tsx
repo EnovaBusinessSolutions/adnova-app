@@ -185,14 +185,30 @@ function bootIdentified(user: any) {
 async function fetchSessionSafe() {
   try {
     const r = await fetch("/api/session", { credentials: "include" });
-    if (!r.ok) return { authenticated: false, user: null };
+    if (!r.ok) return { authenticated: false, user: null, intercom: null };
     const json = await r.json();
-    const authenticated = !!json?.authenticated;
-    const user = json?.user || null;
-    return { authenticated, user };
+    return {
+      authenticated: !!json?.authenticated,
+      user: json?.user || null,
+      intercom: json?.intercom || null,
+    };
   } catch {
-    return { authenticated: false, user: null };
+    return { authenticated: false, user: null, intercom: null };
   }
+}
+
+function bootIdentifiedFromServer(intercomPayload: Record<string, any>) {
+  const payload: Record<string, any> = {
+    ...intercomPayload,
+    app_area: "dashboard",
+  };
+  Object.keys(payload).forEach((k) => {
+    if (payload[k] === null || payload[k] === undefined) delete payload[k];
+  });
+
+  shutdownIntercom();
+  window.intercomSettings = payload;
+  intercomCall("boot", payload);
 }
 
 function useIntercomE2E() {
@@ -220,12 +236,22 @@ function useIntercomE2E() {
       const sess = await fetchSessionSafe();
       if (cancelled) return;
 
+      // Use app_id from server if available (A.2)
+      const appIdFromServer = sess?.intercom?.app_id;
+      const appId = appIdFromServer || INTERCOM_APP_ID;
+      ensureIntercomLoaded(appId);
+
       if (sess.authenticated && sess.user?._id) {
         const uid = String(sess.user._id);
 
         // Si cambió el usuario o no estaba identificado, re-boot identificado
         if (bootedModeRef.current !== "identified" || lastUserIdRef.current !== uid) {
-          bootIdentified(sess.user);
+          // Use server payload (includes HMAC user_hash) when available
+          if (sess.intercom && sess.intercom.user_id) {
+            bootIdentifiedFromServer(sess.intercom);
+          } else {
+            bootIdentified(sess.user);
+          }
           bootedModeRef.current = "identified";
           lastUserIdRef.current = uid;
         } else {

@@ -1341,6 +1341,13 @@ function hashToken(token) {
 // =========================
 const INTERCOM_APP_ID = process.env.INTERCOM_APP_ID || "sqexnuzh";
 const INTERCOM_IDENTITY_SECRET = process.env.INTERCOM_IDENTITY_SECRET || "";
+if (!INTERCOM_IDENTITY_SECRET) {
+  console.warn(
+    "[Intercom] WARNING: INTERCOM_IDENTITY_SECRET not set. " +
+    "User payloads will ship without user_hash. " +
+    "If Intercom workspace has Identity Verification = Enforced, sessions will fail."
+  );
+}
 
 function toUnixSeconds(d) {
   const t = d ? new Date(d).getTime() : Date.now();
