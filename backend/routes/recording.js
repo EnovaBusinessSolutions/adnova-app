@@ -435,6 +435,109 @@ router.get('/:account_id/list', async (req, res) => {
 });
 
 /* ─────────────────────────────────────────────────────────────────────────────
+ * Phase 4 DEBUG: SessionPacket browsing
+ *
+ *   GET /api/recording/:account_id/packets/list?limit=20
+ *     → latest N packets, compact summary (no keyframes body)
+ *   GET /api/recording/:account_id/packets/:session_id
+ *     → full packet JSON (keyframes + signals + ecommerce events)
+ *   GET /api/recording/:account_id/packets/stats
+ *     → count by outcome + count with AI analysis + most recent packet
+ *
+ * Lives inside the recording router for now; will move to its own router once
+ * the player is retired (Phase 9).
+ * ───────────────────────────────────────────────────────────────────────────── */
+router.get('/:account_id/packets/stats', async (req, res) => {
+  try {
+    const { account_id } = req.params;
+    const [total, byOutcome, aiAnalyzed, mostRecent] = await Promise.all([
+      prisma.sessionPacket.count({ where: { accountId: account_id } }),
+      prisma.sessionPacket.groupBy({
+        by: ['outcome'],
+        where: { accountId: account_id },
+        _count: { sessionId: true },
+      }),
+      prisma.sessionPacket.count({ where: { accountId: account_id, aiAnalyzedAt: { not: null } } }),
+      prisma.sessionPacket.findFirst({
+        where: { accountId: account_id },
+        orderBy: { createdAt: 'desc' },
+        select: { sessionId: true, createdAt: true, outcome: true, durationMs: true, rawErasedAt: true },
+      }),
+    ]);
+    return res.json({
+      ok: true,
+      accountId: account_id,
+      total,
+      byOutcome: Object.fromEntries(byOutcome.map((r) => [r.outcome, r._count.sessionId])),
+      aiAnalyzed,
+      mostRecent,
+    });
+  } catch (err) {
+    return res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+router.get('/:account_id/packets/list', async (req, res) => {
+  try {
+    const { account_id } = req.params;
+    const take = Math.min(Number(req.query.limit) || 20, 100);
+    const outcome = String(req.query.outcome || '').trim();
+
+    const where = { accountId: account_id };
+    if (outcome) where.outcome = outcome;
+
+    const packets = await prisma.sessionPacket.findMany({
+      where,
+      select: {
+        sessionId: true, visitorId: true, personId: true, outcome: true,
+        startTs: true, endTs: true, durationMs: true, landingPage: true,
+        cartValueAtEnd: true, orderId: true, device: true, trafficSource: true,
+        aiAnalyzedAt: true, rawErasedAt: true, createdAt: true,
+      },
+      orderBy: { createdAt: 'desc' },
+      take,
+    });
+
+    // Attach compact keyframe + ecommerce summaries without shipping the full arrays
+    const summaries = await prisma.sessionPacket.findMany({
+      where: { sessionId: { in: packets.map((p) => p.sessionId) } },
+      select: { sessionId: true, keyframes: true, ecommerceEvents: true, signals: true },
+    });
+    const byId = new Map(summaries.map((s) => [s.sessionId, s]));
+    const rows = packets.map((p) => {
+      const s = byId.get(p.sessionId);
+      const kfs = Array.isArray(s?.keyframes) ? s.keyframes : [];
+      const ees = Array.isArray(s?.ecommerceEvents) ? s.ecommerceEvents : [];
+      return {
+        ...p,
+        keyframeCount: kfs.length,
+        keyframeTypes: Array.from(new Set(kfs.map((k) => k.type))),
+        ecommerceCount: ees.length,
+        ecommerceTypes: Array.from(new Set(ees.map((e) => e.type))),
+        riskScore: s?.signals?.riskScore ?? null,
+        pattern: s?.signals?.abandonmentPattern ?? null,
+      };
+    });
+    return res.json({ ok: true, count: rows.length, packets: rows });
+  } catch (err) {
+    return res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+router.get('/:account_id/packets/:session_id', async (req, res) => {
+  try {
+    const { account_id, session_id } = req.params;
+    const packet = await prisma.sessionPacket.findUnique({ where: { sessionId: session_id } });
+    if (!packet || packet.accountId !== account_id) {
+      return res.status(404).json({ ok: false, error: 'Packet not found' });
+    }
+    return res.json({ ok: true, packet });
+  } catch (err) {
+    return res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+/* ─────────────────────────────────────────────────────────────────────────────
  * GET /api/recording/:account_id/by-user?userKey=X
  * Returns all READY recordings for a given userKey, ordered chronologically.
  * Used by Selected Journey to offer a stitched playback across the user's
