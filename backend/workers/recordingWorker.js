@@ -98,8 +98,10 @@ async function handleFinalize(job) {
 
   console.log(`[recordingWorker:finalize] ${recordingId} READY — ${allEvents.length} events, ${gzipped.length} bytes`);
 
-  // Enqueue signal extraction
+  // Enqueue signal extraction (legacy SessionRecording.behavioralSignals)
   await enqueueRecordingJob('recording:extract-signals', { recordingId, accountId, sessionId });
+  // Phase 4: build the structured SessionPacket (keyframes + signals + packet row).
+  await enqueueRecordingJob('recording:build-packet', { recordingId, accountId, sessionId });
   // Enqueue outcome check (after 2h to allow purchase events to arrive)
   await enqueueRecordingJob('recording:check-outcome', { recordingId, accountId, sessionId }, { delay: 2 * 60 * 60 * 1000 });
 }
@@ -126,6 +128,17 @@ async function handleCheckOutcome(job) {
       ...(purchaseEvent?.orderId ? { orderId: purchaseEvent.orderId } : {}),
     },
   });
+
+  // Phase 4: mirror the outcome into SessionPacket so downstream AI sees it
+  // without having to join back to SessionRecording. updateMany avoids throwing
+  // when no packet exists yet (build-packet job still pending).
+  await prisma.sessionPacket.updateMany({
+    where: { sessionId },
+    data: {
+      outcome,
+      ...(purchaseEvent?.orderId ? { orderId: purchaseEvent.orderId } : {}),
+    },
+  }).catch((err) => console.warn(`[recordingWorker:check-outcome] packet update failed (non-fatal):`, err.message));
 
   console.log(`[recordingWorker:check-outcome] ${recordingId} outcome=${outcome}`);
 
@@ -215,6 +228,99 @@ async function handleExtractSignals(job) {
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
+ * Job: recording:build-packet (Phase 4)
+ * Downloads the finalized R2 recording, runs the keyframe extractor + signal
+ * extractor, assembles a SessionPacket row. The packet is the permanent
+ * artifact the AI reasoning layer reads; raw rrweb is erased separately.
+ *
+ * Idempotent via upsert on sessionId (unique).
+ * ───────────────────────────────────────────────────────────────────────────── */
+async function handleBuildPacket(job) {
+  const { recordingId } = job.data;
+  console.log(`[recordingWorker:build-packet] ${recordingId}`);
+
+  const rec = await prisma.sessionRecording.findUnique({
+    where: { recordingId },
+    select: {
+      recordingId: true, sessionId: true, accountId: true, userKey: true,
+      cartValue: true, attributionSnapshot: true, deviceType: true, orderId: true,
+      r2Key: true, rawErasedAt: true, status: true,
+    },
+  }).catch(() => null);
+
+  if (!rec) {
+    console.warn(`[recordingWorker:build-packet] ${recordingId} not found`);
+    return;
+  }
+  if (rec.rawErasedAt) {
+    console.log(`[recordingWorker:build-packet] ${recordingId} raw already erased — skipping`);
+    return;
+  }
+  if (!rec.r2Key) {
+    console.warn(`[recordingWorker:build-packet] ${recordingId} has no r2Key (status=${rec.status}) — skipping`);
+    return;
+  }
+
+  let events = [];
+  try {
+    events = await downloadChunk(rec.r2Key);
+  } catch (err) {
+    console.error(`[recordingWorker:build-packet] download failed for ${recordingId}:`, err.message);
+    return;
+  }
+  if (!Array.isArray(events) || events.length === 0) {
+    console.warn(`[recordingWorker:build-packet] ${recordingId} no events — skipping packet`);
+    return;
+  }
+
+  // Run signal extractor (same as /extract-signals) so both legacy and packet
+  // consumers have the same aggregate view.
+  let signals = {};
+  try {
+    const { extractSignals } = require('../services/recordingSignalExtractor');
+    signals = extractSignals(events, { cartValue: rec.cartValue });
+  } catch (err) {
+    console.error(`[recordingWorker:build-packet] signal extraction failed:`, err.message);
+    signals = { error: String(err.message || err) };
+  }
+
+  // Build the packet (keyframes + metadata).
+  const { buildSessionPacket } = require('../services/sessionPacketBuilder');
+  let packet;
+  try {
+    packet = buildSessionPacket({ events, recording: rec, signals });
+  } catch (err) {
+    console.error(`[recordingWorker:build-packet] build failed:`, err.message);
+    return;
+  }
+
+  // Upsert — idempotent on sessionId.
+  try {
+    await prisma.sessionPacket.upsert({
+      where: { sessionId: packet.sessionId },
+      create: packet,
+      update: {
+        keyframes: packet.keyframes,
+        signals: packet.signals,
+        ecommerceEvents: packet.ecommerceEvents,
+        outcome: packet.outcome,
+        endTs: packet.endTs,
+        durationMs: packet.durationMs,
+        cartValueAtEnd: packet.cartValueAtEnd,
+        orderId: packet.orderId,
+        device: packet.device,
+        trafficSource: packet.trafficSource,
+        landingPage: packet.landingPage,
+      },
+      select: { id: true },
+    });
+    console.log(`[recordingWorker:build-packet] ${recordingId} packet upserted (sessionId=${packet.sessionId}, keyframes=${packet.keyframes.length}, outcome=${packet.outcome})`);
+  } catch (err) {
+    console.error(`[recordingWorker:build-packet] upsert failed:`, err.message);
+  }
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
  * Job: recording:erase-raw
  * Deletes the raw R2 recording after retention period.
  * Keeps behavioralSignals intact.
@@ -225,7 +331,7 @@ async function handleEraseRaw(job) {
 
   const rec = await prisma.sessionRecording.findUnique({
     where: { recordingId },
-    select: { r2Key: true, r2ChunksPrefix: true, rawErasedAt: true, behavioralSignals: true },
+    select: { r2Key: true, r2ChunksPrefix: true, rawErasedAt: true, behavioralSignals: true, sessionId: true },
   });
 
   if (!rec) return;
@@ -234,9 +340,19 @@ async function handleEraseRaw(job) {
     return;
   }
 
-  // Only erase if signal extraction has completed (behavioralSignals must be set)
+  // Only erase if both the legacy signals AND the new SessionPacket are written.
+  // Protects raw against a packet-build job that stalled — we'd rather wait
+  // than lose the source data before the permanent artifact exists.
   if (!rec.behavioralSignals) {
     console.warn(`[recordingWorker:erase-raw] ${recordingId} signals not yet extracted — requeuing in 1h`);
+    await enqueueRecordingJob('recording:erase-raw', { recordingId }, { delay: 60 * 60 * 1000 });
+    return;
+  }
+  const packet = rec.sessionId
+    ? await prisma.sessionPacket.findUnique({ where: { sessionId: rec.sessionId }, select: { id: true } }).catch(() => null)
+    : null;
+  if (!packet) {
+    console.warn(`[recordingWorker:erase-raw] ${recordingId} SessionPacket not yet built — requeuing in 1h`);
     await enqueueRecordingJob('recording:erase-raw', { recordingId }, { delay: 60 * 60 * 1000 });
     return;
   }
@@ -251,6 +367,14 @@ async function handleEraseRaw(job) {
     data: { rawErasedAt: new Date(), r2Key: null },
   });
 
+  // Mirror on the packet for audit.
+  if (rec.sessionId) {
+    await prisma.sessionPacket.updateMany({
+      where: { sessionId: rec.sessionId },
+      data: { rawErasedAt: new Date() },
+    }).catch(() => {});
+  }
+
   console.log(`[recordingWorker:erase-raw] ${recordingId} raw recording erased`);
 }
 
@@ -264,6 +388,7 @@ const worker = new Worker(
     if (name === 'recording:finalize') return handleFinalize(job);
     if (name === 'recording:check-outcome') return handleCheckOutcome(job);
     if (name === 'recording:extract-signals') return handleExtractSignals(job);
+    if (name === 'recording:build-packet') return handleBuildPacket(job);
     if (name === 'recording:erase-raw') return handleEraseRaw(job);
     console.warn(`[recordingWorker] Unknown job name: ${name}`);
   },
