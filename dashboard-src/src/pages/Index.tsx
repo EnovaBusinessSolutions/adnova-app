@@ -637,12 +637,8 @@ export default function Index() {
   )}`;
 
   // Pixel setup: true when wizard was completed (user.shop set on backend)
-  // Also check localStorage as instant fallback before first API response
-  const pixelConnected = !!(
-    st?.pixel?.connected ||
-    (typeof window !== "undefined" && !!localStorage.getItem("adray_analytics_shop"))
-  );
-  const pixelShop = st?.pixel?.shop || (typeof window !== "undefined" ? localStorage.getItem("adray_analytics_shop") : null);
+  const pixelConnected = !!st?.pixel?.connected;
+  const pixelShop = st?.pixel?.shop || null;
 
   const hasMetaSelection = (st?.meta?.selectedCount || 0) > 0 || !!st?.meta?.defaultAccountId;
   const hasAdsSelection = (st?.googleAds?.selectedCount || 0) > 0 || !!st?.googleAds?.defaultCustomerId;
