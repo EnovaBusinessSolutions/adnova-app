@@ -119,14 +119,11 @@
     }
   </style>
 
-  <!-- ✅ App Bridge desde CDN de Shopify (requerido por la revisión de la app).
+  <!-- ✅ App Bridge desde CDN de Shopify (único método permitido por la revisión de la app).
        Debe ser el PRIMER <script> del <head> y usar el atributo data-api-key.
-       Expone el global `shopify` (App Bridge v4) para session tokens y navegación. -->
+       Expone el global `shopify` (App Bridge v4) para session tokens y navegación.
+       ⚠️ NO bundlear ni self-hostear App Bridge: Shopify lo rechaza. -->
   <script src="https://cdn.shopify.com/shopifycloud/app-bridge.js" data-api-key="{{SHOPIFY_API_KEY}}"></script>
-
-  <!-- ✅ Fallback self-host (App Bridge v3 UMD) para la lógica legacy de interface.connector.js -->
-  <script src="/connector/vendor/app-bridge.umd.js"></script>
-  <script src="/connector/vendor/app-bridge-utils.umd.js"></script>
 
   <!-- ✅ Bootstrap estable para el conector (shop/host/apiKey/appUrl), sin tocar DOM todavía -->
   <script>
@@ -232,20 +229,8 @@
         return;
       }
 
-      // Chequeo extra: UMD globals deben existir (self-host)
-      var hasAB = !!(window['app-bridge'] && window['app-bridge'].default);
-      var hasUtils = !!(window['app-bridge-utils'] && typeof window['app-bridge-utils'].getSessionToken === 'function');
-      if (!hasAB || !hasUtils) {
-        setPill('App Bridge no listo');
-        showErr(
-          'No se detectó App Bridge UMD o app-bridge-utils.\n' +
-          'Verifica que existan:\n' +
-          '- /connector/vendor/app-bridge.umd.js\n' +
-          '- /connector/vendor/app-bridge-utils.umd.js'
-        );
-        return;
-      }
-
+      // App Bridge v4 se inicializa automáticamente vía el script con data-api-key.
+      // El global `shopify` puede tardar un tick en existir; interface.connector.js lo espera.
       setPill('Listo para autenticar');
       showErr('');
 

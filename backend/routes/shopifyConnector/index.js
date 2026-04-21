@@ -239,9 +239,7 @@ function isValidHmacFromRaw(req) {
  */
 function topLevelRedirect(res, url, label = 'Continuar con Shopify', host = '') {
   // JSON.stringify escapa correctamente para uso inline en <script>
-  const safeUrl    = JSON.stringify(url);
-  const safeApiKey = JSON.stringify(SHOPIFY_API_KEY || '');
-  const safeHost   = JSON.stringify(host || '');
+  const safeUrl = JSON.stringify(url);
 
   return res
     .status(200)
@@ -265,8 +263,9 @@ function topLevelRedirect(res, url, label = 'Continuar con Shopify', host = '') 
     a{color:#9ecbff}
     code{font-size:12px;opacity:.9}
   </style>
+  <!-- App Bridge v4 debe cargarse ÚNICAMENTE desde el CDN de Shopify.
+       Self-hostearlo o bundlearlo hace fallar la revisión automática de la app. -->
   <script src="https://cdn.shopify.com/shopifycloud/app-bridge.js" data-api-key="${SHOPIFY_API_KEY || ''}"></script>
-  <script src="/connector/vendor/app-bridge.umd.js"></script>
 </head>
 <body>
   <div class="card">
@@ -280,23 +279,14 @@ function topLevelRedirect(res, url, label = 'Continuar con Shopify', host = '') 
   <script>
     (function () {
       var targetUrl = ${safeUrl};
-      var apiKey    = ${safeApiKey};
-      var host      = ${safeHost};
-
-      // App Bridge: establece el canal postMessage con Shopify admin y navega correctamente.
-      // El botón manual actúa como fallback si App Bridge no está disponible.
-      var AB = window['app-bridge'];
-      var createApp = AB ? (AB.default || (typeof AB === 'function' ? AB : null)) : null;
-
-      if (createApp && apiKey && host) {
+      // App Bridge v4 intercepta window.open(url, '_top') para hacer top-level redirect
+      // desde el iframe de Shopify admin sin "target origin mismatch".
+      try { window.open(targetUrl, '_top'); }
+      catch (e) {
         try {
-          var app = createApp({ apiKey: apiKey, host: host, forceRedirect: false });
-          var actions = (AB.default && AB.default.actions) || AB.actions || null;
-          var Redirect = actions ? actions.Redirect : null;
-          if (Redirect) {
-            Redirect.create(app).dispatch(Redirect.Action.REMOTE, targetUrl);
-          }
-        } catch (e) { /* el botón manual es el fallback */ }
+          if (window.top && window.top !== window.self) window.top.location.href = targetUrl;
+          else window.location.href = targetUrl;
+        } catch (_) { window.location.href = targetUrl; }
       }
     })();
   </script>
