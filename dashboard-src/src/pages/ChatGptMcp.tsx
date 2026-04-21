@@ -93,6 +93,8 @@ export default function ChatGptMcp() {
 
   return (
     <DashboardLayout>
+      <ParticleField variant="emerald" count={26} />
+
       <div className="mx-auto w-full max-w-5xl px-4 py-6 sm:px-6 sm:py-8">
         {/* Top bar: pills + back */}
         <div className="mb-5 flex items-center justify-between gap-3 sm:mb-6">
@@ -114,8 +116,6 @@ export default function ChatGptMcp() {
             <div className="absolute -bottom-24 left-0 h-56 w-56 rounded-full bg-[#B55CFF]/6 blur-3xl" />
             <div className="absolute inset-0 translate-x-[-120%] bg-[linear-gradient(110deg,transparent,rgba(255,255,255,0.03),transparent)] animate-[adray-shimmer_6s_ease-in-out_infinite]" />
           </div>
-
-          <ParticleField variant="emerald" count={36} />
 
           <CardContent className="relative p-5 sm:p-8">
             <p className="text-[11px] uppercase tracking-[0.22em] text-[#9BEFD3]/65">
@@ -139,11 +139,11 @@ export default function ChatGptMcp() {
 
           <CardContent className="relative p-5 sm:p-8">
             <div className="flex items-center gap-2">
-              <span className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-[#4FE3C1]/28 bg-[#4FE3C1]/10">
+              <span className="inline-flex h-11 w-11 items-center justify-center rounded-full border border-[#4FE3C1]/28 bg-[#4FE3C1]/10">
                 <img
                   src={chatgptLogo}
                   alt="ChatGPT"
-                  className="h-3.5 w-3.5 object-contain"
+                  className="h-7 w-7 object-contain"
                   draggable={false}
                 />
               </span>

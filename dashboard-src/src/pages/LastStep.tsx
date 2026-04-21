@@ -16,7 +16,8 @@ import { Card, CardContent } from "@/components/ui/card";
 import { ParticleField } from "@/components/ParticleField";
 import chatgptLogo from "@/assets/logos/chatgpt.png";
 import claudeLogo from "@/assets/logos/claude.png";
-import { ArrowRight, Check, FileText } from "lucide-react";
+import adrayIcon from "@/assets/adray-icon.png";
+import { ArrowRight, Check } from "lucide-react";
 
 type Accent = "emerald" | "purple" | "blue";
 type TagTone = "emerald" | "purple" | "neutral";
@@ -44,7 +45,7 @@ const PROVIDERS: Provider[] = [
       <img
         src={chatgptLogo}
         alt="ChatGPT"
-        className="h-5 w-5 object-contain"
+        className="h-10 w-10 object-contain"
         draggable={false}
       />
     ),
@@ -62,7 +63,7 @@ const PROVIDERS: Provider[] = [
       <img
         src={claudeLogo}
         alt="Claude"
-        className="h-5 w-5 object-contain"
+        className="h-10 w-10 object-contain"
         draggable={false}
       />
     ),
@@ -76,7 +77,14 @@ const PROVIDERS: Provider[] = [
       "Generate a structured PDF of your Adray signal to paste into any AI tool — ChatGPT, Claude, Gemini, and more.",
     tag: "Any LLM",
     tagTone: "neutral",
-    icon: <FileText className="h-5 w-5" />,
+    icon: (
+      <img
+        src={adrayIcon}
+        alt="Adray Signal"
+        className="h-10 w-10 object-contain"
+        draggable={false}
+      />
+    ),
     to: "/signal",
     accent: "blue",
   },
@@ -190,7 +198,7 @@ function ProviderCard({ provider }: { provider: Provider }) {
         <div className="relative flex items-center gap-4">
           <div
             className={[
-              "flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border backdrop-blur-md",
+              "flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl border backdrop-blur-md",
               theme.iconWrap,
             ].join(" ")}
           >
@@ -228,6 +236,8 @@ function ProviderCard({ provider }: { provider: Provider }) {
 export default function LastStep() {
   return (
     <DashboardLayout>
+      <ParticleField variant="multiverse" count={28} />
+
       <div className="mx-auto w-full max-w-5xl px-4 py-6 sm:px-6 sm:py-8">
         <Card className="relative overflow-hidden rounded-[28px] border border-white/[0.08] bg-[linear-gradient(180deg,rgba(18,14,28,0.72)_0%,rgba(10,10,14,0.88)_100%)] shadow-[inset_0_1px_0_rgba(255,255,255,0.03)] backdrop-blur-md">
           <div className="pointer-events-none absolute inset-0 opacity-60">
@@ -235,8 +245,6 @@ export default function LastStep() {
             <div className="absolute -bottom-24 left-0 h-56 w-56 rounded-full bg-[#4FE3C1]/6 blur-3xl" />
             <div className="absolute inset-0 translate-x-[-120%] bg-[linear-gradient(110deg,transparent,rgba(255,255,255,0.03),transparent)] animate-[adray-shimmer_6s_ease-in-out_infinite]" />
           </div>
-
-          <ParticleField variant="multiverse" count={40} />
 
           <CardContent className="relative p-5 sm:p-8">
             <StepPills />

@@ -1,13 +1,12 @@
 // dashboard-src/src/components/ParticleField.tsx
 //
-// Lightweight CSS-only floating particle field used as ambient background
-// decoration in premium Adray panels. No external dependencies — just DOM
-// elements animated via the `adray-particle-drift` keyframes defined in
-// index.css.
+// Ultra-subtle ambient particle field. Renders a small number of tiny,
+// low-opacity particles that float across the viewport. Used as page-level
+// background decoration (NOT inside cards). Pure CSS animations, zero deps.
 //
-// Each panel picks a variant (multiverse, emerald, purple, blue) to match
-// its visual identity and give the user the feeling of stepping into a
-// different "world" per panel.
+// Default positioning is viewport-fixed (inset-0), so the particles cover
+// the whole main content area behind the card/content blocks. The sidebar
+// (z-50) stays above this layer.
 
 import { useMemo } from "react";
 
@@ -31,11 +30,30 @@ type Particle = {
   color: string;
 };
 
+// Palettes lean heavily on white/near-white with a subtle tint so particles
+// read as "ambient dust" rather than colored confetti.
 const VARIANT_COLORS: Record<ParticleVariant, string[]> = {
-  multiverse: ["#B55CFF", "#4FE3C1", "#7CC8FF", "#D8B8FF"],
-  emerald: ["#4FE3C1", "#9BEFD3"],
-  purple: ["#B55CFF", "#D8B8FF"],
-  blue: ["#7CC8FF", "#BEDBF2"],
+  multiverse: [
+    "rgba(255,255,255,0.85)",
+    "rgba(216,184,255,0.7)",   // pale purple
+    "rgba(155,239,211,0.6)",   // pale emerald
+    "rgba(190,219,242,0.65)",  // pale blue
+  ],
+  emerald: [
+    "rgba(255,255,255,0.85)",
+    "rgba(155,239,211,0.65)",
+    "rgba(200,245,225,0.55)",
+  ],
+  purple: [
+    "rgba(255,255,255,0.85)",
+    "rgba(216,184,255,0.7)",
+    "rgba(230,210,255,0.55)",
+  ],
+  blue: [
+    "rgba(255,255,255,0.85)",
+    "rgba(190,219,242,0.65)",
+    "rgba(215,230,245,0.55)",
+  ],
 };
 
 function pickFrom<T>(arr: T[], rnd: number): T {
@@ -48,9 +66,6 @@ function buildParticles(
   count: number,
   seed: string
 ): Particle[] {
-  // Deterministic-ish random per (variant + mount). We use a simple LCG so
-  // particles look similar across SSR/CSR and between re-renders of the same
-  // component instance, but differ per panel variant.
   let s = 0;
   for (let i = 0; i < seed.length; i++) s = (s * 31 + seed.charCodeAt(i)) >>> 0;
   const rng = () => {
@@ -63,19 +78,26 @@ function buildParticles(
   return Array.from({ length: count }, (_, i) => ({
     id: i,
     leftPct: rng() * 100,
-    bottomPct: rng() * -20, // start slightly below the viewport
-    size: 2 + rng() * 3, // 2–5 px
-    duration: 22 + rng() * 28, // 22–50 s
-    delay: -rng() * 40, // negative so particles are mid-animation at mount
-    driftX: (rng() - 0.5) * 40, // -20 to +20 px horizontal sway
-    opacity: 0.25 + rng() * 0.45, // 0.25–0.70
+    bottomPct: rng() * -15, // start slightly below viewport
+    size: 1 + rng() * 1.5, // 1.0–2.5 px — tiny
+    duration: 28 + rng() * 32, // 28–60 s — slow, unhurried drift
+    delay: -rng() * 50, // negative so they are already mid-drift at mount
+    driftX: (rng() - 0.5) * 30, // -15 to +15 px horizontal sway
+    opacity: 0.12 + rng() * 0.18, // 0.12–0.30 — very subtle
     color: pickFrom(palette, rng()),
   }));
 }
 
+/**
+ * Ambient particle field pinned to the viewport. Render as a direct child
+ * of your page root (after <DashboardLayout>) so it sits behind all content
+ * in the main content area.
+ *
+ * The sidebar uses z-50, so these particles (z-0) never cover it.
+ */
 export function ParticleField({
   variant = "multiverse",
-  count = 32,
+  count = 28,
   className = "",
 }: ParticleFieldProps) {
   const particles = useMemo(
@@ -87,7 +109,7 @@ export function ParticleField({
     <div
       aria-hidden="true"
       className={[
-        "pointer-events-none absolute inset-0 overflow-hidden",
+        "pointer-events-none fixed inset-0 z-0 overflow-hidden",
         className,
       ].join(" ")}
     >
@@ -101,10 +123,10 @@ export function ParticleField({
             width: `${p.size}px`,
             height: `${p.size}px`,
             backgroundColor: p.color,
-            boxShadow: `0 0 ${p.size * 2.5}px ${p.color}`,
+            // Very soft glow — just a hint, not a halo
+            boxShadow: `0 0 ${p.size * 1.5}px ${p.color}`,
             opacity: p.opacity,
             animation: `adray-particle-drift ${p.duration}s ease-in-out ${p.delay}s infinite`,
-            // CSS custom property for per-particle horizontal drift
             ["--particle-drift-x" as string]: `${p.driftX}px`,
           }}
         />
