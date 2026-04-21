@@ -72,7 +72,7 @@ const PROVIDERS: Provider[] = [
   },
   {
     key: "signal",
-    title: "Signal",
+    title: "Signal PDF",
     description:
       "Generate a structured PDF of your Adray signal to paste into any AI tool — ChatGPT, Claude, Gemini, and more.",
     tag: "Any LLM",
