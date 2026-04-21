@@ -12,7 +12,9 @@ import { useNavigate } from "react-router-dom";
 import { DashboardLayout } from "@/components/DashboardLayout";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { ArrowLeft, ArrowUpRight, Bot } from "lucide-react";
+import { ArrowLeft, ArrowUpRight } from "lucide-react";
+import { ParticleField } from "@/components/ParticleField";
+import chatgptLogo from "@/assets/logos/chatgpt.png";
 
 const ADRAY_GPT_URL =
   "https://chatgpt.com/g/g-69cb161b48f081918b69b14d8e1d9407-adray-analytics";
@@ -113,6 +115,8 @@ export default function ChatGptMcp() {
             <div className="absolute inset-0 translate-x-[-120%] bg-[linear-gradient(110deg,transparent,rgba(255,255,255,0.03),transparent)] animate-[adray-shimmer_6s_ease-in-out_infinite]" />
           </div>
 
+          <ParticleField variant="emerald" count={36} />
+
           <CardContent className="relative p-5 sm:p-8">
             <p className="text-[11px] uppercase tracking-[0.22em] text-[#9BEFD3]/65">
               ChatGPT · Custom GPT
@@ -136,7 +140,12 @@ export default function ChatGptMcp() {
           <CardContent className="relative p-5 sm:p-8">
             <div className="flex items-center gap-2">
               <span className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-[#4FE3C1]/28 bg-[#4FE3C1]/10">
-                <Bot className="h-3.5 w-3.5 text-[#9BEFD3]" />
+                <img
+                  src={chatgptLogo}
+                  alt="ChatGPT"
+                  className="h-3.5 w-3.5 object-contain"
+                  draggable={false}
+                />
               </span>
               <p className="text-[11px] uppercase tracking-[0.22em] text-[#9BEFD3]/65">
                 Setup Instructions

@@ -210,6 +210,7 @@ type CanonicalUiState = {
   connectionFingerprint: string | null;
 
   signalStatus: RuntimeSignalStatus;
+  signalProgress?: number;
   signalReadyForPdf: boolean;
   signalComplete: boolean;
   needSignalRebuild: boolean;
@@ -1639,7 +1640,6 @@ export default function Signal() {
 
     if (
       state.signalStatus !== "ready" ||
-      state.signalStatus === "stale" ||
       state.needSignalRebuild ||
       (!state.signalReadyForPdf && !state.signalComplete)
     ) {

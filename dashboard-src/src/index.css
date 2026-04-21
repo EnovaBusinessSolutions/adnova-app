@@ -736,3 +736,34 @@
     line-height: 1.5;
   }
 }
+
+/* ============================================================
+   Adray particle field — floating particles animation.
+   Used by the <ParticleField /> component for ambient background
+   decoration in premium panels. Pure CSS, GPU-accelerated.
+   ============================================================ */
+@keyframes adray-particle-drift {
+  0% {
+    transform: translate3d(0, 0, 0) scale(0.7);
+    opacity: 0;
+  }
+  8% {
+    opacity: 1;
+  }
+  50% {
+    transform: translate3d(var(--particle-drift-x, 0px), -55vh, 0) scale(1);
+  }
+  92% {
+    opacity: 1;
+  }
+  100% {
+    transform: translate3d(var(--particle-drift-x, 0px), -110vh, 0) scale(0.9);
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  @keyframes adray-particle-drift {
+    0%, 100% { transform: translate3d(0, 0, 0); opacity: 0.3; }
+  }
+}
