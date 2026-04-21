@@ -11,42 +11,6 @@ const OAuthToken = require('./models/OAuthToken');
 const APP_URL = (process.env.APP_URL || 'https://adray.ai').replace(/\/$/, '');
 const CODE_LIFETIME_MS = 10 * 60 * 1000;
 
-// RFC 8707 Resource Indicators. The only canonical resource this AS protects
-// is the MCP endpoint. Clients that omit `resource` keep working (legacy path).
-// Clients that send `resource` must target this exact URI, otherwise we reject.
-const CANONICAL_RESOURCE_URI = `${APP_URL}/mcp`;
-
-/**
- * Normalize an RFC 8707 resource parameter.
- * Returns { ok: true, value } if acceptable (or absent), { ok: false } otherwise.
- * - Absent/empty ⇒ ok with value=null (backward compatible — no audience binding).
- * - Present ⇒ must parse as absolute https URL, no fragment, and match the
- *   canonical MCP resource URI (path may be /mcp or /mcp/).
- */
-function normalizeResourceIndicator(value) {
-  if (value === undefined || value === null || value === '') {
-    return { ok: true, value: null };
-  }
-  let parsed;
-  try {
-    parsed = new URL(String(value).trim());
-  } catch {
-    return { ok: false, reason: 'malformed' };
-  }
-  if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
-    return { ok: false, reason: 'unsupported_scheme' };
-  }
-  if (parsed.hash) return { ok: false, reason: 'has_fragment' };
-
-  // Tolerate trailing slash and compare origin+path against the canonical URI.
-  const normalized = `${parsed.origin}${parsed.pathname.replace(/\/$/, '')}`;
-  const canonical = CANONICAL_RESOURCE_URI.replace(/\/$/, '');
-  if (normalized !== canonical) {
-    return { ok: false, reason: 'resource_mismatch' };
-  }
-  return { ok: true, value: canonical };
-}
-
 const SCOPE_LABELS = {
   'read:ads_performance': 'Ver rendimiento de campañas publicitarias (Meta Ads, Google Ads)',
   'read:shopify_orders': 'Ver ingresos y productos de tu tienda Shopify',
@@ -260,7 +224,6 @@ router.get('/authorize', async (req, res) => {
       state,
       code_challenge,
       code_challenge_method,
-      resource,
     } = req.query;
 
     if (response_type !== 'code') {
@@ -274,21 +237,6 @@ router.get('/authorize', async (req, res) => {
       return res.status(400).json({
         error: 'invalid_request',
         error_description: 'client_id and redirect_uri are required.',
-      });
-    }
-
-    // RFC 8707: if resource was provided, validate it up front so we fail fast
-    // before showing consent. Legacy clients without `resource` pass through.
-    const normalizedResource = normalizeResourceIndicator(resource);
-    if (!normalizedResource.ok) {
-      console.warn('[oauth/authorize] invalid resource indicator', {
-        clientId: client_id || null,
-        reason: normalizedResource.reason,
-        received: resource || null,
-      });
-      return res.status(400).json({
-        error: 'invalid_target',
-        error_description: `resource must equal ${CANONICAL_RESOURCE_URI}`,
       });
     }
     const normalizedRedirect = normalizeRedirectUri(redirect_uri);
@@ -356,23 +304,10 @@ router.post('/authorize', express.urlencoded({ extended: false }), async (req, r
       state,
       code_challenge,
       code_challenge_method,
-      resource,
     } = req.body;
 
     if (!client_id || !redirect_uri) {
       return res.status(400).json({ error: 'invalid_request' });
-    }
-
-    const normalizedResource = normalizeResourceIndicator(resource);
-    if (!normalizedResource.ok) {
-      console.warn('[oauth/authorize POST] invalid resource indicator', {
-        clientId: client_id || null,
-        reason: normalizedResource.reason,
-      });
-      return res.status(400).json({
-        error: 'invalid_target',
-        error_description: `resource must equal ${CANONICAL_RESOURCE_URI}`,
-      });
     }
 
     const normalizedRedirect = normalizeRedirectUri(redirect_uri);
@@ -412,7 +347,6 @@ router.post('/authorize', express.urlencoded({ extended: false }), async (req, r
       scopes: requestedScopes,
       codeChallenge: code_challenge || null,
       codeChallengeMethod: code_challenge_method || null,
-      resource: normalizedResource.value, // RFC 8707; null for legacy clients.
       expiresAt: new Date(Date.now() + CODE_LIFETIME_MS),
     });
 
@@ -442,7 +376,6 @@ router.post('/token', express.urlencoded({ extended: false }), express.json(), a
       refresh_token,
       code_verifier,
       scope,
-      resource,
     } = req.body;
 
     if (grant_type === 'authorization_code') {
@@ -504,33 +437,6 @@ router.post('/token', express.urlencoded({ extended: false }), express.json(), a
         return res.status(400).json({ error: 'invalid_grant', error_description: 'code_verifier required.' });
       }
 
-      // RFC 8707: if client sent `resource` on /token, it must match what was
-      // bound to the authorization code at /authorize. If only one side sent
-      // it, we trust whichever is set. If neither sent it, legacy path.
-      const tokenResource = normalizeResourceIndicator(resource);
-      if (!tokenResource.ok) {
-        return res.status(400).json({
-          error: 'invalid_target',
-          error_description: `resource must equal ${CANONICAL_RESOURCE_URI}`,
-        });
-      }
-      if (
-        authCode.resource &&
-        tokenResource.value &&
-        authCode.resource !== tokenResource.value
-      ) {
-        console.warn('[oauth/token] resource mismatch between authorize and token', {
-          clientId: client_id,
-          codeResource: authCode.resource,
-          tokenResource: tokenResource.value,
-        });
-        return res.status(400).json({
-          error: 'invalid_target',
-          error_description: 'resource does not match the one bound at /authorize.',
-        });
-      }
-      const boundResource = authCode.resource || tokenResource.value || null;
-
       authCode.used = true;
       await authCode.save();
 
@@ -544,7 +450,6 @@ router.post('/token', express.urlencoded({ extended: false }), express.json(), a
         userId: authCode.userId,
         clientId: client_id,
         scopes: authCode.scopes,
-        resource: boundResource,
         accessTokenExpiresAt: new Date(now.getTime() + ACCESS_TOKEN_LIFETIME_MS),
         refreshTokenExpiresAt: new Date(now.getTime() + REFRESH_TOKEN_LIFETIME_MS),
       });
@@ -582,26 +487,6 @@ router.post('/token', express.urlencoded({ extended: false }), express.json(), a
         return res.status(400).json({ error: 'unauthorized_client' });
       }
 
-      // RFC 8707: resource on refresh must match the one bound to the original
-      // token. Absent resource is legacy and still allowed.
-      const tokenResource = normalizeResourceIndicator(resource);
-      if (!tokenResource.ok) {
-        return res.status(400).json({
-          error: 'invalid_target',
-          error_description: `resource must equal ${CANONICAL_RESOURCE_URI}`,
-        });
-      }
-      if (
-        existing.resource &&
-        tokenResource.value &&
-        existing.resource !== tokenResource.value
-      ) {
-        return res.status(400).json({
-          error: 'invalid_target',
-          error_description: 'resource does not match the original grant.',
-        });
-      }
-
       existing.revoked = true;
       await existing.save();
 
@@ -615,7 +500,6 @@ router.post('/token', express.urlencoded({ extended: false }), express.json(), a
         userId: existing.userId,
         clientId: client_id,
         scopes: existing.scopes,
-        resource: existing.resource || null, // preserved across refresh
         accessTokenExpiresAt: new Date(now.getTime() + ACCESS_TOKEN_LIFETIME_MS),
         refreshTokenExpiresAt: new Date(now.getTime() + REFRESH_TOKEN_LIFETIME_MS),
       });
@@ -818,5 +702,3 @@ router.post('/register', express.json(), dynamicClientRegistrationHandler);
 
 module.exports = router;
 module.exports.dynamicClientRegistrationHandler = dynamicClientRegistrationHandler;
-module.exports.normalizeResourceIndicator = normalizeResourceIndicator;
-module.exports.CANONICAL_RESOURCE_URI = CANONICAL_RESOURCE_URI;
