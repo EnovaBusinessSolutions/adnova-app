@@ -1,413 +1,263 @@
-import React, { useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+// dashboard-src/src/pages/ClaudeMcp.tsx
+//
+// "Connect Adray to Claude" panel — second-level destination from the
+// "Choose your AI" hub (/laststep). Guides the user to install the Adray
+// MCP connector inside Claude:
+//   1) Open Claude Settings -> Connections.
+//   2) Add a connector pasting the Adray MCP URL.
+//
+// The route /claudemcp still points to this file (see App.tsx); only the
+// content has been refactored to a lean premium panel per the product spec.
 
+import { useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { DashboardLayout } from "@/components/DashboardLayout";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-
 import {
   ArrowLeft,
+  Check,
   Copy,
-  Link2,
-  Loader2,
-  Sparkles,
-  CheckCircle2,
-  ArrowUpRight,
-  Wand2,
+  ExternalLink,
+  Gem,
+  PlayCircle,
 } from "lucide-react";
 
-type LinkResponse = {
-  ok?: boolean;
-  data?: {
-    provider?: string;
-    shareToken?: string | null;
-    shareUrl?: string | null;
-    enabled?: boolean;
-  };
+const ADRAY_MCP_URL = "https://adray.ai/mcp";
+const CLAUDE_CONNECTORS_URL = "https://claude.ai/customize/connectors";
+
+type Step = {
+  index: number;
+  title: string;
+  description: string;
 };
 
-async function apiJson<T = any>(url: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(url, {
-    credentials: "include",
-    headers: {
-      "Content-Type": "application/json",
-      ...(init?.headers || {}),
-    },
-    ...init,
-  });
+const STEPS: Step[] = [
+  {
+    index: 1,
+    title: "Open Claude.ai",
+    description:
+      "and go to Settings → Connections. You'll need a Pro or Teams plan to access MCP connectors.",
+  },
+  {
+    index: 2,
+    title: 'Click "Add connector"',
+    description:
+      "and search for Adray, or paste the MCP URL from the button below.",
+  },
+  {
+    index: 3,
+    title: "Authorize the connection",
+    description:
+      "— you'll be redirected back to Adray to approve access. Takes about 30 seconds.",
+  },
+  {
+    index: 4,
+    title: "Start a new Claude conversation",
+    description:
+      "and ask about your ad performance, spend, or signal insights.",
+  },
+];
 
-  const json = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    throw new Error(json?.error || json?.message || `HTTP_${res.status}`);
-  }
-  return json as T;
+function HeaderPills() {
+  const pillBase =
+    "inline-flex items-center gap-2 rounded-full border px-3.5 py-1.5 text-xs font-semibold backdrop-blur-md";
+  const done =
+    "border-[#4FE3C1]/24 bg-[#4FE3C1]/8 text-[#9BEFD3]";
+  const active =
+    "border-[#B55CFF]/30 bg-[#B55CFF]/12 text-[#D8B8FF] shadow-[0_0_18px_rgba(181,92,255,0.14)]";
+
+  return (
+    <div className="flex items-center gap-2">
+      <span className={[pillBase, done].join(" ")}>
+        <span className="inline-flex h-1.5 w-1.5 rounded-full bg-[#4FE3C1]" />
+        Activate data
+      </span>
+      <span className={[pillBase, active].join(" ")}>
+        <span className="relative inline-flex h-1.5 w-1.5">
+          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[#B55CFF]/50" />
+          <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-[#D8B8FF]" />
+        </span>
+        Claude MCP
+      </span>
+    </div>
+  );
 }
 
-async function safeCopy(text: string) {
-  if (!text) return false;
+function StepRow({ step }: { step: Step }) {
+  return (
+    <div className="flex items-start gap-4">
+      <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-[#B55CFF]/30 bg-[#B55CFF]/10 text-xs font-semibold text-[#D8B8FF]">
+        {step.index}
+      </div>
+      <p className="text-sm leading-7 text-white/82">
+        <span className="font-semibold text-white/94">{step.title}</span>
+        <span className="text-white/58"> {step.description}</span>
+      </p>
+    </div>
+  );
+}
 
+async function safeCopy(text: string): Promise<boolean> {
   try {
-    if (navigator.clipboard?.writeText) {
+    if (
+      typeof navigator !== "undefined" &&
+      navigator.clipboard &&
+      typeof navigator.clipboard.writeText === "function"
+    ) {
       await navigator.clipboard.writeText(text);
       return true;
     }
   } catch {
-    // noop
+    // fall through to the legacy fallback below
   }
 
   try {
-    const ta = document.createElement("textarea");
-    ta.value = text;
-    ta.style.position = "fixed";
-    ta.style.opacity = "0";
-    document.body.appendChild(ta);
-    ta.select();
+    const textarea = document.createElement("textarea");
+    textarea.value = text;
+    textarea.style.position = "fixed";
+    textarea.style.top = "0";
+    textarea.style.left = "0";
+    textarea.style.opacity = "0";
+    document.body.appendChild(textarea);
+    textarea.focus();
+    textarea.select();
     const ok = document.execCommand("copy");
-    document.body.removeChild(ta);
+    document.body.removeChild(textarea);
     return ok;
   } catch {
     return false;
   }
 }
 
-function PromptCard({
-  index,
-  title,
-  prompt,
-  onCopy,
-}: {
-  index: number;
-  title: string;
-  prompt: string;
-  onCopy: (text: string) => void;
-}) {
-  return (
-    <div className="group relative overflow-hidden rounded-3xl border border-white/10 bg-white/[0.02] p-5 transition-all hover:border-[#D9C7FF]/30 hover:bg-white/[0.03] hover:shadow-[0_0_32px_rgba(217,199,255,0.09)]">
-      <div className="absolute inset-0 opacity-0 transition-opacity group-hover:opacity-100">
-        <div className="absolute -top-16 right-0 h-44 w-44 rounded-full blur-3xl bg-[#D9C7FF]/10" />
-        <div className="absolute -bottom-16 left-0 h-40 w-40 rounded-full blur-3xl bg-[#B55CFF]/10" />
-      </div>
-
-      <div className="relative">
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <div className="inline-flex items-center gap-2 rounded-full border border-[#D9C7FF]/20 bg-[#D9C7FF]/10 px-2.5 py-1 text-[11px] font-medium text-[#F2EAFE]">
-              <Sparkles className="h-3.5 w-3.5" />
-              Prompt {index}
-            </div>
-
-            <h3 className="mt-3 text-lg font-semibold text-white/95">{title}</h3>
-          </div>
-
-          <Button
-            onClick={() => onCopy(prompt)}
-            className="bg-white/[0.04] hover:bg-white/[0.08] text-white border border-white/10"
-          >
-            <Copy className="h-4 w-4 mr-2" />
-            Copy
-          </Button>
-        </div>
-
-        <div className="mt-4 rounded-2xl border border-white/10 bg-[#090A0D] p-4">
-          <pre className="whitespace-pre-wrap text-[12px] leading-6 text-white/78 font-mono">
-            {prompt}
-          </pre>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 export default function ClaudeMcp() {
   const nav = useNavigate();
+  const [copied, setCopied] = useState(false);
+  const copyTimerRef = useRef<number | null>(null);
 
-  const [shareUrl, setShareUrl] = useState("");
-  const [loadingLink, setLoadingLink] = useState(false);
-  const [toast, setToast] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  const showToast = (text: string) => {
-    setToast(text);
-    window.setTimeout(() => setToast(null), 1600);
-  };
-
-  const createAndCopyLink = async () => {
-    try {
-      setLoadingLink(true);
-      setError(null);
-
-      const json = await apiJson<LinkResponse>("/api/mcp/context/link", {
-        method: "POST",
-        body: JSON.stringify({
-          provider: "claude",
-          regenerate: false,
-        }),
-      });
-
-      const url = json?.data?.shareUrl || "";
-      setShareUrl(url);
-
-      const ok = await safeCopy(url);
-      showToast(ok ? "Link copied" : "Link generated");
-    } catch (err: any) {
-      setError(err?.message || "Failed to generate link");
-      showToast("Could not generate link");
-    } finally {
-      setLoadingLink(false);
+  const handleCopy = async () => {
+    const ok = await safeCopy(ADRAY_MCP_URL);
+    if (!ok) return;
+    setCopied(true);
+    if (copyTimerRef.current) {
+      window.clearTimeout(copyTimerRef.current);
     }
+    copyTimerRef.current = window.setTimeout(() => setCopied(false), 2000);
   };
 
-  const copyPrompt = async (text: string) => {
-    const ok = await safeCopy(text);
-    showToast(ok ? "Prompt copied" : "Could not copy prompt");
+  const openClaudeSettings = () => {
+    window.open(CLAUDE_CONNECTORS_URL, "_blank", "noopener,noreferrer");
   };
-
-  const prompts = useMemo(() => {
-    const linkPlaceholder = `"User's Adray AI link here"`;
-
-    return [
-      {
-        title: "Deep strategic performance diagnosis",
-        prompt: `Please act as a senior performance marketing strategist and business analyst. Use my Adray AI data link as the primary source of truth: ${linkPlaceholder}
-
-I want a structured, deeply reasoned diagnosis of my current marketing performance across Meta Ads, Google Ads, and any relevant behavioral signals from GA4.
-
-Please structure your answer into:
-1. Executive summary
-2. What appears to be working best
-3. What appears to be underperforming
-4. The most important cross-channel patterns or contradictions
-5. Strategic implications for the business
-6. Immediate recommendations
-7. Medium-term recommendations
-
-I want you to think carefully, explain your reasoning clearly, and prioritize strategic signal over generic advice.`,
-      },
-      {
-        title: "Budget efficiency and scaling tradeoff analysis",
-        prompt: `Please analyze my Adray AI data using this link: ${linkPlaceholder}
-
-I want you to evaluate how I should think about budget efficiency versus scaling opportunities.
-
-Specifically, please determine:
-- which campaigns or channels seem most efficient
-- which ones appear scalable
-- where scaling might damage performance
-- where I may be underinvesting in strong winners
-- where I may be protecting weak campaigns for too long
-
-Then provide a strategic recommendation framework with:
-1. What to keep stable
-2. What to scale carefully
-3. What to cut or reduce
-4. The tradeoffs behind those decisions
-5. What I should monitor as I make budget changes
-
-Answer with high clarity, structured thinking, and strong business judgment.`,
-      },
-      {
-        title: "Conversion problem root-cause analysis",
-        prompt: `Please use my Adray AI data link as your source of truth: ${linkPlaceholder}
-
-I want a thoughtful root-cause analysis of why my conversion performance may be weaker than expected.
-
-Please assess:
-- whether the issue appears to be traffic quality
-- whether the issue appears to be funnel or landing page friction
-- whether the issue appears to be budget misallocation
-- whether there are signs of misalignment between paid media and on-site behavior
-- which bottlenecks are most likely hurting business outcomes
-
-Then explain:
-1. The most likely root cause
-2. The second-order contributing factors
-3. Which signals from the data support your conclusion
-4. What actions would most likely improve conversion performance
-
-Please be analytical, careful, and explicit in your reasoning.`,
-      },
-      {
-        title: "Executive decision memo for next moves",
-        prompt: `I want you to act like a strategic advisor preparing a decision memo for leadership. Use my Adray AI link here: ${linkPlaceholder}
-
-Based on the data in that link, write a concise but high-quality strategic memo covering:
-1. Current marketing situation
-2. Strongest opportunities
-3. Biggest risks
-4. Where leadership attention is needed most
-5. What should be done in the next 7 days
-6. What should be done in the next 30 days
-
-Please write with clarity, strategic depth, and executive-level precision. The answer should help a founder, operator, or CMO make better decisions quickly.`,
-      },
-    ];
-  }, []);
 
   return (
     <DashboardLayout>
-      <div className="min-h-screen bg-[#0B0B0D]">
-        <div className="p-4 sm:p-6">
-          <Card className="glass-effect border-[#2C2530] bg-[#0F1012] overflow-hidden">
-            <div className="relative">
-              <div className="absolute inset-0 opacity-60">
-                <div className="absolute -top-24 -right-20 h-72 w-72 rounded-full blur-3xl bg-[#D9C7FF]/18" />
-                <div className="absolute top-24 left-0 h-64 w-64 rounded-full blur-3xl bg-[#B55CFF]/10" />
-                <div className="absolute -bottom-24 right-1/4 h-72 w-72 rounded-full blur-3xl bg-[#D9C7FF]/10" />
-              </div>
-
-              <CardContent className="relative p-4 sm:p-6">
-                <style>{`
-                  @keyframes softFloatClaude {
-                    0% { transform: translateY(0px); }
-                    50% { transform: translateY(-10px); }
-                    100% { transform: translateY(0px); }
-                  }
-
-                  @keyframes glowSweepClaude {
-                    0% { transform: translateX(-140%); opacity: 0; }
-                    25% { opacity: .7; }
-                    70% { opacity: .7; }
-                    100% { transform: translateX(140%); opacity: 0; }
-                  }
-
-                  .claude-hero-bg::before {
-                    content: "";
-                    position: absolute;
-                    inset: -10%;
-                    background:
-                      radial-gradient(700px 260px at 12% 20%, rgba(217,199,255,0.18), transparent 60%),
-                      radial-gradient(560px 220px at 85% 18%, rgba(181,92,255,0.12), transparent 60%),
-                      radial-gradient(640px 240px at 50% 100%, rgba(255,255,255,0.05), transparent 65%);
-                    animation: softFloatClaude 7s ease-in-out infinite;
-                  }
-
-                  .claude-hero-bg::after {
-                    content: "";
-                    position: absolute;
-                    top: 0;
-                    bottom: 0;
-                    left: -30%;
-                    width: 30%;
-                    background: linear-gradient(90deg, transparent, rgba(217,199,255,0.16), transparent);
-                    animation: glowSweepClaude 4.2s ease-in-out infinite;
-                  }
-                `}</style>
-
-                <div className="flex items-center justify-between gap-4 flex-wrap">
-                  <div className="flex items-center gap-3">
-                    <div className="inline-flex h-11 w-11 items-center justify-center rounded-2xl border border-[#D9C7FF]/20 bg-[#D9C7FF]/10">
-                      <Sparkles className="h-5 w-5 text-[#D9C7FF]" />
-                    </div>
-
-                    <div>
-                      <div className="text-[11px] uppercase tracking-[0.18em] text-white/40">
-                        AI Provider
-                      </div>
-                      <div className="text-xl font-bold text-white/95">Claude MCP</div>
-                    </div>
-                  </div>
-
-                  <Button
-                    variant="ghost"
-                    onClick={() => nav("/laststep")}
-                    className="text-white/80 hover:bg-white/[0.06]"
-                  >
-                    <ArrowLeft className="w-4 h-4 mr-2" />
-                    Back
-                  </Button>
-                </div>
-
-                <div className="mt-6 relative overflow-hidden rounded-[32px] border border-white/10 bg-white/[0.02] p-6 sm:p-8 claude-hero-bg">
-                  <div className="relative z-10 max-w-4xl">
-                    <div className="inline-flex items-center gap-2 rounded-full border border-[#D9C7FF]/20 bg-[#D9C7FF]/10 px-3 py-1 text-xs text-[#F2EAFE]">
-                      <CheckCircle2 className="h-3.5 w-3.5" />
-                      Ready to generate your Adray AI link
-                    </div>
-
-                    <h1 className="mt-5 text-3xl sm:text-5xl font-extrabold tracking-tight text-white/95 leading-[1.05]">
-                      Turn your Adray intelligence into a
-                      <span className="text-transparent bg-clip-text bg-gradient-to-r from-[#D9C7FF] via-white to-[#D9C7FF]">
-                        {" "}Claude-ready link
-                      </span>
-                    </h1>
-
-                    <p className="mt-4 max-w-3xl text-sm sm:text-base leading-7 text-white/60">
-                      Generate one premium link powered by your encoded Adray AI context, then paste it into the prompts
-                      below so Claude can reason more deeply about your marketing performance, strategic tradeoffs,
-                      and business opportunities.
-                    </p>
-
-                    <div className="mt-6 flex flex-wrap items-center gap-3">
-                      <Button
-                        onClick={createAndCopyLink}
-                        disabled={loadingLink}
-                        className="h-12 rounded-2xl bg-[#D9C7FF] px-5 text-black hover:bg-[#C9B2FF] shadow-[0_0_32px_rgba(217,199,255,0.18)]"
-                      >
-                        {loadingLink ? (
-                          <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                        ) : (
-                          <Link2 className="h-4 w-4 mr-2" />
-                        )}
-                        {loadingLink ? "Generating link..." : "Generate & Copy Link"}
-                      </Button>
-
-                      <Button
-                        onClick={() => window.open("https://claude.ai", "_blank", "noopener,noreferrer")}
-                        className="h-12 rounded-2xl bg-white/[0.04] hover:bg-white/[0.08] text-white border border-white/10"
-                      >
-                        Open Claude
-                        <ArrowUpRight className="h-4 w-4 ml-2" />
-                      </Button>
-                    </div>
-
-                    <div className="mt-6 rounded-2xl border border-dashed border-white/10 bg-black/20 p-4">
-                      <div className="flex items-center gap-2 text-sm font-medium text-white/82">
-                        <Wand2 className="h-4 w-4 text-[#D9C7FF]" />
-                        Your generated Adray AI link
-                      </div>
-
-                      <div className="mt-3 break-all rounded-xl border border-white/10 bg-[#090A0D] px-4 py-3 text-sm text-white/60">
-                        {shareUrl || "Generate your link to unlock your Claude-ready Adray URL."}
-                      </div>
-
-                      <p className="mt-3 text-xs leading-6 text-white/42">
-                        In the prompts below, replace{" "}
-                        <span className="text-white/70 font-medium">"User's Adray AI link here"</span>{" "}
-                        with the exact link we generate for you.
-                      </p>
-                    </div>
-                  </div>
-                </div>
-
-                {error ? (
-                  <div className="mt-4 rounded-2xl border border-red-400/20 bg-red-400/10 p-4 text-sm text-red-200/90">
-                    {error}
-                  </div>
-                ) : null}
-
-                <div className="mt-6 grid grid-cols-1 gap-4">
-                  {prompts.map((item, idx) => (
-                    <PromptCard
-                      key={item.title}
-                      index={idx + 1}
-                      title={item.title}
-                      prompt={item.prompt}
-                      onCopy={copyPrompt}
-                    />
-                  ))}
-                </div>
-
-                {toast ? (
-                  <div className="fixed left-1/2 bottom-6 -translate-x-1/2 z-[60]">
-                    <div className="rounded-full border border-white/10 bg-black/75 px-4 py-2 text-xs text-white/90 shadow-[0_0_28px_rgba(217,199,255,0.18)]">
-                      {toast}
-                    </div>
-                  </div>
-                ) : null}
-              </CardContent>
-            </div>
-          </Card>
+      <div className="mx-auto w-full max-w-5xl px-4 py-6 sm:px-6 sm:py-8">
+        {/* Top bar: pills + back */}
+        <div className="mb-5 flex items-center justify-between gap-3 sm:mb-6">
+          <HeaderPills />
+          <Button
+            variant="outline"
+            onClick={() => nav("/laststep")}
+            className="h-10 shrink-0 rounded-2xl border-white/10 bg-white/[0.04] px-4 text-sm text-white/75 backdrop-blur-md hover:border-white/18 hover:bg-white/[0.08] hover:text-white"
+          >
+            <ArrowLeft className="mr-2 h-4 w-4" />
+            Back
+          </Button>
         </div>
+
+        {/* Hero card */}
+        <Card className="relative overflow-hidden rounded-[28px] border border-white/[0.08] bg-[linear-gradient(180deg,rgba(18,14,28,0.72)_0%,rgba(10,10,14,0.88)_100%)] shadow-[inset_0_1px_0_rgba(255,255,255,0.03)] backdrop-blur-md">
+          <div className="pointer-events-none absolute inset-0 opacity-60">
+            <div className="absolute -top-24 right-0 h-64 w-64 rounded-full bg-[#B55CFF]/10 blur-3xl" />
+            <div className="absolute -bottom-24 left-0 h-56 w-56 rounded-full bg-[#4FE3C1]/6 blur-3xl" />
+            <div className="absolute inset-0 translate-x-[-120%] bg-[linear-gradient(110deg,transparent,rgba(255,255,255,0.03),transparent)] animate-[adray-shimmer_6s_ease-in-out_infinite]" />
+          </div>
+
+          <CardContent className="relative p-5 sm:p-8">
+            <p className="text-[11px] uppercase tracking-[0.22em] text-[#D8B8FF]/65">
+              Claude · MCP Connector
+            </p>
+            <h1 className="mt-3 text-[1.85rem] font-semibold tracking-[-0.03em] text-white sm:text-[2.4rem]">
+              Connect Adray to Claude
+            </h1>
+            <p className="mt-3 max-w-2xl text-sm leading-6 text-white/58 sm:text-[0.95rem] sm:leading-7">
+              Add Adray as an MCP data source inside Claude for a live,
+              always-current view of your signal.
+            </p>
+          </CardContent>
+        </Card>
+
+        {/* Setup card */}
+        <Card className="relative mt-5 overflow-hidden rounded-[28px] border border-white/[0.08] bg-[linear-gradient(180deg,rgba(18,14,28,0.72)_0%,rgba(10,10,14,0.88)_100%)] shadow-[inset_0_1px_0_rgba(255,255,255,0.03)] backdrop-blur-md sm:mt-6">
+          <div className="pointer-events-none absolute inset-0 opacity-40">
+            <div className="absolute -top-20 left-1/2 h-48 w-48 -translate-x-1/2 rounded-full bg-[#B55CFF]/8 blur-3xl" />
+          </div>
+
+          <CardContent className="relative p-5 sm:p-8">
+            <div className="flex items-center gap-2">
+              <span className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-[#B55CFF]/28 bg-[#B55CFF]/10">
+                <Gem className="h-3.5 w-3.5 text-[#D8B8FF]" />
+              </span>
+              <p className="text-[11px] uppercase tracking-[0.22em] text-[#D8B8FF]/65">
+                Setup Instructions
+              </p>
+            </div>
+
+            <div className="mt-6 space-y-5 sm:mt-7 sm:space-y-6">
+              {STEPS.map((step) => (
+                <StepRow key={step.index} step={step} />
+              ))}
+            </div>
+
+            {/* Video walkthrough placeholder */}
+            <div className="relative mt-7 overflow-hidden rounded-2xl border border-white/10 bg-black/30 backdrop-blur-md sm:mt-8">
+              <div className="flex items-center justify-center py-12 sm:py-16">
+                <div className="flex flex-col items-center gap-3">
+                  <div className="flex h-14 w-14 items-center justify-center rounded-full border border-white/14 bg-white/[0.04] transition-all duration-300 hover:border-[#B55CFF]/30 hover:bg-[#B55CFF]/10">
+                    <PlayCircle className="h-7 w-7 text-white/55" />
+                  </div>
+                  <p className="text-xs text-white/45">
+                    Video walkthrough · 60 sec
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* CTAs */}
+            <div className="mt-7 flex flex-col gap-3 sm:mt-8 sm:flex-row sm:items-center">
+              <Button
+                onClick={handleCopy}
+                className="h-11 rounded-2xl bg-[#B55CFF] px-5 text-sm font-semibold text-white shadow-[0_0_24px_rgba(181,92,255,0.28)] transition-all hover:bg-[#A664FF] hover:shadow-[0_0_34px_rgba(181,92,255,0.4)]"
+              >
+                {copied ? (
+                  <>
+                    <Check className="mr-2 h-4 w-4" />
+                    Copied!
+                  </>
+                ) : (
+                  <>
+                    <Copy className="mr-2 h-4 w-4" />
+                    Copy MCP connector URL
+                  </>
+                )}
+              </Button>
+              <Button
+                variant="outline"
+                onClick={openClaudeSettings}
+                className="group h-11 rounded-2xl border-white/12 bg-white/[0.04] px-5 text-sm text-white/82 backdrop-blur-md hover:border-white/20 hover:bg-white/[0.08] hover:text-white"
+              >
+                Open Claude Settings
+                <ExternalLink className="ml-2 h-4 w-4 transition-transform duration-300 group-hover:-translate-y-0.5 group-hover:translate-x-0.5" />
+              </Button>
+            </div>
+
+            {/* Disclaimer */}
+            <div className="mt-6 rounded-2xl border border-[#B55CFF]/18 bg-[#B55CFF]/8 px-4 py-3 text-xs leading-6 text-[#D8B8FF]/82 backdrop-blur-md sm:text-sm">
+              MCP access requires a Claude Pro or Teams subscription on
+              claude.ai. This is separate from your Adray plan.
+            </div>
+          </CardContent>
+        </Card>
       </div>
     </DashboardLayout>
   );
