@@ -224,12 +224,25 @@ function hasLandingAdrayBuild() {
 app.disable("x-powered-by");
 
 // HTTPS redirect — Render termina SSL en el edge y reenvía via x-forwarded-proto.
-// Excluye /connector/* (embedded Shopify, el iframe ya va sobre HTTPS del admin).
+// Excluye:
+//   - /connector/*                  (embedded Shopify iframe ya va sobre HTTPS del admin)
+//   - /.well-known/*, /mcp*, /oauth/*, /register, /authorize, /token
+//     Rutas del flujo OAuth/MCP. Un 301 en respuesta a un POST (ej. DCR
+//     /register o /oauth/token) hace que el cliente descarte el body y
+//     reintente como GET, rompiendo el handshake en silencio. Si el edge
+//     por alguna razón no setea x-forwarded-proto en estas peticiones,
+//     preferimos atenderlas tal cual antes que un 301 que rompe el flujo.
 app.use((req, res, next) => {
   if (
     process.env.NODE_ENV === 'production' &&
     req.headers['x-forwarded-proto'] !== 'https' &&
-    !req.path.startsWith('/connector')
+    !req.path.startsWith('/connector') &&
+    !req.path.startsWith('/.well-known/') &&
+    !req.path.startsWith('/mcp') &&
+    !req.path.startsWith('/oauth/') &&
+    req.path !== '/register' &&
+    req.path !== '/authorize' &&
+    req.path !== '/token'
   ) {
     return res.redirect(301, 'https://' + req.headers.host + req.originalUrl);
   }

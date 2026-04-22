@@ -3,8 +3,8 @@
 // "Connect Adray to Claude" panel — second-level destination from the
 // "Choose your AI" hub (/laststep). Guides the user to install the Adray
 // MCP connector inside Claude:
-//   1) Open Claude Settings -> Connections.
-//   2) Add a connector pasting the Adray MCP URL.
+//   1) Open Claude.ai → Customize → Connectors.
+//   2) Click "+", add custom connector, paste the Adray MCP URL.
 //
 // The route /claudemcp still points to this file (see App.tsx); only the
 // content has been refactored to a lean premium panel per the product spec.
@@ -38,22 +38,28 @@ const STEPS: Step[] = [
     index: 1,
     title: "Open Claude.ai",
     description:
-      "and go to Settings → Connections. You'll need a Pro or Teams plan to access MCP connectors.",
+      "and go to Customize → Connectors. You'll need a Pro or Teams plan to access MCP connectors.",
   },
   {
     index: 2,
-    title: 'Click "Add connector"',
+    title: 'Click the "+" button',
     description:
-      "and search for Adray, or paste the MCP URL from the button below.",
+      'and select "Add custom connector" from the menu.',
   },
   {
     index: 3,
+    title: "Add the Adray connector",
+    description:
+      '— type "Adray" in the Name field and paste https://adray.ai/mcp into Remote MCP server URL (or use the copy button below).',
+  },
+  {
+    index: 4,
     title: "Authorize the connection",
     description:
       "— you'll be redirected back to Adray to approve access. Takes about 30 seconds.",
   },
   {
-    index: 4,
+    index: 5,
     title: "Start a new Claude conversation",
     description:
       "and ask about your ad performance, spend, or signal insights.",
@@ -146,7 +152,7 @@ export default function ClaudeMcp() {
     copyTimerRef.current = window.setTimeout(() => setCopied(false), 2000);
   };
 
-  const openClaudeSettings = () => {
+  const openClaudeConnectors = () => {
     window.open(CLAUDE_CONNECTORS_URL, "_blank", "noopener,noreferrer");
   };
 
@@ -217,20 +223,6 @@ export default function ClaudeMcp() {
               ))}
             </div>
 
-            {/* Video walkthrough placeholder */}
-            <div className="relative mt-7 overflow-hidden rounded-2xl border border-white/10 bg-black/30 backdrop-blur-md sm:mt-8">
-              <div className="flex items-center justify-center py-12 sm:py-16">
-                <div className="flex flex-col items-center gap-3">
-                  <div className="flex h-14 w-14 items-center justify-center rounded-full border border-white/14 bg-white/[0.04] transition-all duration-300 hover:border-[#B55CFF]/30 hover:bg-[#B55CFF]/10">
-                    <PlayCircle className="h-7 w-7 text-white/55" />
-                  </div>
-                  <p className="text-xs text-white/45">
-                    Video walkthrough · 60 sec
-                  </p>
-                </div>
-              </div>
-            </div>
-
             {/* CTAs */}
             <div className="mt-7 flex flex-col gap-3 sm:mt-8 sm:flex-row sm:items-center">
               <Button
@@ -251,12 +243,26 @@ export default function ClaudeMcp() {
               </Button>
               <Button
                 variant="outline"
-                onClick={openClaudeSettings}
+                onClick={openClaudeConnectors}
                 className="group h-11 rounded-2xl border-white/12 bg-white/[0.04] px-5 text-sm text-white/82 backdrop-blur-md hover:border-white/20 hover:bg-white/[0.08] hover:text-white"
               >
-                Open Claude Settings
+                Open Claude Connectors
                 <ExternalLink className="ml-2 h-4 w-4 transition-transform duration-300 group-hover:-translate-y-0.5 group-hover:translate-x-0.5" />
               </Button>
+            </div>
+
+            {/* Video walkthrough placeholder */}
+            <div className="relative mt-7 overflow-hidden rounded-2xl border border-white/10 bg-black/30 backdrop-blur-md sm:mt-8">
+              <div className="flex items-center justify-center py-12 sm:py-16">
+                <div className="flex flex-col items-center gap-3">
+                  <div className="flex h-14 w-14 items-center justify-center rounded-full border border-white/14 bg-white/[0.04] transition-all duration-300 hover:border-[#B55CFF]/30 hover:bg-[#B55CFF]/10">
+                    <PlayCircle className="h-7 w-7 text-white/55" />
+                  </div>
+                  <p className="text-xs text-white/45">
+                    Video walkthrough · 60 sec
+                  </p>
+                </div>
+              </div>
             </div>
 
             {/* Disclaimer */}
