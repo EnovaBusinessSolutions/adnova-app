@@ -1,0 +1,115 @@
+import { useState, useMemo } from 'react';
+import { Search } from 'lucide-react';
+import { Input } from '@/components/ui/input';
+import { ScrollArea } from '@/components/ui/scroll-area';
+import { Badge } from '@/components/ui/badge';
+import { cn } from '@/lib/utils';
+import { formatCurrency } from '../utils/formatters';
+import { channelColor, channelLabel } from '../utils/channelColors';
+import type { RecentPurchase } from '../types';
+
+interface HistoricalJourneysProps {
+  purchases: RecentPurchase[];
+  channelFilter: string;
+  selectedId: string | null;
+  onSelect: (purchase: RecentPurchase) => void;
+}
+
+function formatDate(iso: string): string {
+  try {
+    return new Intl.DateTimeFormat('es-MX', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }).format(new Date(iso));
+  } catch {
+    return iso;
+  }
+}
+
+export function HistoricalJourneys({
+  purchases,
+  channelFilter,
+  selectedId,
+  onSelect,
+}: HistoricalJourneysProps) {
+  const [query, setQuery] = useState('');
+
+  const filtered = useMemo(() => {
+    let list = purchases;
+
+    if (channelFilter !== 'all') {
+      list = list.filter((p) =>
+        (p.attributedChannel ?? 'unattributed').toLowerCase() === channelFilter,
+      );
+    }
+
+    if (query.trim()) {
+      const q = query.trim().toLowerCase();
+      list = list.filter(
+        (p) =>
+          p.orderId.toLowerCase().includes(q) ||
+          (p.orderNumber ?? '').toLowerCase().includes(q),
+      );
+    }
+
+    return list;
+  }, [purchases, channelFilter, query]);
+
+  return (
+    <div className="flex h-full flex-col">
+      {/* Search */}
+      <div className="relative mb-2">
+        <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-white/30" />
+        <Input
+          placeholder="Search order ID…"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          className="h-8 border-white/[0.08] bg-white/[0.03] pl-7 text-xs text-white/70 placeholder:text-white/25"
+        />
+      </div>
+
+      <ScrollArea className="flex-1">
+        {filtered.length === 0 ? (
+          <p className="py-8 text-center text-xs text-white/25">No journeys found</p>
+        ) : (
+          <div className="space-y-1">
+            {filtered.map((p) => (
+              <button
+                key={p.orderId}
+                onClick={() => onSelect(p)}
+                className={cn(
+                  'w-full rounded-xl border px-3 py-2.5 text-left transition-all',
+                  selectedId === p.orderId
+                    ? 'border-[#B55CFF]/40 bg-[#B55CFF]/8'
+                    : 'border-transparent hover:border-white/[0.06] hover:bg-white/[0.03]',
+                )}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-1.5">
+                    <span
+                      className="h-2 w-2 shrink-0 rounded-full"
+                      style={{ background: channelColor(p.attributedChannel) }}
+                    />
+                    <span className="text-[11px] font-medium text-white/75">
+                      {p.orderNumber ? `#${p.orderNumber}` : p.orderId.slice(0, 12)}
+                    </span>
+                  </div>
+                  <span className="text-[11px] font-semibold text-white/80">
+                    {formatCurrency(p.revenue, p.currency)}
+                  </span>
+                </div>
+                <div className="mt-1 flex items-center justify-between gap-2">
+                  <Badge
+                    variant="outline"
+                    className="h-4 border-white/[0.08] px-1.5 text-[9px] font-normal text-white/40"
+                    style={{ borderColor: `${channelColor(p.attributedChannel)}40` }}
+                  >
+                    {channelLabel(p.attributedChannel)}
+                  </Badge>
+                  <span className="text-[10px] text-white/30">{formatDate(p.createdAt)}</span>
+                </div>
+              </button>
+            ))}
+          </div>
+        )}
+      </ScrollArea>
+    </div>
+  );
+}

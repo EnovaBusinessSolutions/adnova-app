@@ -1,0 +1,77 @@
+import { Pause, Play, Radio, ChevronDown } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { ScrollArea } from '@/components/ui/scroll-area';
+import { cn } from '@/lib/utils';
+import { useLiveFeed } from '../hooks/useLiveFeed';
+import { LiveFeedItem } from './LiveFeedItem';
+
+interface LiveFeedProps {
+  shopId: string;
+}
+
+export function LiveFeed({ shopId }: LiveFeedProps) {
+  const { events, paused, bufferedCount, connectionState, togglePause, loadMore } =
+    useLiveFeed(shopId);
+
+  const isConnected = connectionState === 'connected';
+  const isConnecting = connectionState === 'connecting';
+
+  return (
+    <div className="flex h-full flex-col rounded-2xl border border-white/[0.06] bg-white/[0.02]">
+      {/* Header */}
+      <div className="flex items-center justify-between border-b border-white/[0.06] px-4 py-3">
+        <div className="flex items-center gap-2">
+          <Radio size={13} className="text-white/40" />
+          <span className="text-xs font-semibold text-white/70">Live Feed</span>
+          <span
+            className={cn(
+              'h-1.5 w-1.5 rounded-full',
+              isConnected ? 'bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.8)]' :
+              isConnecting ? 'animate-pulse bg-yellow-400' :
+              'bg-red-400',
+            )}
+          />
+        </div>
+
+        <div className="flex items-center gap-1.5">
+          {bufferedCount > 0 && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={loadMore}
+              className="h-6 gap-1 px-2 text-[10px] text-[#4FE3C1] hover:bg-[#4FE3C1]/10"
+            >
+              <ChevronDown size={10} />
+              {bufferedCount} new
+            </Button>
+          )}
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={togglePause}
+            className="h-6 gap-1 px-2 text-[10px] text-white/50 hover:bg-white/[0.05] hover:text-white"
+          >
+            {paused ? <Play size={10} /> : <Pause size={10} />}
+            {paused ? 'Resume' : 'Pause'}
+          </Button>
+        </div>
+      </div>
+
+      {/* Events list */}
+      <ScrollArea className="flex-1">
+        {events.length === 0 ? (
+          <div className="flex flex-col items-center justify-center gap-2 py-12">
+            <Radio size={20} className="text-white/15" />
+            <p className="text-xs text-white/25">
+              {isConnecting ? 'Connecting…' : 'Waiting for events'}
+            </p>
+          </div>
+        ) : (
+          events.map((event, i) => (
+            <LiveFeedItem key={event.eventId ?? `${event.type}-${i}`} event={event} />
+          ))
+        )}
+      </ScrollArea>
+    </div>
+  );
+}
