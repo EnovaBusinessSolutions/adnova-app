@@ -195,7 +195,7 @@ export function DataEnrichmentPanel({ purchases, loading }: Props) {
           <p className="text-xs text-white/25">No orders in this period</p>
         </div>
       ) : (
-        <div className="max-h-[390px] overflow-y-auto space-y-2 pr-1">
+        <div className="max-h-[195px] overflow-y-auto space-y-2 pr-1">
           {purchases.map((p) => (
             <OrderCard key={p.orderId} purchase={p} />
           ))}

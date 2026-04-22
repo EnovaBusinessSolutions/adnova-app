@@ -124,7 +124,7 @@ export default function Attribution() {
             </section>
           )}
 
-          {/* Support Grid: Paid Media | Top Products */}
+          {/* Support Grid: Paid Media | Data Enrichment */}
           {analyticsLoading ? (
             <SupportGridSkeleton />
           ) : analyticsData ? (
@@ -134,13 +134,13 @@ export default function Attribution() {
                 integrationHealth={analyticsData.integrationHealth}
                 currency={currency}
               />
-              <TopProductsPanel products={analyticsData.topProducts} currency={currency} />
+              <DataEnrichmentPanel purchases={purchases} loading={analyticsLoading} />
             </section>
           ) : null}
 
-          {/* Data Enrichment */}
+          {/* Top Products */}
           <section>
-            <DataEnrichmentPanel purchases={purchases} loading={analyticsLoading} />
+            <TopProductsPanel products={analyticsData?.topProducts ?? []} currency={currency} />
           </section>
         </div>
       </div>
