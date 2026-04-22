@@ -1724,18 +1724,86 @@ app.get(/^\/apps\/[^/]+\/?.*$/, shopifyCSP, (req, res) => {
 /* =========================
  * OAuth Google (login simple) â E2E (WELCOME REAL)
  * ========================= */
-app.get(
-  "/auth/google/login",
+// Build a host-aware Google callback URL. Claude.ai / ChatGPT / Gemini
+// connectors land on mcp-staging.adray.ai (or mcp.adray.ai). If Google
+// comes back to a different host than where the user started, the
+// session cookie (host-only) is lost and the OAuth handshake breaks. By
+// reflecting req.get('host') here, Google returns to the same subdomain
+// the user started on and the session survives.
+function googleLoginCallbackUrl(req) {
+  const proto = req.protocol; // honors trust proxy -> https in prod
+  const host = req.get("host");
+  return `${proto}://${host}/auth/google/login/callback`;
+}
+
+// Encode/decode a safe, same-origin returnTo path through Google's
+// `state` parameter. State survives the round-trip to Google, which is
+// required because the Express session cookie doesn't transfer across
+// the Google hop when APP_URL and the host the user started on differ
+// (which they do for the mcp subdomains).
+function encodeGoogleState(returnTo) {
+  if (!returnTo) return undefined;
+  try {
+    return Buffer.from(JSON.stringify({ rt: returnTo }), "utf8").toString(
+      "base64url"
+    );
+  } catch {
+    return undefined;
+  }
+}
+
+function decodeGoogleState(stateParam) {
+  if (!stateParam || typeof stateParam !== "string") return null;
+  try {
+    const decoded = Buffer.from(stateParam, "base64url").toString("utf8");
+    const parsed = JSON.parse(decoded);
+    const rt = parsed?.rt;
+    if (typeof rt !== "string") return null;
+    if (!rt.startsWith("/")) return null;
+    if (rt.startsWith("//") || rt.startsWith("/\\")) return null;
+    return rt;
+  } catch {
+    return null;
+  }
+}
+
+app.get("/auth/google/login", (req, res, next) => {
+  const raw = String(
+    req.query.returnTo || req.query.return_to || req.query.next || ""
+  );
+  let safeReturnTo = null;
+  if (raw) {
+    try {
+      const decoded = decodeURIComponent(raw);
+      if (
+        decoded.startsWith("/") &&
+        !decoded.startsWith("//") &&
+        !decoded.startsWith("/\\")
+      ) {
+        safeReturnTo = decoded;
+      }
+    } catch {
+      // ignore malformed returnTo
+    }
+  }
+
   passport.authenticate("google", {
     scope: ["profile", "email"],
     prompt: "select_account",
-  })
-);
+    callbackURL: googleLoginCallbackUrl(req),
+    state: encodeGoogleState(safeReturnTo),
+  })(req, res, next);
+});
 
 app.get("/auth/google/login/callback", (req, res, next) => {
+  const returnTo = decodeGoogleState(req.query.state);
+
   passport.authenticate(
     "google",
-    { failureRedirect: "/login" },
+    {
+      failureRedirect: "/login",
+      callbackURL: googleLoginCallbackUrl(req),
+    },
     async (err, user, info) => {
       try {
         if (err) return next(err);
@@ -1804,7 +1872,9 @@ app.get("/auth/google/login/callback", (req, res, next) => {
             console.log("[google-callback] Welcome NO enviado: not-new-user");
           }
 
-          const destino = user.onboardingComplete ? "/dashboard" : "/onboarding";
+          const destino =
+            returnTo ||
+            (user.onboardingComplete ? "/dashboard" : "/onboarding");
           return res.redirect(destino);
         });
       } catch (e) {
