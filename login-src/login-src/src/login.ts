@@ -292,28 +292,7 @@ async function checkExistingSession() {
   try {
     const session = await getSession()
     if (session && (session.authenticated || session.ok)) {
-      // If we arrived with a returnTo (e.g. from /oauth/authorize), honor it
-      // so already-logged-in users continue the OAuth connector flow instead
-      // of being bounced to /dashboard/ and losing the handshake.
-      const params = new URLSearchParams(window.location.search)
-      const raw =
-        params.get('returnTo') || params.get('return_to') || params.get('next')
-      let target = '/dashboard/'
-      if (raw) {
-        try {
-          const decoded = decodeURIComponent(raw)
-          if (
-            decoded.startsWith('/') &&
-            !decoded.startsWith('//') &&
-            !decoded.startsWith('/\\')
-          ) {
-            target = decoded
-          }
-        } catch {
-          // fall through to default
-        }
-      }
-      window.location.replace(target)
+      window.location.replace('/dashboard/')
     }
   } catch {
     // noop
