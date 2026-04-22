@@ -1,4 +1,3 @@
-import { useState } from 'react';
 import { Skeleton } from '@/components/ui/skeleton';
 import type { RecentPurchase } from '../types';
 
@@ -6,8 +5,6 @@ interface Props {
   purchases: RecentPurchase[];
   loading?: boolean;
 }
-
-const PAGE_SIZE = 10;
 
 // ─── Signal extraction ────────────────────────────────────────
 interface Signals {
@@ -176,11 +173,6 @@ function CardSkeleton() {
 
 // ─── Main panel ───────────────────────────────────────────────
 export function DataEnrichmentPanel({ purchases, loading }: Props) {
-  const [visible, setVisible] = useState(PAGE_SIZE);
-
-  const shown = purchases.slice(0, visible);
-  const hasMore = visible < purchases.length;
-
   return (
     <div className="rounded-2xl border border-white/[0.06] bg-white/[0.02] p-4">
       {/* Header */}
@@ -196,29 +188,18 @@ export function DataEnrichmentPanel({ purchases, loading }: Props) {
 
       {loading ? (
         <div className="space-y-2">
-          {Array.from({ length: 4 }).map((_, i) => <CardSkeleton key={i} />)}
+          {Array.from({ length: 3 }).map((_, i) => <CardSkeleton key={i} />)}
         </div>
       ) : purchases.length === 0 ? (
         <div className="flex h-20 items-center justify-center">
           <p className="text-xs text-white/25">No orders in this period</p>
         </div>
       ) : (
-        <>
-          <div className="space-y-2">
-            {shown.map((p) => (
-              <OrderCard key={p.orderId} purchase={p} />
-            ))}
-          </div>
-
-          {hasMore && (
-            <button
-              onClick={() => setVisible((v) => v + PAGE_SIZE)}
-              className="mt-3 w-full rounded-xl border border-white/[0.06] py-2 text-[11px] text-white/40 transition-colors hover:border-white/[0.12] hover:text-white/60"
-            >
-              Show more ({purchases.length - visible} remaining)
-            </button>
-          )}
-        </>
+        <div className="max-h-[390px] overflow-y-auto space-y-2 pr-1">
+          {purchases.map((p) => (
+            <OrderCard key={p.orderId} purchase={p} />
+          ))}
+        </div>
       )}
     </div>
   );
