@@ -6,10 +6,8 @@ import { KpiGrid } from '@/features/attribution/components/KpiGrid';
 import { LiveFeed } from '@/features/attribution/components/LiveFeed';
 import { ConversionPaths } from '@/features/attribution/components/ConversionPaths';
 import { AttributionPieChart } from '@/features/attribution/components/AttributionPieChart';
-import { PixelHealthPanel } from '@/features/attribution/components/PixelHealthPanel';
 import { PaidMediaPanel } from '@/features/attribution/components/PaidMediaPanel';
 import { TopProductsPanel } from '@/features/attribution/components/TopProductsPanel';
-import { UserExplorerPanel } from '@/features/attribution/components/UserExplorerPanel';
 import { SessionDetailPanel } from '@/features/attribution/components/SessionDetailPanel';
 import { useShops } from '@/features/attribution/hooks/useShops';
 import { useShopPersistence } from '@/features/attribution/hooks/useShopPersistence';
@@ -92,26 +90,15 @@ export default function Attribution() {
             </section>
           )}
 
-          {/* Support Grid: Pixel Health | Paid Media | Top Products */}
+          {/* Support Grid: Paid Media | Top Products */}
           {!analyticsLoading && analyticsData && (
-            <section className="grid grid-cols-1 gap-5 md:grid-cols-2 lg:grid-cols-3">
-              <PixelHealthPanel
-                pixelHealth={analyticsData.pixelHealth}
-                events={analyticsData.events}
-              />
+            <section className="grid grid-cols-1 gap-5 md:grid-cols-2">
               <PaidMediaPanel
                 paidMedia={analyticsData.paidMedia}
                 integrationHealth={analyticsData.integrationHealth}
                 currency={currency}
               />
               <TopProductsPanel products={analyticsData.topProducts} currency={currency} />
-            </section>
-          )}
-
-          {/* User Explorer */}
-          {resolvedShop && (
-            <section>
-              <UserExplorerPanel shopId={resolvedShop} onSessionSelect={setDetailSessionId} />
             </section>
           )}
 
