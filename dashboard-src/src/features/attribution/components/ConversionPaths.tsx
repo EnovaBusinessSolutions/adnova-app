@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { HistoricalJourneys } from './HistoricalJourneys';
 import { SelectedJourney } from './SelectedJourney';
@@ -26,7 +26,14 @@ function firstInChannel(purchases: RecentPurchase[], channel: string): RecentPur
 
 export function ConversionPaths({ purchases }: ConversionPathsProps) {
   const [channelFilter, setChannelFilter] = useState('all');
-  const [selected, setSelected] = useState<RecentPurchase | null>(() => purchases[0] ?? null);
+  const [selected, setSelected] = useState<RecentPurchase | null>(null);
+
+  // Auto-select first purchase once data arrives (only if nothing is selected yet)
+  useEffect(() => {
+    if (!selected && purchases.length > 0) {
+      setSelected(purchases[0]);
+    }
+  }, [purchases]);
 
   return (
     <div className="flex h-full flex-col rounded-2xl border border-white/[0.06] bg-white/[0.02]">
