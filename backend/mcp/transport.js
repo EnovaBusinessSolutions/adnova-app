@@ -12,13 +12,8 @@ function mountMcpRoutes(app) {
   // Advertise the OAuth protected resource metadata on every MCP response so
   // clients (Claude.ai, ChatGPT, Gemini) can discover the authorization server
   // even without a prior 401 challenge. Required by MCP spec 2025-06-18+.
-  //
-  // Host-aware: the resource_metadata URL must live on the same host the client
-  // reached. If a client hits mcp.adray.ai but we advertise adray.ai, they try
-  // to fetch from a host their network can't reach (see the note in
-  // backend/index.js on /.well-known/oauth-authorization-server).
-  const setWwwAuthenticate = (req, res) => {
-    const base = `${req.protocol}://${req.get('host')}`;
+  const setWwwAuthenticate = (res) => {
+    const base = (process.env.APP_URL || 'https://adray.ai').replace(/\/$/, '');
     const resourceMetadataUrl = `${base}/.well-known/oauth-protected-resource`;
     res.setHeader(
       'WWW-Authenticate',
@@ -27,7 +22,7 @@ function mountMcpRoutes(app) {
   };
 
   mcpRouter.use((req, res, next) => {
-    setWwwAuthenticate(req, res);
+    setWwwAuthenticate(res);
     next();
   });
 
@@ -37,7 +32,7 @@ function mountMcpRoutes(app) {
   mcpRouter.use(async (req, res, next) => {
     const authHeader = req.headers?.authorization || '';
     if (!authHeader.startsWith('Bearer ')) {
-      setWwwAuthenticate(req, res);
+      setWwwAuthenticate(res);
       return res.status(401).json({
         jsonrpc: '2.0',
         error: { code: -32001, message: 'Unauthorized: OAuth bearer token required' },
@@ -47,7 +42,7 @@ function mountMcpRoutes(app) {
     try {
       const oauth = await resolveOAuthUser(req);
       if (!oauth?.userId) {
-        setWwwAuthenticate(req, res);
+        setWwwAuthenticate(res);
         return res.status(401).json({
           jsonrpc: '2.0',
           error: { code: -32001, message: 'Unauthorized: Invalid or expired token' },
@@ -56,7 +51,7 @@ function mountMcpRoutes(app) {
       }
     } catch (err) {
       console.error('[mcp/transport] auth check failed:', err);
-      setWwwAuthenticate(req, res);
+      setWwwAuthenticate(res);
       return res.status(401).json({
         jsonrpc: '2.0',
         error: { code: -32001, message: 'Unauthorized' },
