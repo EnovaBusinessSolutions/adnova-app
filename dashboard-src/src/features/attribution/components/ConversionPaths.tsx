@@ -17,16 +17,23 @@ interface ConversionPathsProps {
   purchases: RecentPurchase[];
 }
 
+function firstInChannel(purchases: RecentPurchase[], channel: string): RecentPurchase | null {
+  if (channel === 'all') return purchases[0] ?? null;
+  return purchases.find(
+    (p) => (p.attributedChannel ?? 'unattributed').toLowerCase() === channel,
+  ) ?? null;
+}
+
 export function ConversionPaths({ purchases }: ConversionPathsProps) {
   const [channelFilter, setChannelFilter] = useState('all');
-  const [selected, setSelected] = useState<RecentPurchase | null>(null);
+  const [selected, setSelected] = useState<RecentPurchase | null>(() => purchases[0] ?? null);
 
   return (
     <div className="flex h-full flex-col rounded-2xl border border-white/[0.06] bg-white/[0.02]">
       {/* Header */}
       <div className="border-b border-white/[0.06] px-4 py-3">
         <p className="mb-2 text-xs font-semibold text-white/70">Conversion Paths</p>
-        <Tabs value={channelFilter} onValueChange={(v) => { setChannelFilter(v); setSelected(null); }}>
+        <Tabs value={channelFilter} onValueChange={(v) => { setChannelFilter(v); setSelected(firstInChannel(purchases, v)); }}>
           <TabsList className="h-7 gap-0.5 bg-white/[0.04] p-0.5">
             {CHANNEL_TABS.map((tab) => (
               <TabsTrigger

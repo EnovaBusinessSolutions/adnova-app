@@ -1,9 +1,7 @@
 import { useState, useCallback } from 'react';
-import { Download, ChevronRight, X } from 'lucide-react';
+import { Download, X, ShoppingCart, CreditCard, Eye, Package, Star, User, Zap } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { ScrollArea } from '@/components/ui/scroll-area';
 import { Badge } from '@/components/ui/badge';
-import { cn } from '@/lib/utils';
 import { formatCurrency } from '../utils/formatters';
 import { channelColor, channelLabel } from '../utils/channelColors';
 import type { RecentPurchase, JourneyEvent } from '../types';
@@ -13,18 +11,26 @@ interface SelectedJourneyProps {
   onClose: () => void;
 }
 
-const EVENT_LABELS: Record<string, string> = {
-  page_view: 'Page View',
-  view_item: 'View Item',
-  add_to_cart: 'Add to Cart',
-  begin_checkout: 'Begin Checkout',
-  purchase: 'Purchase',
-};
-
-function eventLabel(name: string): string {
-  return EVENT_LABELS[name.toLowerCase()] ?? name;
+// ─── Event type config ────────────────────────────────────────
+interface EventConfig {
+  label: string;
+  color: string;
+  bg: string;
+  icon: React.ReactNode;
 }
 
+function getEventConfig(name: string): EventConfig {
+  const n = name.toLowerCase();
+  if (n === 'purchase')        return { label: 'Purchase',        color: '#10B981', bg: '#10B98118', icon: <Star size={9} /> };
+  if (n === 'begin_checkout')  return { label: 'Begin Checkout',  color: '#F97316', bg: '#F9731618', icon: <CreditCard size={9} /> };
+  if (n === 'add_to_cart')     return { label: 'Add to Cart',     color: '#F59E0B', bg: '#F59E0B18', icon: <ShoppingCart size={9} /> };
+  if (n === 'view_item')       return { label: 'View Item',       color: '#34D399', bg: '#34D39918', icon: <Package size={9} /> };
+  if (n === 'page_view')       return { label: 'Page View',       color: '#60A5FA', bg: '#60A5FA18', icon: <Eye size={9} /> };
+  if (n === 'user_logged_in')  return { label: 'User Logged In',  color: '#B55CFF', bg: '#B55CFF18', icon: <User size={9} /> };
+  return { label: name, color: '#6B7280', bg: '#6B728018', icon: <Zap size={9} /> };
+}
+
+// ─── Utilities ────────────────────────────────────────────────
 function formatTs(iso: string): string {
   try {
     return new Intl.DateTimeFormat('es-MX', {
@@ -32,6 +38,11 @@ function formatTs(iso: string): string {
       hour: '2-digit', minute: '2-digit', second: '2-digit',
     }).format(new Date(iso));
   } catch { return iso; }
+}
+
+function shortPath(url: string | null): string | null {
+  if (!url) return null;
+  try { return new URL(url).pathname; } catch { return url; }
 }
 
 function downloadCsv(purchase: RecentPurchase) {
@@ -52,71 +63,142 @@ function downloadCsv(purchase: RecentPurchase) {
   URL.revokeObjectURL(url);
 }
 
-function EventRow({ event, condensed }: { event: JourneyEvent; condensed: boolean }) {
-  const hasClickId = event.gclid || event.fbc || event.ttclid || event.clickId;
-  const displayUrl = event.pageUrl
-    ? (() => { try { return new URL(event.pageUrl).pathname; } catch { return event.pageUrl; } })()
-    : null;
+// ─── Journey summary strip ────────────────────────────────────
+const KEY_EVENTS = ['page_view', 'view_item', 'add_to_cart', 'begin_checkout', 'purchase'];
+
+function JourneySummary({ events }: { events: JourneyEvent[] }) {
+  const present = KEY_EVENTS.filter((key) =>
+    events.some((e) => e.eventName.toLowerCase() === key),
+  );
 
   return (
-    <div className="border-b border-white/[0.04] px-3 py-2">
-      <div className="flex items-center gap-2">
-        <ChevronRight size={10} className="shrink-0 text-white/20" />
-        <span className="text-[11px] font-semibold text-white/80">
-          {eventLabel(event.eventName)}
-        </span>
-        {hasClickId && (
-          <Badge variant="outline" className="h-3.5 border-[#B55CFF]/30 px-1 text-[8px] text-[#D8B8FF]">
-            click ID
-          </Badge>
-        )}
-        <span className="ml-auto text-[10px] text-white/30">{formatTs(event.createdAt)}</span>
-      </div>
-
-      {!condensed && (
-        <div className="mt-1 space-y-0.5 pl-5">
-          {displayUrl && (
-            <p className="truncate text-[10px] text-white/35">{displayUrl}</p>
-          )}
-          {event.utmSource && (
-            <p className="text-[10px] text-white/30">
-              utm_source: <span className="text-white/50">{event.utmSource}</span>
-            </p>
-          )}
-          {event.productName && (
-            <p className="text-[10px] text-white/30">
-              product: <span className="text-white/50">{event.productName}</span>
-            </p>
-          )}
-        </div>
-      )}
+    <div className="flex items-center gap-1.5 overflow-x-auto border-b border-white/[0.04] px-4 py-2.5 [&::-webkit-scrollbar]:hidden">
+      {present.map((key, i) => {
+        const cfg = getEventConfig(key);
+        return (
+          <div key={key} className="flex shrink-0 items-center gap-1.5">
+            <div
+              className="flex items-center gap-1 rounded-full px-2 py-0.5"
+              style={{ background: cfg.bg, color: cfg.color }}
+            >
+              {cfg.icon}
+              <span className="text-[9px] font-semibold uppercase tracking-wide">{cfg.label}</span>
+            </div>
+            {i < present.length - 1 && (
+              <span className="text-[10px] text-white/20">→</span>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }
 
+// ─── Event row ────────────────────────────────────────────────
+function EventRow({
+  event,
+  condensed,
+  isLast,
+}: {
+  event: JourneyEvent;
+  condensed: boolean;
+  isLast: boolean;
+}) {
+  const cfg = getEventConfig(event.eventName);
+  const isPurchase = event.eventName.toLowerCase() === 'purchase';
+  const hasClickId = event.gclid || event.fbc || event.ttclid || event.clickId;
+  const path = shortPath(event.pageUrl);
+
+  return (
+    <div className={`flex gap-3 px-4 py-2 ${isPurchase ? 'bg-emerald-500/5' : ''}`}>
+      {/* Timeline indicator */}
+      <div className="relative flex flex-col items-center">
+        <div
+          className="z-10 flex h-5 w-5 shrink-0 items-center justify-center rounded-full"
+          style={{ background: cfg.bg, color: cfg.color, border: `1px solid ${cfg.color}40` }}
+        >
+          {cfg.icon}
+        </div>
+        {!isLast && (
+          <div className="mt-0.5 w-px flex-1 bg-white/[0.06]" style={{ minHeight: 12 }} />
+        )}
+      </div>
+
+      {/* Content */}
+      <div className="min-w-0 flex-1 pb-2">
+        <div className="flex items-center gap-2">
+          <span
+            className="text-[11px] font-semibold"
+            style={{ color: isPurchase ? '#10B981' : 'rgba(255,255,255,0.80)' }}
+          >
+            {cfg.label}
+          </span>
+          {hasClickId && (
+            <Badge
+              variant="outline"
+              className="h-3.5 border-[#B55CFF]/30 px-1 text-[8px] text-[#D8B8FF]"
+            >
+              click ID
+            </Badge>
+          )}
+          {isPurchase && event.orderId && (
+            <Badge
+              variant="outline"
+              className="h-3.5 border-emerald-500/30 px-1 text-[8px] text-emerald-400"
+            >
+              converted
+            </Badge>
+          )}
+          <span className="ml-auto shrink-0 text-[10px] text-white/25">{formatTs(event.createdAt)}</span>
+        </div>
+
+        {!condensed && (
+          <div className="mt-0.5 space-y-0.5">
+            {path && (
+              <p className="truncate text-[10px] text-white/35">{path}</p>
+            )}
+            {event.utmSource && (
+              <p className="text-[10px]">
+                <span className="text-white/25">utm_source: </span>
+                <span className="text-white/50">{event.utmSource}</span>
+              </p>
+            )}
+            {event.productName && (
+              <p className="text-[10px]">
+                <span className="text-white/25">product: </span>
+                <span className="text-white/50">{event.productName}</span>
+              </p>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── Main component ───────────────────────────────────────────
 export function SelectedJourney({ purchase, onClose }: SelectedJourneyProps) {
   const [condensed, setCondensed] = useState(false);
   const handleDownload = useCallback(() => downloadCsv(purchase), [purchase]);
 
+  const chColor = channelColor(purchase.attributedChannel);
+
   return (
-    <div className="flex h-full flex-col rounded-2xl border border-white/[0.08] bg-white/[0.02]">
+    <div className="flex h-full flex-col overflow-hidden rounded-2xl border border-white/[0.08] bg-white/[0.02]">
       {/* Header */}
       <div className="flex items-start justify-between border-b border-white/[0.06] px-4 py-3">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
-            <span
-              className="h-2.5 w-2.5 shrink-0 rounded-full"
-              style={{ background: channelColor(purchase.attributedChannel) }}
-            />
+            <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: chColor }} />
             <span className="text-sm font-semibold text-white/85">
               {purchase.orderNumber ? `Order #${purchase.orderNumber}` : purchase.orderId.slice(0, 16)}
             </span>
           </div>
-          <div className="mt-1 flex items-center gap-2">
+          <div className="mt-1 flex flex-wrap items-center gap-2">
             <Badge
               variant="outline"
-              className="h-4 border-white/[0.08] px-1.5 text-[9px] text-white/45"
-              style={{ borderColor: `${channelColor(purchase.attributedChannel)}40` }}
+              className="h-4 px-1.5 text-[9px] text-white/45"
+              style={{ borderColor: `${chColor}40` }}
             >
               {channelLabel(purchase.attributedChannel)}
             </Badge>
@@ -129,7 +211,7 @@ export function SelectedJourney({ purchase, onClose }: SelectedJourneyProps) {
           </div>
         </div>
 
-        <div className="flex shrink-0 items-center gap-1.5">
+        <div className="flex shrink-0 items-center gap-1">
           <Button
             variant="ghost"
             size="sm"
@@ -158,20 +240,26 @@ export function SelectedJourney({ purchase, onClose }: SelectedJourneyProps) {
         </div>
       </div>
 
-      {/* Events */}
-      <ScrollArea className="flex-1">
+      {/* Journey summary */}
+      <JourneySummary events={purchase.events} />
+
+      {/* Timeline */}
+      <div className="min-h-0 flex-1 overflow-y-auto [&::-webkit-scrollbar]:w-[3px] [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-white/20 [&::-webkit-scrollbar-track]:bg-transparent">
         {purchase.events.length === 0 ? (
           <p className="py-8 text-center text-xs text-white/25">No events recorded</p>
         ) : (
-          purchase.events.map((event, i) => (
-            <EventRow
-              key={event.eventId ?? `ev-${i}`}
-              event={event}
-              condensed={condensed}
-            />
-          ))
+          <div className="py-2">
+            {purchase.events.map((event, i) => (
+              <EventRow
+                key={event.eventId ?? `ev-${i}`}
+                event={event}
+                condensed={condensed}
+                isLast={i === purchase.events.length - 1}
+              />
+            ))}
+          </div>
         )}
-      </ScrollArea>
+      </div>
     </div>
   );
 }
