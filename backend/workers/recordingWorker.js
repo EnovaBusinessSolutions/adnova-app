@@ -315,9 +315,68 @@ async function handleBuildPacket(job) {
       select: { id: true },
     });
     console.log(`[recordingWorker:build-packet] ${recordingId} packet upserted (sessionId=${packet.sessionId}, keyframes=${packet.keyframes.length}, outcome=${packet.outcome})`);
+    // Enqueue AI analysis (non-blocking — failure here must not break packet creation)
+    await enqueueRecordingJob('recording:analyze-session', {
+      sessionId: packet.sessionId,
+      accountId: packet.accountId,
+    }).catch((err) => console.warn('[recordingWorker:build-packet] analyze-session enqueue failed (non-fatal):', err.message));
   } catch (err) {
     console.error(`[recordingWorker:build-packet] upsert failed:`, err.message);
   }
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * Job: recording:analyze-session (Phase 6)
+ * Runs sessionAnalyst on a SessionPacket, saves aiAnalysis + aiAnalyzedAt.
+ * Idempotent — skips if already analyzed.
+ * ───────────────────────────────────────────────────────────────────────────── */
+async function handleAnalyzeSession(job) {
+  const { sessionId, accountId } = job.data;
+  console.log(`[recordingWorker:analyze-session] ${sessionId}`);
+
+  const packet = await prisma.sessionPacket.findUnique({ where: { sessionId } }).catch(() => null);
+  if (!packet) {
+    console.warn(`[recordingWorker:analyze-session] ${sessionId} packet not found`);
+    return;
+  }
+  if (packet.aiAnalyzedAt) {
+    console.log(`[recordingWorker:analyze-session] ${sessionId} already analyzed — skip`);
+    return;
+  }
+
+  // Build customer history from prior orders
+  const priorOrders = await prisma.order.findMany({
+    where: {
+      accountId,
+      userKey: packet.visitorId || undefined,
+      ...(packet.orderId ? { NOT: { orderId: packet.orderId } } : {}),
+    },
+    select: { revenue: true, platformCreatedAt: true, createdAt: true },
+    orderBy: { platformCreatedAt: 'asc' },
+  }).catch(() => []);
+
+  const { buildCustomerHistory } = require('../services/recordingNarrativeService');
+  const customerHistory = buildCustomerHistory(priorOrders);
+
+  const { analyzeSession } = require('../services/sessionAnalyst');
+
+  let analysis;
+  try {
+    const timeout = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error('LLM timeout 30s')), 30_000)
+    );
+    analysis = await Promise.race([analyzeSession(packet, { customerHistory }), timeout]);
+  } catch (err) {
+    console.warn(`[recordingWorker:analyze-session] ${sessionId} analysis failed (non-fatal):`, err.message);
+    return;
+  }
+
+  await prisma.sessionPacket.update({
+    where: { sessionId },
+    data: { aiAnalysis: analysis, aiAnalyzedAt: new Date() },
+  }).catch((err) => console.error(`[recordingWorker:analyze-session] update failed:`, err.message));
+
+  console.log(`[recordingWorker:analyze-session] ${sessionId} done — archetype=${analysis.archetype} organic=${analysis.organic_converter}`);
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
@@ -389,6 +448,7 @@ const worker = new Worker(
     if (name === 'recording:check-outcome') return handleCheckOutcome(job);
     if (name === 'recording:extract-signals') return handleExtractSignals(job);
     if (name === 'recording:build-packet') return handleBuildPacket(job);
+    if (name === 'recording:analyze-session') return handleAnalyzeSession(job);
     if (name === 'recording:erase-raw') return handleEraseRaw(job);
     console.warn(`[recordingWorker] Unknown job name: ${name}`);
   },
