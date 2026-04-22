@@ -1,157 +1,222 @@
-import { useDataCoverage } from '../hooks/useDataCoverage';
+import { useState } from 'react';
 import { Skeleton } from '@/components/ui/skeleton';
-import type { FieldState } from '../types';
+import type { RecentPurchase } from '../types';
 
 interface Props {
-  shopId: string;
+  purchases: RecentPurchase[];
+  loading?: boolean;
 }
 
-const LAYER_LABELS: Record<string, string> = {
-  layer1_identity_anchors:            'Layer 1 — Identity Anchors',
-  layer2_session_events:              'Layer 2 — Session Events',
-  layer3_touchpoints_click_ids:       'Layer 3 — Touchpoints & Click IDs',
-  layer4_order_truth:                 'Layer 4 — Order Truth',
-  layer5_platform_signals_daily_pull: 'Layer 5 — Platform Signals',
-  layer6_raw_enrichment_every_event:  'Layer 6 — Raw Enrichment',
-  critical_stitch:                    'Critical Stitch',
-};
+const PAGE_SIZE = 10;
 
-const LAYER_ORDER = [
-  'layer1_identity_anchors',
-  'layer2_session_events',
-  'layer3_touchpoints_click_ids',
-  'layer4_order_truth',
-  'layer5_platform_signals_daily_pull',
-  'layer6_raw_enrichment_every_event',
-  'critical_stitch',
+// ─── Signal extraction ────────────────────────────────────────
+interface Signals {
+  fbp: boolean;
+  fbc: boolean;
+  gclid: boolean;
+  ttclid: boolean;
+  clickId: boolean;
+  email: boolean;
+  ip: boolean;
+  userAgent: boolean;
+}
+
+function extractSignals(events: RecentPurchase['events']): Signals {
+  return {
+    fbp:       events.some((e) => !!e.fbp),
+    fbc:       events.some((e) => !!e.fbc),
+    gclid:     events.some((e) => !!e.gclid),
+    ttclid:    events.some((e) => !!e.ttclid),
+    clickId:   events.some((e) => !!e.clickId),
+    email:     events.some((e) => !!e.customerEmail),
+    ip:        events.some((e) => !!e.clientIp),
+    userAgent: events.some((e) => !!e.userAgent),
+  };
+}
+
+const SIGNAL_LABELS: Array<{ key: keyof Signals; label: string }> = [
+  { key: 'fbp',       label: 'FBP' },
+  { key: 'fbc',       label: 'FBC (Click id)' },
+  { key: 'gclid',     label: 'GCLID' },
+  { key: 'ttclid',    label: 'TTCLID' },
+  { key: 'clickId',   label: 'Click ID' },
+  { key: 'email',     label: 'Email (Hashed)' },
+  { key: 'ip',        label: 'IP Address' },
+  { key: 'userAgent', label: 'User Agent' },
 ];
 
-function fieldScore(fields: Record<string, FieldState>): { ok: number; total: number } {
-  const entries = Object.values(fields);
-  return { ok: entries.filter((f) => f.ok).length, total: entries.length };
+// ─── Per-order helpers ────────────────────────────────────────
+function syncLabel(p: RecentPurchase): string {
+  const channel = (p.attributedChannel ?? 'unknown').toUpperCase();
+  const source = p.events[0]?.utmSource;
+  if (source) return `${channel}: ${source.toUpperCase()}`;
+  return channel;
 }
 
-function LayerRow({ layerKey, fields }: { layerKey: string; fields: Record<string, FieldState> }) {
-  const { ok, total } = fieldScore(fields);
-  const ratio = total > 0 ? ok / total : 0;
-  const allOk = ratio === 1;
-  const hasWarning = ratio < 0.5;
+type PlatformStatus = 'recorded' | 'not_recorded';
 
-  const barColor = allOk
-    ? 'bg-emerald-500'
-    : hasWarning
-    ? 'bg-yellow-500'
-    : 'bg-[#B55CFF]';
+function metaStatus(channel: string | null, s: Signals): PlatformStatus {
+  return channel === 'meta' && s.fbp ? 'recorded' : 'not_recorded';
+}
 
-  const dotColor = allOk
-    ? 'bg-emerald-400'
-    : hasWarning
-    ? 'bg-yellow-400'
-    : 'bg-yellow-500';
+function googleStatus(channel: string | null, s: Signals): PlatformStatus {
+  return channel === 'google' && (s.gclid || s.clickId) ? 'recorded' : 'not_recorded';
+}
+
+function overallStatus(meta: PlatformStatus, google: PlatformStatus) {
+  if (meta === 'recorded' || google === 'recorded') return 'recorded';
+  return 'not_recorded';
+}
+
+function statusText(meta: PlatformStatus, google: PlatformStatus): string {
+  const parts: string[] = [];
+  if (meta === 'not_recorded') parts.push('Meta not recorded');
+  if (google === 'not_recorded') parts.push('Google not recorded');
+  if (parts.length === 0) return 'All platforms recorded';
+  return parts.join(' · ');
+}
+
+// ─── Sub-components ───────────────────────────────────────────
+function PlatformBadge({ label, status }: { label: string; status: PlatformStatus }) {
+  const recorded = status === 'recorded';
+  return (
+    <span
+      className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium ${
+        recorded
+          ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400'
+          : 'border-white/[0.08] bg-white/[0.04] text-white/40'
+      }`}
+    >
+      <span className={`h-1.5 w-1.5 rounded-full ${recorded ? 'bg-emerald-400' : 'bg-white/25'}`} />
+      {label} {recorded ? 'Recorded' : 'Not recorded'}
+    </span>
+  );
+}
+
+function SignalTag({ label }: { label: string }) {
+  return (
+    <span className="rounded-md border border-[#B55CFF]/20 bg-[#B55CFF]/10 px-2 py-0.5 text-[10px] font-medium text-[#B55CFF]/80">
+      {label}
+    </span>
+  );
+}
+
+function OrderCard({ purchase }: { purchase: RecentPurchase }) {
+  const signals = extractSignals(purchase.events);
+  const meta   = metaStatus(purchase.attributedChannel, signals);
+  const google = googleStatus(purchase.attributedChannel, signals);
+  const overall = overallStatus(meta, google);
+  const activeSignals = SIGNAL_LABELS.filter(({ key }) => signals[key]);
 
   return (
-    <div className="flex items-center gap-3 py-2.5">
-      <span className={`mt-0.5 h-2 w-2 shrink-0 rounded-full ${dotColor}`} />
-      <span className="min-w-0 flex-1 truncate text-[11px] text-white/60">
-        {LAYER_LABELS[layerKey] ?? layerKey}
-      </span>
-      <div className="flex shrink-0 items-center gap-2">
-        <div className="h-1.5 w-24 overflow-hidden rounded-full bg-white/[0.06]">
-          <div
-            className={`h-full rounded-full ${barColor} transition-all`}
-            style={{ width: `${Math.round(ratio * 100)}%` }}
-          />
+    <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-3.5">
+      <div className="flex items-start gap-3">
+        {/* Left content */}
+        <div className="min-w-0 flex-1 space-y-2">
+          {/* Order + sync */}
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-[11px] font-semibold text-white">
+              Order #{purchase.orderNumber ?? purchase.orderId}
+            </span>
+            <span className="text-[9px] font-semibold uppercase tracking-wider text-white/30">
+              SYNC: {syncLabel(purchase)}
+            </span>
+          </div>
+
+          {/* Platform badges */}
+          <div className="flex flex-wrap gap-1.5">
+            <PlatformBadge label="Meta"   status={meta} />
+            <PlatformBadge label="Google" status={google} />
+          </div>
+
+          {/* Signal tags */}
+          {activeSignals.length > 0 && (
+            <div className="flex flex-wrap gap-1">
+              {activeSignals.map(({ key, label }) => (
+                <SignalTag key={key} label={label} />
+              ))}
+            </div>
+          )}
         </div>
-        <span className="w-10 text-right text-[10px] tabular-nums text-white/35">
-          {ok}/{total}
-        </span>
+
+        {/* Right status */}
+        <div className="shrink-0 text-right">
+          <p
+            className={`text-[10px] font-semibold uppercase tracking-wider ${
+              overall === 'recorded' ? 'text-emerald-400' : 'text-white/30'
+            }`}
+          >
+            {overall === 'recorded' ? 'Recorded' : 'Not recorded'}
+          </p>
+          <p className="mt-0.5 max-w-[140px] text-[9px] leading-tight text-white/25">
+            {statusText(meta, google)}
+          </p>
+        </div>
       </div>
     </div>
   );
 }
 
-export function DataEnrichmentPanel({ shopId }: Props) {
-  const { data, isLoading } = useDataCoverage(shopId);
+function CardSkeleton() {
+  return (
+    <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-3.5 space-y-2">
+      <Skeleton className="h-3 w-40 rounded bg-white/[0.06]" />
+      <div className="flex gap-1.5">
+        <Skeleton className="h-5 w-28 rounded-full bg-white/[0.04]" />
+        <Skeleton className="h-5 w-28 rounded-full bg-white/[0.04]" />
+      </div>
+      <div className="flex gap-1">
+        {[60, 80, 70, 65].map((w, i) => (
+          <Skeleton key={i} className="h-4 rounded-md bg-white/[0.04]" style={{ width: w }} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ─── Main panel ───────────────────────────────────────────────
+export function DataEnrichmentPanel({ purchases, loading }: Props) {
+  const [visible, setVisible] = useState(PAGE_SIZE);
+
+  const shown = purchases.slice(0, visible);
+  const hasMore = visible < purchases.length;
 
   return (
     <div className="rounded-2xl border border-white/[0.06] bg-white/[0.02] p-4">
       {/* Header */}
-      <div className="mb-4 flex items-start justify-between">
-        <div>
-          <p className="text-[9px] font-semibold uppercase tracking-wider text-[#B55CFF]/70">
-            Enrichment
-          </p>
-          <p className="text-xs font-semibold text-white/70">Data Coverage</p>
-        </div>
-        {data && (
-          <span className="text-[10px] text-white/30">
-            Last {data.windowDays}d
-          </span>
-        )}
+      <div className="mb-1">
+        <p className="text-[9px] font-semibold uppercase tracking-wider text-[#B55CFF]/70">
+          Data Pipeline
+        </p>
+        <p className="text-xs font-semibold text-white/70">Data Enrichment</p>
       </div>
+      <p className="mb-4 text-[10px] text-white/30">
+        Accurate data signals sent per order to their respective attribution platform.
+      </p>
 
-      {isLoading ? (
-        <div className="space-y-3">
-          {Array.from({ length: 4 }).map((_, i) => (
-            <Skeleton key={i} className="h-8 w-full rounded-lg bg-white/[0.04]" />
-          ))}
+      {loading ? (
+        <div className="space-y-2">
+          {Array.from({ length: 4 }).map((_, i) => <CardSkeleton key={i} />)}
         </div>
-      ) : !data ? (
-        <div className="flex h-24 items-center justify-center">
-          <p className="text-xs text-white/25">No coverage data available</p>
+      ) : purchases.length === 0 ? (
+        <div className="flex h-20 items-center justify-center">
+          <p className="text-xs text-white/25">No orders in this period</p>
         </div>
       ) : (
         <>
-          {/* Totals row */}
-          <div className="mb-4 grid grid-cols-5 gap-2">
-            {[
-              { label: 'Events',     value: data.totals.events },
-              { label: 'Sessions',   value: data.totals.sessions },
-              { label: 'Orders',     value: data.totals.orders },
-              { label: 'Identities', value: data.totals.identities },
-              { label: 'Checkouts',  value: data.totals.checkoutMaps },
-            ].map(({ label, value }) => (
-              <div
-                key={label}
-                className="flex flex-col items-center rounded-xl border border-white/[0.06] bg-white/[0.02] px-2 py-2"
-              >
-                <span className="text-[13px] font-semibold text-white">
-                  {value.toLocaleString()}
-                </span>
-                <span className="mt-0.5 text-[9px] uppercase tracking-wider text-white/30">
-                  {label}
-                </span>
-              </div>
+          <div className="space-y-2">
+            {shown.map((p) => (
+              <OrderCard key={p.orderId} purchase={p} />
             ))}
           </div>
 
-          {/* Layer rows */}
-          <div className="divide-y divide-white/[0.04]">
-            {LAYER_ORDER.map((key) => {
-              const fields = data.layers[key as keyof typeof data.layers];
-              if (!fields) return null;
-              return <LayerRow key={key} layerKey={key} fields={fields} />;
-            })}
-          </div>
-
-          {/* Warnings + missing */}
-          {(data.warnings.length > 0 || data.missing.length > 0) && (
-            <div className="mt-4 space-y-1.5">
-              {data.missing.length > 0 && (
-                <div className="rounded-lg border border-yellow-500/20 bg-yellow-500/5 px-3 py-2 text-[10px] text-yellow-400">
-                  {data.missing.length} missing field{data.missing.length > 1 ? 's' : ''}:{' '}
-                  {data.missing.join(', ')}
-                </div>
-              )}
-              {data.warnings.map((w, i) => (
-                <div
-                  key={i}
-                  className="rounded-lg border border-orange-500/20 bg-orange-500/5 px-3 py-2 text-[10px] text-orange-400"
-                >
-                  <span className="font-medium">{w.label}:</span> {w.error}
-                </div>
-              ))}
-            </div>
+          {hasMore && (
+            <button
+              onClick={() => setVisible((v) => v + PAGE_SIZE)}
+              className="mt-3 w-full rounded-xl border border-white/[0.06] py-2 text-[11px] text-white/40 transition-colors hover:border-white/[0.12] hover:text-white/60"
+            >
+              Show more ({purchases.length - visible} remaining)
+            </button>
           )}
         </>
       )}

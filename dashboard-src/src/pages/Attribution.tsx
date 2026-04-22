@@ -139,11 +139,9 @@ export default function Attribution() {
           )}
 
           {/* Data Enrichment */}
-          {resolvedShop && (
-            <section>
-              <DataEnrichmentPanel shopId={resolvedShop} />
-            </section>
-          )}
+          <section>
+            <DataEnrichmentPanel purchases={purchases} loading={analyticsLoading} />
+          </section>
         </div>
       </div>
 
