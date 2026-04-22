@@ -13,6 +13,26 @@ export async function getSession() {
   }
 }
 
+// Pick up a post-login destination from the URL so OAuth connector flows
+// (Claude.ai / ChatGPT / Gemini) resume at /oauth/authorize after login
+// instead of dumping the user on /dashboard/ and dropping the flow.
+// Only same-origin, path-like values are accepted so this can never be used
+// as an open redirector to a foreign site.
+function getSafeReturnTo(): string | null {
+  try {
+    const params = new URLSearchParams(window.location.search)
+    const raw = params.get('returnTo') || params.get('return_to') || params.get('next')
+    if (!raw) return null
+    const decoded = decodeURIComponent(raw)
+    // Must start with "/" and not "//" (protocol-relative) or "/\" (edge cases)
+    if (!decoded.startsWith('/')) return null
+    if (decoded.startsWith('//') || decoded.startsWith('/\\')) return null
+    return decoded
+  } catch {
+    return null
+  }
+}
+
 export async function waitForSessionAndRedirect() {
   let attempts = 0
 
@@ -20,7 +40,8 @@ export async function waitForSessionAndRedirect() {
     const session = await getSession()
 
     if (session && (session.authenticated || session.ok)) {
-      window.location.href = '/dashboard/'
+      const target = getSafeReturnTo() || '/dashboard/'
+      window.location.href = target
       return true
     }
 
