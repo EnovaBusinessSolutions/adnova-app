@@ -5,6 +5,7 @@ import type {
   SessionExplorerResponse,
   SessionDetailData,
   RecordingDetailResponse,
+  DataCoverageResponse,
 } from '../types';
 
 export interface FetchAnalyticsParams {
@@ -75,4 +76,16 @@ export async function fetchRecording(
   );
   if (!res.ok) throw new Error(`Failed to fetch recording: ${res.status}`);
   return res.json() as Promise<RecordingDetailResponse>;
+}
+
+export async function fetchDataCoverage(
+  shopId: string,
+  signal?: AbortSignal,
+): Promise<DataCoverageResponse> {
+  const res = await fetch(
+    `/api/analytics/${encodeURIComponent(shopId)}/data-coverage`,
+    { credentials: 'include', signal },
+  );
+  if (!res.ok) throw new Error(`Failed to fetch data coverage: ${res.status}`);
+  return res.json() as Promise<DataCoverageResponse>;
 }

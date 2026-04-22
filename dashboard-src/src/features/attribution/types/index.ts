@@ -335,3 +335,38 @@ export interface RecordingDetailResponse {
   presignedUrl: string | null;
   sessionId: string;
 }
+
+// ─── Data Coverage ────────────────────────────────────────────
+export interface FieldState {
+  ok: boolean;
+  count?: number;
+  ratio?: number | null;
+  note?: string;
+  value?: number | null;
+  [key: string]: unknown;
+}
+
+export interface DataCoverageResponse {
+  success: boolean;
+  accountId: string;
+  windowDays: number;
+  since: string;
+  warnings: Array<{ label: string; error: string }>;
+  totals: {
+    events: number;
+    sessions: number;
+    orders: number;
+    identities: number;
+    checkoutMaps: number;
+  };
+  layers: {
+    layer1_identity_anchors: Record<string, FieldState>;
+    layer2_session_events: Record<string, FieldState>;
+    layer3_touchpoints_click_ids: Record<string, FieldState>;
+    layer4_order_truth: Record<string, FieldState>;
+    layer5_platform_signals_daily_pull: Record<string, FieldState>;
+    layer6_raw_enrichment_every_event: Record<string, FieldState>;
+    critical_stitch: Record<string, FieldState>;
+  };
+  missing: string[];
+}

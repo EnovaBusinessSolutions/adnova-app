@@ -10,6 +10,7 @@ import { AttributionPieChart } from '@/features/attribution/components/Attributi
 import { RoasComparisonChart } from '@/features/attribution/components/RoasComparisonChart';
 import { PaidMediaPanel } from '@/features/attribution/components/PaidMediaPanel';
 import { TopProductsPanel } from '@/features/attribution/components/TopProductsPanel';
+import { DataEnrichmentPanel } from '@/features/attribution/components/DataEnrichmentPanel';
 import { SessionDetailPanel } from '@/features/attribution/components/SessionDetailPanel';
 import { ExportModal } from '@/features/attribution/components/ExportModal';
 import { useShops } from '@/features/attribution/hooks/useShops';
@@ -134,6 +135,13 @@ export default function Attribution() {
               <div className="h-[300px]">
                 <AttributionPieChart channels={channels} />
               </div>
+            </section>
+          )}
+
+          {/* Data Enrichment */}
+          {resolvedShop && (
+            <section>
+              <DataEnrichmentPanel shopId={resolvedShop} />
             </section>
           )}
         </div>
