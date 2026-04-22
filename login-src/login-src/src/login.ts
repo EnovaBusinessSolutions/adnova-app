@@ -190,7 +190,28 @@ function bindSecondaryActions() {
 
   if (googleBtn) {
     googleBtn.addEventListener('click', () => {
-      window.location.href = '/auth/google/login'
+      // Forward any returnTo in the URL so the OAuth connector flow
+      // (Claude.ai / ChatGPT / Gemini) resumes after Google sign-in
+      // instead of dropping the user on /dashboard/ and losing the handshake.
+      const params = new URLSearchParams(window.location.search)
+      const raw =
+        params.get('returnTo') || params.get('return_to') || params.get('next')
+      let target = '/auth/google/login'
+      if (raw) {
+        try {
+          const decoded = decodeURIComponent(raw)
+          if (
+            decoded.startsWith('/') &&
+            !decoded.startsWith('//') &&
+            !decoded.startsWith('/\\')
+          ) {
+            target = `/auth/google/login?returnTo=${encodeURIComponent(decoded)}`
+          }
+        } catch {
+          // fall through to default
+        }
+      }
+      window.location.href = target
     })
   }
 }
