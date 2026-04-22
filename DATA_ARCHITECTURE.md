@@ -115,16 +115,16 @@ Jobs that exhausted retries. Manual inspection / re-enqueue.
 
 ## 3. How the data joins — follow a purchase
 
-This is the actual query path when someone buys something on Shogun:
+This is the actual query path when someone buys something on a storefront:
 
 ```
-Pixel fires page_view on shogun.mx
+Pixel fires page_view on mystore.com
   └─> INSERT INTO events (eventId, sessionId, userKey, accountId, ...)
   └─> UPSERT sessions (sessionId) — updates lastEventAt
   └─> UPSERT identity_graph (userKey) — bumps lastSeenAt
   └─> rrweb recording starts (Phase 0: on page load)
       └─> INSERT INTO session_recordings (recordingId, sessionId, ...)
-      └─> chunks → R2 recordings/shogun.mx/YYYY-MM/{recordingId}/chunks/
+      └─> chunks → R2 recordings/mystore.com/YYYY-MM/{recordingId}/chunks/
       └─> UPDATE sessions SET rrwebRecordingId = ...
 
 User adds to cart

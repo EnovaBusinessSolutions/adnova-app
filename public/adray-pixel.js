@@ -1611,21 +1611,30 @@
   var _ADRAY_REC_BASE = ADRAY_ENDPOINT.replace('/collect', '');
   var _ADRAY_RRWEB_CDN = _ADRAY_REC_BASE + '/static/dom-observer.min.js';
 
-  // Shopify prohibits DOM recording on checkout/payment pages without
-  // read_advanced_dom_pixel_events scope. Block rrweb entirely on those pages.
+  // ── Blocked pages: Shopify prohibits DOM recording on checkout/payment pages
+  //    without the read_advanced_dom_pixel_events scope. We exclude them entirely.
   function _adrayIsBlockedPage() {
     try {
       var host = window.location.hostname;
       var path = window.location.pathname;
+
+      // Shopify hosted checkout domain (separate origin from the storefront)
       if (/checkout\.shopify\.com$/i.test(host)) return true;
       if (/shop\.app$/i.test(host)) return true;
+
+      // Shopify checkout paths on *.myshopify.com
       if (/^\/checkouts?\//i.test(path)) return true;
       if (/\/thank_you/i.test(path)) return true;
       if (/\/orders\//i.test(path)) return true;
+
+      // WooCommerce checkout & order pages
       if (/^\/checkout(\/|$)/i.test(path)) return true;
       if (/\/order-received\//i.test(path)) return true;
       if (/\/order-pay\//i.test(path)) return true;
+
+      // Generic payment/account sensitive pages
       if (/^\/account\/(login|register|password)/i.test(path)) return true;
+
       return false;
     } catch(_) { return false; }
   }
@@ -1657,6 +1666,40 @@
       sessionStorage.removeItem(_SS_CIDX_KEY);
     } catch(_) {}
   }
+
+  // ── Consent (Phase 0 — arch v2) ────────────────────────────────────────────
+  // Cookie-backed opt-in / opt-out. Default behavior when no cookie exists is
+  // to record (backward compatible); merchants wanting strict GDPR call
+  //   window.adrayConsent('denied')
+  // before the pixel runs. The merchant is responsible for the UI.
+  var _ADRAY_CONSENT_COOKIE = 'adray_consent';
+
+  function _adrayGetConsent() {
+    try {
+      var m = document.cookie.match(/(?:^|;\s*)adray_consent=([^;]+)/);
+      return m ? decodeURIComponent(m[1]) : null;
+    } catch(_) { return null; }
+  }
+
+  function _adraySetConsentCookie(state) {
+    try {
+      var d = new Date();
+      d.setTime(d.getTime() + 13 * 30 * 24 * 60 * 60 * 1000); // 13 months
+      document.cookie = _ADRAY_CONSENT_COOKIE + '=' + encodeURIComponent(state)
+        + '; expires=' + d.toUTCString() + '; path=/; SameSite=Lax';
+    } catch(_) {}
+  }
+
+  // Public API: adrayConsent('granted'|'denied'). Revokes or grants recording live.
+  window.adrayConsent = function(state) {
+    if (state !== 'granted' && state !== 'denied') return;
+    _adraySetConsentCookie(state);
+    if (state === 'denied') {
+      try { _adrayStopRecording('consent_denied'); } catch(_) {}
+    } else if (state === 'granted' && !_adrayStopFn) {
+      _adrayLoadRrweb(function() { _adrayStartRecording({ trigger: 'consent_granted' }); });
+    }
+  };
 
   function _adrayDetectDevice() {
     var ua = (navigator.userAgent || '').toLowerCase();
@@ -1800,14 +1843,18 @@
           }
         },
         maskAllInputs: true,
+        maskInputOptions: { password: true, email: true, tel: true, text: false, number: false },
         inlineStylesheet: true,
         inlineImages: false,
         blockSelector: '[data-adray-block]',
+        blockClass: 'adray-block',
+        ignoreClass: 'adray-ignore',
         sampling: {
-          mousemove: 100,
+          mousemove: 50,          // arch v2
           mouseInteraction: true,
           scroll: 150,
-          input: 'last'
+          input: 'last',
+          media: 800
         }
       });
       console.log('[ADRAY-REC] rrweb.record() started, stopFn:', typeof _adrayStopFn);
@@ -1850,42 +1897,59 @@
     }).catch(function(){});
   }
 
-  // On page unload: flush any buffered events AND send fin if recording is active
-  // (covers the case where user closes tab or navigates away without a purchase event)
+  // Arch v2: on page unload we only flush the buffer. We DO NOT call /fin and
+  // DO NOT clear sessionStorage — the same recordingId must survive same-origin
+  // navigation so the session's keyframe stream is continuous. Server-side
+  // sweep finalizes by inactivity timeout (5min per arch v2).
   function _adrayHandleUnload() {
     _adrayFlushChunk();
-    if (_adrayRecordingId && _adrayStopFn) {
-      // Recording is still active — signal backend to finalize
-      var body = JSON.stringify({
-        account_id: getAccountId(),
-        recording_id: _adrayRecordingId,
-        session_id: getOrCreateSessionId(),
-        reason: 'page_unload',
-        final_chunk_index: _adrayChunkIndex,
-        timestamp: new Date().toISOString()
-      });
-      try { navigator.sendBeacon(_ADRAY_REC_BASE + '/collect/x/fin', new Blob([body], { type: 'application/json' })); } catch(_) {}
-      // Keep sessionStorage so a checkout redirect can resume
-    }
+    // sessionStorage persists; /fin is NOT sent here anymore.
   }
   window.addEventListener('pagehide', _adrayHandleUnload);
   window.addEventListener('beforeunload', _adrayHandleUnload);
 
-  // Hook into sendEvent: trigger recording on add_to_cart / begin_checkout, stop on purchase
+  // Helper: inject a tagged Custom event (rrweb type=5) into the active stream.
+  // The keyframe extractor reads these tags: add_to_cart, begin_checkout,
+  // purchase, remove_from_cart, visibility_change, product_view, page_view.
+  function _adrayEmitCustom(tag, payload) {
+    if (!_adrayStopFn) return false;
+    try {
+      if (window.rrweb && window.rrweb.record && typeof window.rrweb.record.addCustomEvent === 'function') {
+        window.rrweb.record.addCustomEvent(tag, payload || {});
+        return true;
+      }
+    } catch(_) {}
+    return false;
+  }
+
+  // Hook into sendEvent: inject ecommerce events as Custom events in the rrweb
+  // stream. Recording itself is started on page load (see _adrayBootRecording
+  // below), not here.
   console.log('[ADRAY-REC] BRI recording module initialized. Hooking sendEvent...');
   var _adrayOrigSendEvent = sendEvent;
   sendEvent = function(eventName, eventData) {
     var result = _adrayOrigSendEvent.apply(this, arguments);
     console.log('[ADRAY-REC] sendEvent intercepted:', eventName);
     try {
-      if (eventName === 'add_to_cart' || eventName === 'begin_checkout') {
-        console.log('[ADRAY-REC] ' + eventName + ' detected → loading rrweb');
-        if (!_adrayIsBlockedPage()) {
-          _adrayLoadRrweb(function() { _adrayStartRecording(eventData || {}); });
+      if (eventName === 'add_to_cart' || eventName === 'begin_checkout' || eventName === 'remove_from_cart') {
+        // Inject into the active stream; fallback: start recording if not yet running.
+        // Never start recording on blocked pages (checkout, payment, etc.).
+        if (!_adrayEmitCustom(eventName, eventData || {})) {
+          if (!_adrayIsBlockedPage()) {
+            _adrayLoadRrweb(function() {
+              _adrayStartRecording({ trigger: eventName });
+              // rrweb takes a tick to expose addCustomEvent after record() — retry.
+              setTimeout(function() { _adrayEmitCustom(eventName, eventData || {}); }, 100);
+            });
+          }
         }
       }
       if (eventName === 'purchase') {
-        console.log('[ADRAY-REC] purchase detected → stopping recording');
+        console.log('[ADRAY-REC] purchase → inject custom event + finalize');
+        _adrayEmitCustom('purchase', eventData || {});
+        // Flush one more time to ensure the purchase event reaches the server
+        // before /fin races.
+        _adrayFlushChunk();
         _adrayStopRecording('purchase');
       }
     } catch(e) {
@@ -1894,23 +1958,72 @@
     return result;
   };
 
-  // Auto-resume: if this page load has a persisted recording in sessionStorage,
-  // the user navigated mid-flow (cart → checkout). Resume without waiting for a
-  // new add_to_cart — otherwise the checkout pages aren't captured.
-  // Skip checkout/payment pages: DOM recording is not allowed there without
-  // the read_advanced_dom_pixel_events scope.
-  (function _adrayAutoResume() {
+  // Visibility change: custom event for tab_switch keyframe extraction.
+  document.addEventListener('visibilitychange', function() {
+    _adrayEmitCustom('visibility_change', { hidden: document.hidden });
+  });
+
+  // Product view: IntersectionObserver emits a product_view Custom event the
+  // first time a product card scrolls into view. Merchants tag elements with
+  // [data-adray-product]. Extra attributes (data-adray-product-id, -name,
+  // -price) enrich the payload for the keyframe extractor's hitTestProducts.
+  (function _adrayProductObserver() {
+    if (typeof IntersectionObserver === 'undefined') return;
+    var seen = new WeakSet();
+    var io = new IntersectionObserver(function(entries) {
+      for (var i = 0; i < entries.length; i++) {
+        var e = entries[i];
+        if (!e.isIntersecting || seen.has(e.target)) continue;
+        seen.add(e.target);
+        var el = e.target;
+        var bb = e.boundingClientRect;
+        _adrayEmitCustom('product_view', {
+          element_id: el.getAttribute('data-adray-product') || el.id || null,
+          product_id: el.getAttribute('data-adray-product-id') || el.getAttribute('data-adray-product') || null,
+          name:  el.getAttribute('data-adray-product-name') || null,
+          price: parseFloat(el.getAttribute('data-adray-product-price') || '') || null,
+          bbox: {
+            x: Math.round(bb.left + (window.scrollX || 0)),
+            y: Math.round(bb.top  + (window.scrollY || 0)),
+            w: Math.round(bb.width),
+            h: Math.round(bb.height)
+          }
+        });
+      }
+    }, { threshold: 0.5 });
+    function observeAll() {
+      var els = document.querySelectorAll('[data-adray-product]');
+      for (var i = 0; i < els.length; i++) io.observe(els[i]);
+    }
+    if (document.body) observeAll();
+    var mo = new MutationObserver(observeAll);
+    var startMo = function() {
+      try { mo.observe(document.body || document.documentElement, { childList: true, subtree: true }); } catch(_) {}
+    };
+    if (document.body) startMo(); else document.addEventListener('DOMContentLoaded', startMo);
+  })();
+
+  // Boot: start recording on page load (arch v2). Resume if sessionStorage has
+  // a persisted recordingId; otherwise create a fresh one.
+  // Skips recording on checkout/payment pages (Shopify blocks DOM recording there
+  // without read_advanced_dom_pixel_events scope). Ecommerce events still fire.
+  (function _adrayBootRecording() {
     try {
+      if (_adrayGetConsent() === 'denied') {
+        console.log('[ADRAY-REC] consent=denied → skipping rrweb');
+        return;
+      }
       if (_adrayIsBlockedPage()) {
-        console.log('[ADRAY-REC] blocked page → skipping auto-resume', window.location.pathname);
+        console.log('[ADRAY-REC] blocked page → skipping rrweb', window.location.pathname);
         return;
       }
       var persisted = sessionStorage.getItem(_SS_REC_KEY);
-      if (persisted) {
-        console.log('[ADRAY-REC] persisted recording detected → auto-resuming', persisted);
-        _adrayLoadRrweb(function() { _adrayStartRecording({ trigger: 'resumed' }); });
-      }
-    } catch(_) {}
+      var trigger = persisted ? 'resumed' : 'page_load';
+      console.log('[ADRAY-REC] boot →', trigger, persisted ? '('+persisted+')' : '');
+      _adrayLoadRrweb(function() { _adrayStartRecording({ trigger: trigger }); });
+    } catch(e) {
+      console.error('[ADRAY-REC] boot error:', e);
+    }
   })();
 
   // =========================================================================

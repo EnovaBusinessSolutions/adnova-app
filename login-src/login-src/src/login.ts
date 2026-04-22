@@ -9,7 +9,6 @@ import {
   getTurnstileToken,
   hasVisibleCaptcha,
   hideCaptcha,
-  resetTurnstile,
   showCaptcha,
 } from './turnstile'
 import adrayIcon from './assets/adray-icon.png'
@@ -268,11 +267,15 @@ async function bindLoginEvents() {
       if (backendWantsCaptcha(res, data)) {
         try {
           await showCaptcha()
-          resetTurnstile()
           showMessage('Verification required. Complete the captcha to continue.')
         } catch (captchaError) {
           console.error('[login] captcha error:', captchaError)
-          showMessage('Security verification could not be loaded. Refresh the page and try again.')
+          hideCaptcha()
+          showMessage(
+            'Security verification could not be loaded. ' +
+              'If you use Brave, uBlock, or privacy extensions, ' +
+              'try disabling shields for this site and reload.',
+          )
         }
         return
       }

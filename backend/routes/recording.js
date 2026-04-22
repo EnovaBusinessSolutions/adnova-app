@@ -107,12 +107,23 @@ router.post('/init', async (req, res) => {
       maskingEnabled: true,
     };
     // Include deviceType only if the column exists — retry without it on schema mismatch.
+    // Important: pass `select` to control what Prisma returns in the RETURNING
+    // clause. Without an explicit select, Prisma generates RETURNING * which
+    // references every column including device_type — so a plain retry without
+    // deviceType in data still fails if the column itself doesn't exist.
     const createWithDevice = { ...createData, deviceType: device_type || null };
+    const isSchemaColumnMissing = (e) => {
+      if (!e) return false;
+      if (e.code === 'P2022') return true; // Prisma: column does not exist
+      const msg = e.message || '';
+      return msg.includes('deviceType') || msg.includes('device_type');
+    };
+
     try {
-      await prisma.sessionRecording.create({ data: createWithDevice });
+      await prisma.sessionRecording.create({ data: createWithDevice, select: { id: true } });
     } catch (createErr) {
-      // P2002: unique constraint — row already exists (likely from /buf auto-create)
       if (createErr?.code === 'P2002') {
+        // Row already exists (e.g. /buf auto-created it first) — update instead.
         await prisma.sessionRecording.update({
           where: { recordingId: recording_id },
           data: {
@@ -121,9 +132,9 @@ router.post('/init', async (req, res) => {
             attributionSnapshot: attributionSnapshot || undefined,
             deviceType: device_type || undefined,
           },
+          select: { id: true },
         }).catch((updateErr) => {
-          // Tolerate missing deviceType column during deploy lag
-          if (updateErr?.message?.includes('deviceType') || updateErr?.message?.includes('device_type')) {
+          if (isSchemaColumnMissing(updateErr)) {
             return prisma.sessionRecording.update({
               where: { recordingId: recording_id },
               data: {
@@ -131,13 +142,16 @@ router.post('/init', async (req, res) => {
                 checkoutToken: checkout_token || undefined,
                 attributionSnapshot: attributionSnapshot || undefined,
               },
+              select: { id: true },
             });
           }
           throw updateErr;
         });
-      } else if (createErr?.message?.includes('deviceType') || createErr?.message?.includes('device_type')) {
-        // Column not deployed yet — create without it
-        await prisma.sessionRecording.create({ data: createData }).catch((e2) => {
+      } else if (isSchemaColumnMissing(createErr)) {
+        // Column not deployed yet — create without it. `select:{id:true}` keeps
+        // the RETURNING clause from referencing device_type.
+        console.warn('[recording/init] device_type column missing, creating without it');
+        await prisma.sessionRecording.create({ data: createData, select: { id: true } }).catch((e2) => {
           if (e2?.code === 'P2002') return;
           throw e2;
         });
@@ -208,19 +222,22 @@ router.post('/buf', async (req, res) => {
 
       const r2Prefix = chunksPrefix(account_id, recording_id);
       try {
+        // `select: { id: true }` keeps RETURNING minimal so a missing optional
+        // column (e.g. device_type during deploy lag) doesn't break the insert.
         await prisma.sessionRecording.create({
           data: {
             recordingId: recording_id,
             accountId: account_id,
             sessionId: session_id || 'unknown',
             userKey: 'anonymous',
-            triggerEvent: 'add_to_cart',
+            triggerEvent: 'page_load',
             triggerAt: new Date(),
             r2ChunksPrefix: r2Prefix,
             r2Bucket: process.env.R2_BUCKET || 'adray-recordings',
             status: 'RECORDING',
             maskingEnabled: true,
           },
+          select: { id: true },
         });
       } catch (createErr) {
         // P2002: unique constraint — row was just created by a racing request. OK to continue.
@@ -418,6 +435,205 @@ router.get('/:account_id/list', async (req, res) => {
 });
 
 /* ─────────────────────────────────────────────────────────────────────────────
+ * Phase 4 DEBUG: SessionPacket browsing
+ *
+ *   GET /api/recording/:account_id/packets/list?limit=20
+ *     → latest N packets, compact summary (no keyframes body)
+ *   GET /api/recording/:account_id/packets/:session_id
+ *     → full packet JSON (keyframes + signals + ecommerce events)
+ *   GET /api/recording/:account_id/packets/stats
+ *     → count by outcome + count with AI analysis + most recent packet
+ *
+ * Lives inside the recording router for now; will move to its own router once
+ * the player is retired (Phase 9).
+ * ───────────────────────────────────────────────────────────────────────────── */
+router.get('/:account_id/packets/stats', async (req, res) => {
+  try {
+    const { account_id } = req.params;
+    const [total, byOutcome, aiAnalyzed, mostRecent] = await Promise.all([
+      prisma.sessionPacket.count({ where: { accountId: account_id } }),
+      prisma.sessionPacket.groupBy({
+        by: ['outcome'],
+        where: { accountId: account_id },
+        _count: { sessionId: true },
+      }),
+      prisma.sessionPacket.count({ where: { accountId: account_id, aiAnalyzedAt: { not: null } } }),
+      prisma.sessionPacket.findFirst({
+        where: { accountId: account_id },
+        orderBy: { createdAt: 'desc' },
+        select: { sessionId: true, createdAt: true, outcome: true, durationMs: true, rawErasedAt: true },
+      }),
+    ]);
+    return res.json({
+      ok: true,
+      accountId: account_id,
+      total,
+      byOutcome: Object.fromEntries(byOutcome.map((r) => [r.outcome, r._count.sessionId])),
+      aiAnalyzed,
+      mostRecent,
+    });
+  } catch (err) {
+    return res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+router.get('/:account_id/packets/list', async (req, res) => {
+  try {
+    const { account_id } = req.params;
+    const take = Math.min(Number(req.query.limit) || 20, 100);
+    const outcome = String(req.query.outcome || '').trim();
+
+    const where = { accountId: account_id };
+    if (outcome) where.outcome = outcome;
+
+    const packets = await prisma.sessionPacket.findMany({
+      where,
+      select: {
+        sessionId: true, visitorId: true, personId: true, outcome: true,
+        startTs: true, endTs: true, durationMs: true, landingPage: true,
+        cartValueAtEnd: true, orderId: true, device: true, trafficSource: true,
+        aiAnalyzedAt: true, rawErasedAt: true, createdAt: true,
+      },
+      orderBy: { createdAt: 'desc' },
+      take,
+    });
+
+    // Attach compact keyframe + ecommerce summaries without shipping the full arrays
+    const summaries = await prisma.sessionPacket.findMany({
+      where: { sessionId: { in: packets.map((p) => p.sessionId) } },
+      select: { sessionId: true, keyframes: true, ecommerceEvents: true, signals: true },
+    });
+    const byId = new Map(summaries.map((s) => [s.sessionId, s]));
+    const rows = packets.map((p) => {
+      const s = byId.get(p.sessionId);
+      const kfs = Array.isArray(s?.keyframes) ? s.keyframes : [];
+      const ees = Array.isArray(s?.ecommerceEvents) ? s.ecommerceEvents : [];
+      return {
+        ...p,
+        keyframeCount: kfs.length,
+        keyframeTypes: Array.from(new Set(kfs.map((k) => k.type))),
+        ecommerceCount: ees.length,
+        ecommerceTypes: Array.from(new Set(ees.map((e) => e.type))),
+        riskScore: s?.signals?.riskScore ?? null,
+        pattern: s?.signals?.abandonmentPattern ?? null,
+      };
+    });
+    return res.json({ ok: true, count: rows.length, packets: rows });
+  } catch (err) {
+    return res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+router.get('/:account_id/packets/:session_id', async (req, res) => {
+  try {
+    const { account_id, session_id } = req.params;
+    const packet = await prisma.sessionPacket.findUnique({ where: { sessionId: session_id } });
+    if (!packet || packet.accountId !== account_id) {
+      return res.status(404).json({ ok: false, error: 'Packet not found' });
+    }
+    return res.json({ ok: true, packet });
+  } catch (err) {
+    return res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * GET /api/recording/:account_id/by-user?userKey=X
+ * Returns all READY recordings for a given userKey, ordered chronologically.
+ * Used by Selected Journey to offer a stitched playback across the user's
+ * fragmented recordings of the same purchase journey.
+ * ───────────────────────────────────────────────────────────────────────────── */
+router.get('/:account_id/by-user', async (req, res) => {
+  try {
+    const { account_id } = req.params;
+    const queryUserKey = String(req.query.userKey || '').trim();
+    const queryCustomerId = String(req.query.customerId || '').trim();
+    const queryRecordingId = String(req.query.recordingId || '').trim();
+
+    // ── 1. Build the seed userKey set ────────────────────────────────────
+    const seedUserKeys = new Set();
+    if (queryUserKey && queryUserKey !== 'anonymous') seedUserKeys.add(queryUserKey);
+
+    // Also seed from the passed recordingId (trust recording's own userKey)
+    if (queryRecordingId) {
+      const ref = await prisma.sessionRecording.findUnique({
+        where: { recordingId: queryRecordingId },
+        select: { userKey: true, accountId: true, orderId: true, checkoutToken: true },
+      }).catch(() => null);
+      if (ref && ref.accountId === account_id) {
+        if (ref.userKey && ref.userKey !== 'anonymous') seedUserKeys.add(ref.userKey);
+      }
+    }
+
+    // ── 2. Find the customerId/emailHash for this person ────────────────
+    // Identity can shift between AddToCart and checkout — the Order row has
+    // stable identifiers (customerId, emailHash). Any Order where the user's
+    // userKey appears tells us who the person is; from there we can find
+    // every other userKey they've ever used.
+    const customerIds = new Set();
+    const emailHashes = new Set();
+    if (queryCustomerId) customerIds.add(queryCustomerId);
+
+    if (seedUserKeys.size > 0) {
+      const seedOrders = await prisma.order.findMany({
+        where: { accountId: account_id, userKey: { in: Array.from(seedUserKeys) } },
+        select: { customerId: true, emailHash: true },
+        take: 50,
+      }).catch(() => []);
+      for (const o of seedOrders) {
+        if (o.customerId) customerIds.add(o.customerId);
+        if (o.emailHash) emailHashes.add(o.emailHash);
+      }
+    }
+
+    // ── 3. Expand to all userKeys this person has used ──────────────────
+    const allUserKeys = new Set(seedUserKeys);
+    if (customerIds.size > 0 || emailHashes.size > 0) {
+      const personOr = [];
+      if (customerIds.size > 0) personOr.push({ customerId: { in: Array.from(customerIds) } });
+      if (emailHashes.size > 0) personOr.push({ emailHash: { in: Array.from(emailHashes) } });
+      const personOrders = await prisma.order.findMany({
+        where: { accountId: account_id, OR: personOr },
+        select: { userKey: true },
+        take: 200,
+      }).catch(() => []);
+      for (const o of personOrders) {
+        if (o.userKey && o.userKey !== 'anonymous') allUserKeys.add(o.userKey);
+      }
+    }
+
+    if (allUserKeys.size === 0) {
+      return res.json({ ok: true, recordings: [], resolvedUserKeys: [], customerIdMatches: 0 });
+    }
+
+    // ── 4. Fetch all READY recordings across the unified userKey set ────
+    const recs = await prisma.sessionRecording.findMany({
+      where: {
+        accountId: account_id,
+        userKey: { in: Array.from(allUserKeys) },
+        status: 'READY',
+        rawErasedAt: null,
+      },
+      select: {
+        recordingId: true, sessionId: true, durationMs: true,
+        outcome: true, triggerAt: true, createdAt: true, cartValue: true,
+      },
+      orderBy: { triggerAt: 'asc' },
+      take: 50,
+    });
+    return res.json({
+      ok: true,
+      recordings: recs,
+      resolvedUserKeys: Array.from(allUserKeys),
+      customerIdMatches: customerIds.size,
+    });
+  } catch (err) {
+    console.error('[recording/by-user] Error:', err.message);
+    return res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+/* ─────────────────────────────────────────────────────────────────────────────
  * GET /api/recording/:account_id/:recording_id
  * Returns recording metadata + presigned R2 URL for dashboard playback.
  * Requires session auth (enforced by sessionGuard in index.js).
@@ -431,7 +647,8 @@ router.get('/:account_id/:recording_id', async (req, res) => {
       select: {
         recordingId: true, sessionId: true, accountId: true, status: true,
         outcome: true, cartValue: true, durationMs: true, triggerAt: true,
-        behavioralSignals: true, attributionSnapshot: true, r2Key: true, createdAt: true,
+        behavioralSignals: true, attributionSnapshot: true, r2Key: true,
+        createdAt: true, lastChunkAt: true,
       },
     });
 
@@ -439,11 +656,14 @@ router.get('/:account_id/:recording_id', async (req, res) => {
       return res.status(404).json({ ok: false, error: 'Recording not found' });
     }
 
-    // Auto-finalize: if stuck in RECORDING for >5 min, enqueue finalize job
+    // Auto-finalize: finalize when inactive >5min (arch v2). A long active
+    // session (>5min old but still chunking) must NOT be killed — use
+    // lastChunkAt, not createdAt.
     if (rec.status === 'RECORDING' && recordingQueue) {
-      const ageMs = Date.now() - new Date(rec.createdAt).getTime();
-      if (ageMs > 5 * 60 * 1000) {
-        console.log(`[recording GET] ${recording_id} stuck in RECORDING for ${Math.round(ageMs/1000)}s — auto-finalizing`);
+      const lastActivity = rec.lastChunkAt ? new Date(rec.lastChunkAt).getTime() : new Date(rec.createdAt).getTime();
+      const inactiveMs = Date.now() - lastActivity;
+      if (inactiveMs > 5 * 60 * 1000) {
+        console.log(`[recording GET] ${recording_id} inactive ${Math.round(inactiveMs/1000)}s — auto-finalizing`);
         recordingQueue.add('recording:finalize', {
           recordingId: recording_id,
           accountId: account_id,
@@ -687,14 +907,20 @@ router.post('/sweep', async (req, res) => {
   }
 
   try {
-    const cutoff = new Date(Date.now() - 10 * 60 * 1000); // 10 min ago
+    // Arch v2: finalize by inactivity, not by age. A recording is "complete"
+    // when 5 minutes have elapsed since the last chunk arrived. `createdAt`
+    // fallback covers recordings that never produced any chunk.
+    const inactivityCutoff = new Date(Date.now() - 5 * 60 * 1000); // 5 min ago
     // ERROR recordings get 1 retry chance (in case failure was transient)
     const errorCutoff = new Date(Date.now() - 30 * 60 * 1000); // 30 min ago for ERROR
 
     const stuck = await prisma.sessionRecording.findMany({
       where: {
         OR: [
-          { status: { in: ['RECORDING', 'FINALIZING'] }, createdAt: { lt: cutoff } },
+          // Active recordings whose last chunk arrived >5min ago → session ended.
+          { status: { in: ['RECORDING', 'FINALIZING'] }, lastChunkAt: { lt: inactivityCutoff } },
+          // Recordings that never chunked (orphans) after 5min → finalize/ERROR.
+          { status: { in: ['RECORDING', 'FINALIZING'] }, lastChunkAt: null, createdAt: { lt: inactivityCutoff } },
           { status: 'ERROR', chunkCount: { gt: 0 }, createdAt: { lt: errorCutoff }, rawErasedAt: null },
         ],
       },

@@ -15,6 +15,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **Legacy DB:** MongoDB via Mongoose (`backend/models/`) — auth, OAuth tokens, integration metadata
 - **Cache / Queue:** Redis + BullMQ (`backend/queues/`, `backend/workers/`)
 - **Dashboard:** React 18 + TypeScript + Vite + shadcn-ui + Tailwind (`dashboard-src/`)
+  - Attribution panel lives in `dashboard-src/src/features/attribution/` — fully native React (no iframe). Route: `/dashboard/attribution`.
 - **Landing Page:** Next.js + React 19 + Tailwind 4 (`landing-adray/`)
 - **MCP Server:** OAuth 2.0 + 8 read-only tools for AI analysis (`backend/mcp/`)
 
@@ -132,6 +133,8 @@ APP_URL
 - Prisma + Mongo data-layer mismatch in some flows (e.g., session resolution)
 - Meta CAPI implementation is a placeholder — not production-ready
 - Rate limit key still uses legacy `shop_id` for non-Shopify merchants
+- Export CSV endpoints (`/api/analytics/:id/export/candidates`, `/api/analytics/:id/export/download`) are not yet implemented in the backend — the Export button in the Attribution panel does client-side CSV export of in-memory data
+- rrweb-player is not installed in `dashboard-src` — the Session Detail panel links to presigned URLs instead of embedding a player
 
 ## Development Guidelines
 

@@ -51,6 +51,7 @@ model Account {
   orders               Order[]
   snapshot             MerchantSnapshot?
   sessionRecordings    SessionRecording[]
+  sessionPackets       SessionPacket[]
   abandonmentRiskScores AbandonmentRiskScore[]
   abandonmentCohorts   AbandonmentCohort[]
 
@@ -352,4 +353,52 @@ model AbandonmentCohort {
   @@unique([accountId, cohortKey])
   @@index([accountId, computedAt])
   @@map("abandonment_cohorts")
+}
+
+// ─── BRI Phase 4: SessionPacket ──────────────────────────────────────────────
+// Structured behavioral JSON per session — the permanent artifact produced by
+// the processing pipeline (keyframes + signals + ecommerce events). Raw rrweb
+// streams are erased 24h after this row is written.
+//
+// Keyed by sessionId (one packet per session, not per recording). Recordings
+// fragmented across page loads collapse into one packet here.
+
+enum SessionOutcome {
+  PURCHASED
+  ABANDONED
+  BOUNCED
+  STILL_BROWSING
+}
+
+model SessionPacket {
+  id              String         @id @default(uuid())
+  sessionId       String         @unique @map("session_id")
+  accountId       String         @map("account_id")
+  visitorId       String?        @map("visitor_id")
+  personId        String?        @map("person_id")         // set by identity resolver (Phase 7)
+  startTs         DateTime       @map("start_ts")
+  endTs           DateTime       @map("end_ts")
+  durationMs      Int            @map("duration_ms")
+  device          Json?                                   // { type, ua, viewport }
+  trafficSource   Json?          @map("traffic_source")   // { utm, fbclid, gclid, referrer }
+  landingPage     String?        @map("landing_page")
+  keyframes       Json                                    // array from keyframeExtractor
+  signals         Json                                    // aggregates from recordingSignalExtractor
+  ecommerceEvents Json           @map("ecommerce_events") // add_to_cart, purchase, etc.
+  outcome         SessionOutcome @default(STILL_BROWSING)
+  cartValueAtEnd  Float?         @map("cart_value_at_end")
+  orderId         String?        @map("order_id")
+  aiAnalysis      Json?          @map("ai_analysis")      // filled by Phase 6 LLM reasoning
+  aiAnalyzedAt    DateTime?      @map("ai_analyzed_at")
+  rawErasedAt     DateTime?      @map("raw_erased_at")
+  createdAt       DateTime       @default(now()) @map("created_at")
+  updatedAt       DateTime       @updatedAt @map("updated_at")
+
+  account Account @relation(fields: [accountId], references: [accountId], onDelete: Cascade)
+
+  @@index([accountId, personId])
+  @@index([accountId, startTs])
+  @@index([accountId, outcome])
+  @@index([accountId, orderId])
+  @@map("session_packets")
 }

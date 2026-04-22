@@ -10,21 +10,21 @@ api_version = "2026-04"
 
   [[webhooks.subscriptions]]
   topics = [ "app/uninstalled" ]
-  uri = "/connector/webhooks/app/uninstalled"
+  uri = "https://adray-app-staging-german.onrender.com/connector/webhooks/app/uninstalled"
 
   # orders/create, orders/updated, checkouts/create require Protected Customer Data approval
   # Add these back after approval in Partners dashboard
 
   [[webhooks.subscriptions]]
-  uri = "/connector/webhooks/customers/data_request"
+  uri = "https://adray-app-staging-german.onrender.com/connector/webhooks/customers/data_request"
   compliance_topics = [ "customers/data_request" ]
 
   [[webhooks.subscriptions]]
-  uri = "/connector/webhooks/customers/redact"
+  uri = "https://adray-app-staging-german.onrender.com/connector/webhooks/customers/redact"
   compliance_topics = [ "customers/redact" ]
 
   [[webhooks.subscriptions]]
-  uri = "/connector/webhooks/shop/redact"
+  uri = "https://adray-app-staging-german.onrender.com/connector/webhooks/shop/redact"
   compliance_topics = [ "shop/redact" ]
 
 [access_scopes]

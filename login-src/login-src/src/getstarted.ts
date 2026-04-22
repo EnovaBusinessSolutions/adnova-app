@@ -260,10 +260,20 @@ function bindPasswordToggle(inputSelector: string, toggleSelector: string) {
 async function mountCaptcha() {
   try {
     await showCaptcha()
-    resetTurnstile()
+    // NO resetear inmediatamente después del render.
+    // El reset inmediato crea un race condition que deja el widget en
+    // estado inconsistente en navegadores con privacidad estricta
+    // (Brave shields, Firefox ETP, uBlock, etc.). El widget ya sale
+    // limpio tras showCaptcha(); el reset solo debe dispararse bajo
+    // demanda (ej. cuando el token expira o el backend rechaza).
   } catch (error) {
     console.error('[getstarted] captcha error:', error)
-    showMessage('Security verification could not be loaded. Refresh the page and try again.')
+    hideCaptcha()
+    showMessage(
+      'Security verification could not be loaded. ' +
+        'If you use Brave, uBlock, or privacy extensions, ' +
+        'try disabling shields for this site and reload.',
+    )
   }
 }
 
