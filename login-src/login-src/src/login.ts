@@ -190,7 +190,28 @@ function bindSecondaryActions() {
 
   if (googleBtn) {
     googleBtn.addEventListener('click', () => {
-      window.location.href = '/auth/google/login'
+      // Forward any returnTo in the URL so the OAuth connector flow
+      // (Claude.ai / ChatGPT / Gemini) resumes after Google sign-in
+      // instead of dropping the user on /dashboard/ and losing the handshake.
+      const params = new URLSearchParams(window.location.search)
+      const raw =
+        params.get('returnTo') || params.get('return_to') || params.get('next')
+      let target = '/auth/google/login'
+      if (raw) {
+        try {
+          const decoded = decodeURIComponent(raw)
+          if (
+            decoded.startsWith('/') &&
+            !decoded.startsWith('//') &&
+            !decoded.startsWith('/\\')
+          ) {
+            target = `/auth/google/login?returnTo=${encodeURIComponent(decoded)}`
+          }
+        } catch {
+          // fall through to default
+        }
+      }
+      window.location.href = target
     })
   }
 }
@@ -295,7 +316,28 @@ async function checkExistingSession() {
   try {
     const session = await getSession()
     if (session && (session.authenticated || session.ok)) {
-      window.location.replace('/dashboard/')
+      // If we arrived with a returnTo (e.g. from /oauth/authorize), honor it
+      // so already-logged-in users continue the OAuth connector flow instead
+      // of being bounced to /dashboard/ and losing the handshake.
+      const params = new URLSearchParams(window.location.search)
+      const raw =
+        params.get('returnTo') || params.get('return_to') || params.get('next')
+      let target = '/dashboard/'
+      if (raw) {
+        try {
+          const decoded = decodeURIComponent(raw)
+          if (
+            decoded.startsWith('/') &&
+            !decoded.startsWith('//') &&
+            !decoded.startsWith('/\\')
+          ) {
+            target = decoded
+          }
+        } catch {
+          // fall through to default
+        }
+      }
+      window.location.replace(target)
     }
   } catch {
     // noop
