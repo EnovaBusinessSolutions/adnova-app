@@ -7,6 +7,7 @@ import { KpiGrid } from '@/features/attribution/components/KpiGrid';
 import { LiveFeed } from '@/features/attribution/components/LiveFeed';
 import { ConversionPaths } from '@/features/attribution/components/ConversionPaths';
 import { AttributionPieChart } from '@/features/attribution/components/AttributionPieChart';
+import { RoasComparisonChart } from '@/features/attribution/components/RoasComparisonChart';
 import { PaidMediaPanel } from '@/features/attribution/components/PaidMediaPanel';
 import { TopProductsPanel } from '@/features/attribution/components/TopProductsPanel';
 import { SessionDetailPanel } from '@/features/attribution/components/SessionDetailPanel';
@@ -124,10 +125,13 @@ export default function Attribution() {
             </section>
           ) : null}
 
-          {/* Revenue by Channel pie */}
-          {!analyticsLoading && channels && (
-            <section className="grid grid-cols-1 gap-5 lg:grid-cols-3">
-              <div style={{ height: 280 }}>
+          {/* ROAS Comparison + Attributed Orders — 50/50 */}
+          {!analyticsLoading && analyticsData && channels && (
+            <section className="grid grid-cols-1 gap-5 lg:grid-cols-2">
+              <div className="h-[300px]">
+                <RoasComparisonChart paidMedia={analyticsData.paidMedia} model={model} />
+              </div>
+              <div className="h-[300px]">
                 <AttributionPieChart channels={channels} />
               </div>
             </section>
