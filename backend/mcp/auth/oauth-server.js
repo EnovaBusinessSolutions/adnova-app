@@ -273,16 +273,8 @@ router.get('/authorize', async (req, res) => {
 
     const userId = req.user?._id || req.session?.passport?.user;
     if (!userId) {
-      // Host-aware redirect. If the client (Claude.ai) reached us on
-      // mcp.adray.ai, the whole OAuth dance must stay on that host — the apex
-      // adray.ai is unreachable from Anthropic's infra because its A-record
-      // points to Render's legacy edge IP (216.24.57.1) instead of the
-      // anycast CDN subdomain. Using APP_URL here would bounce the user to
-      // adray.ai/login and the login POST would come back to a host Claude.ai
-      // can't complete the flow on.
-      const reqBase = `${req.protocol}://${req.get('host')}`;
-      const returnUrl = `${reqBase}/oauth/authorize?${new URLSearchParams(req.query).toString()}`;
-      return res.redirect(`${reqBase}/login?returnTo=${encodeURIComponent(returnUrl)}`);
+      const returnUrl = `${APP_URL}/oauth/authorize?${new URLSearchParams(req.query).toString()}`;
+      return res.redirect(`${APP_URL}/login?returnTo=${encodeURIComponent(returnUrl)}`);
     }
 
     const requestedScopes = scope
