@@ -268,6 +268,7 @@ async function mountCaptcha() {
     // demanda (ej. cuando el token expira o el backend rechaza).
   } catch (error) {
     console.error('[getstarted] captcha error:', error)
+    hideCaptcha()
     showMessage(
       'Security verification could not be loaded. ' +
         'If you use Brave, uBlock, or privacy extensions, ' +
