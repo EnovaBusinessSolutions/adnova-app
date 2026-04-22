@@ -138,7 +138,7 @@ export function renderGetStarted() {
             </div>
           </div>
 
-          <div id="turnstile-wrap"></div>
+          <div id="turnstile-wrap" style="display:none"></div>
 
           <p id="getstarted-message" class="login-message" aria-live="polite"></p>
 
