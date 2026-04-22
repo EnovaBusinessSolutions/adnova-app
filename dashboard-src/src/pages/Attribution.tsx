@@ -11,7 +11,6 @@ import { RoasComparisonChart } from '@/features/attribution/components/RoasCompa
 import { PaidMediaPanel } from '@/features/attribution/components/PaidMediaPanel';
 import { TopProductsPanel } from '@/features/attribution/components/TopProductsPanel';
 import { DataEnrichmentPanel } from '@/features/attribution/components/DataEnrichmentPanel';
-import { SessionDetailPanel } from '@/features/attribution/components/SessionDetailPanel';
 import { ExportModal } from '@/features/attribution/components/ExportModal';
 import { useShops } from '@/features/attribution/hooks/useShops';
 import { useShopPersistence } from '@/features/attribution/hooks/useShopPersistence';
@@ -53,7 +52,6 @@ export default function Attribution() {
     refetch,
   } = useAnalytics({ shopId: resolvedShop, model, range, start, end });
 
-  const [detailSessionId, setDetailSessionId] = useState<string | null>(null);
   const [exportOpen, setExportOpen] = useState(false);
 
   const handleRefresh = useCallback(() => { void refetch(); }, [refetch]);
@@ -146,11 +144,6 @@ export default function Attribution() {
       </div>
 
       {/* Overlays */}
-      <SessionDetailPanel
-        shopId={resolvedShop}
-        sessionId={detailSessionId}
-        onClose={() => setDetailSessionId(null)}
-      />
       <ExportModal
         open={exportOpen}
         onClose={() => setExportOpen(false)}

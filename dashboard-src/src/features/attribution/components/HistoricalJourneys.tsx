@@ -48,11 +48,14 @@ export function HistoricalJourneys({
 
     if (query.trim()) {
       const q = query.trim().toLowerCase();
-      list = list.filter(
-        (p) =>
-          p.orderId.toLowerCase().includes(q) ||
-          (p.orderNumber ?? '').toLowerCase().includes(q),
-      );
+      list = list.filter((p) => {
+        if (p.orderId.toLowerCase().includes(q)) return true;
+        if ((p.orderNumber ?? '').toLowerCase().includes(q)) return true;
+        if ((p.customerName ?? '').toLowerCase().includes(q)) return true;
+        const email = p.events.find((e) => e.customerEmail)?.customerEmail ?? '';
+        if (email.toLowerCase().includes(q)) return true;
+        return false;
+      });
     }
 
     return list;
@@ -67,7 +70,7 @@ export function HistoricalJourneys({
       <div className="relative mb-2">
         <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-white/30" />
         <Input
-          placeholder="Search order ID…"
+          placeholder="Search order, name or email…"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           className="h-8 border-white/[0.08] bg-white/[0.03] pl-7 text-xs text-white/70 placeholder:text-white/25"

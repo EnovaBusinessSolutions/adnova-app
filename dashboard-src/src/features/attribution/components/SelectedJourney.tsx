@@ -257,7 +257,7 @@ export function SelectedJourney({ purchase, onClose }: SelectedJourneyProps) {
             <Download size={10} />
             CSV
           </Button>
-          <Button
+<Button
             variant="ghost"
             size="sm"
             onClick={onClose}
