@@ -143,7 +143,7 @@ async function callLLM(prompt) {
         'Authorization': `Bearer ${OPENROUTER_API_KEY}`,
         'Content-Type': 'application/json',
         'HTTP-Referer': process.env.APP_URL || 'https://adray.ai',
-        'X-Title': 'Adray BRI — Session Analyst',
+        'X-Title': 'Adray BRI - Session Analyst',
       },
       body: JSON.stringify({
         model: OPENROUTER_MODEL,
