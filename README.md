@@ -37,7 +37,7 @@ Build and run a platform-agnostic attribution pipeline for Shopify, WooCommerce,
 - **Deployment**: Render (web service + MCP worker). Config in `render.yaml`.
 - **WooCommerce distribution**: WordPress plugin under `wordpress-plugin/adnova-pixel`
 - **Frontend apps**: multiple Vite + React + TypeScript + shadcn-ui + Tailwind projects (Git submodules)
-- **Public analytics page**: `backend/views/adray-analytics.html` — served at `/analytics/:account_id`
+- **Attribution dashboard**: `dashboard-src/src/features/attribution/` — native React panel at `/dashboard/attribution` (replaced the old `public/adray-analytics.html` iframe)
 - **Pixel runtime**: `public/adray-pixel.js` — loaded cross-origin by merchant sites
 
 ### Render deploy config (`render.yaml`)
