@@ -1,9 +1,12 @@
+import { useState } from 'react';
 import { Pause, Play, Radio, ChevronDown } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { cn } from '@/lib/utils';
 import { useLiveFeed } from '../hooks/useLiveFeed';
 import { LiveFeedItem } from './LiveFeedItem';
+
+const PAGE_SIZE = 20;
 
 interface LiveFeedProps {
   shopId: string;
@@ -12,9 +15,12 @@ interface LiveFeedProps {
 export function LiveFeed({ shopId }: LiveFeedProps) {
   const { events, paused, bufferedCount, connectionState, togglePause, loadMore } =
     useLiveFeed(shopId);
+  const [displayLimit, setDisplayLimit] = useState(PAGE_SIZE);
 
   const isConnected = connectionState === 'connected';
   const isConnecting = connectionState === 'connecting';
+  const displayed = events.slice(0, displayLimit);
+  const remaining = events.length - displayLimit;
 
   return (
     <div className="flex h-full flex-col rounded-2xl border border-white/[0.06] bg-white/[0.02]">
@@ -67,9 +73,21 @@ export function LiveFeed({ shopId }: LiveFeedProps) {
             </p>
           </div>
         ) : (
-          events.map((event, i) => (
-            <LiveFeedItem key={event.eventId ?? `${event.type}-${i}`} event={event} />
-          ))
+          <>
+            {displayed.map((event, i) => (
+              <LiveFeedItem key={event.eventId ?? `${event.type}-${i}`} event={event} />
+            ))}
+            {remaining > 0 && (
+              <div className="px-3 py-2">
+                <button
+                  onClick={() => setDisplayLimit((l) => l + PAGE_SIZE)}
+                  className="w-full rounded-lg border border-white/[0.06] bg-white/[0.02] py-1.5 text-[10px] text-white/40 transition-colors hover:bg-white/[0.05] hover:text-white/60"
+                >
+                  Show more ({remaining} more)
+                </button>
+              </div>
+            )}
+          </>
         )}
       </ScrollArea>
     </div>

@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { Search } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -23,6 +23,8 @@ function formatDate(iso: string): string {
   }
 }
 
+const PAGE_SIZE = 20;
+
 export function HistoricalJourneys({
   purchases,
   channelFilter,
@@ -30,6 +32,11 @@ export function HistoricalJourneys({
   onSelect,
 }: HistoricalJourneysProps) {
   const [query, setQuery] = useState('');
+  const [displayLimit, setDisplayLimit] = useState(PAGE_SIZE);
+
+  useEffect(() => {
+    setDisplayLimit(PAGE_SIZE);
+  }, [channelFilter, query]);
 
   const filtered = useMemo(() => {
     let list = purchases;
@@ -52,6 +59,9 @@ export function HistoricalJourneys({
     return list;
   }, [purchases, channelFilter, query]);
 
+  const visible = filtered.slice(0, displayLimit);
+  const remaining = filtered.length - displayLimit;
+
   return (
     <div className="flex h-full flex-col">
       {/* Search */}
@@ -70,7 +80,7 @@ export function HistoricalJourneys({
           <p className="py-8 text-center text-xs text-white/25">No journeys found</p>
         ) : (
           <div className="space-y-1">
-            {filtered.map((p) => (
+            {visible.map((p) => (
               <button
                 key={p.orderId}
                 onClick={() => onSelect(p)}
@@ -107,6 +117,14 @@ export function HistoricalJourneys({
                 </div>
               </button>
             ))}
+            {remaining > 0 && (
+              <button
+                onClick={() => setDisplayLimit((l) => l + PAGE_SIZE)}
+                className="w-full rounded-lg border border-white/[0.06] bg-white/[0.02] py-1.5 text-[10px] text-white/40 transition-colors hover:bg-white/[0.05] hover:text-white/60"
+              >
+                Show more ({remaining} more)
+              </button>
+            )}
           </div>
         )}
       </ScrollArea>
