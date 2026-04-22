@@ -223,6 +223,19 @@ function hasLandingAdrayBuild() {
 
 app.disable("x-powered-by");
 
+// HTTPS redirect — Render termina SSL en el edge y reenvía via x-forwarded-proto.
+// Excluye /connector/* (embedded Shopify, el iframe ya va sobre HTTPS del admin).
+app.use((req, res, next) => {
+  if (
+    process.env.NODE_ENV === 'production' &&
+    req.headers['x-forwarded-proto'] !== 'https' &&
+    !req.path.startsWith('/connector')
+  ) {
+    return res.redirect(301, 'https://' + req.headers.host + req.originalUrl);
+  }
+  next();
+});
+
 // Fix CSP: Disable strict CSP for demo assets (Tailwind, ChartJS, FontAwesome)
 app.use((req, res, next) => {
   if (req.path === '/adray-analytics.html' || req.path.startsWith('/api/analytics') || req.path.startsWith('/api/feed')) {

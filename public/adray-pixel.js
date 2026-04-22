@@ -1611,6 +1611,25 @@
   var _ADRAY_REC_BASE = ADRAY_ENDPOINT.replace('/collect', '');
   var _ADRAY_RRWEB_CDN = _ADRAY_REC_BASE + '/static/dom-observer.min.js';
 
+  // Shopify prohibits DOM recording on checkout/payment pages without
+  // read_advanced_dom_pixel_events scope. Block rrweb entirely on those pages.
+  function _adrayIsBlockedPage() {
+    try {
+      var host = window.location.hostname;
+      var path = window.location.pathname;
+      if (/checkout\.shopify\.com$/i.test(host)) return true;
+      if (/shop\.app$/i.test(host)) return true;
+      if (/^\/checkouts?\//i.test(path)) return true;
+      if (/\/thank_you/i.test(path)) return true;
+      if (/\/orders\//i.test(path)) return true;
+      if (/^\/checkout(\/|$)/i.test(path)) return true;
+      if (/\/order-received\//i.test(path)) return true;
+      if (/\/order-pay\//i.test(path)) return true;
+      if (/^\/account\/(login|register|password)/i.test(path)) return true;
+      return false;
+    } catch(_) { return false; }
+  }
+
   // ── Session persistence: resume recording across SPA/checkout navigations ──
   var _SS_REC_KEY  = 'adray_rec_id';
   var _SS_CIDX_KEY = 'adray_rec_cidx';
@@ -1861,7 +1880,9 @@
     try {
       if (eventName === 'add_to_cart' || eventName === 'begin_checkout') {
         console.log('[ADRAY-REC] ' + eventName + ' detected → loading rrweb');
-        _adrayLoadRrweb(function() { _adrayStartRecording(eventData || {}); });
+        if (!_adrayIsBlockedPage()) {
+          _adrayLoadRrweb(function() { _adrayStartRecording(eventData || {}); });
+        }
       }
       if (eventName === 'purchase') {
         console.log('[ADRAY-REC] purchase detected → stopping recording');
@@ -1876,8 +1897,14 @@
   // Auto-resume: if this page load has a persisted recording in sessionStorage,
   // the user navigated mid-flow (cart → checkout). Resume without waiting for a
   // new add_to_cart — otherwise the checkout pages aren't captured.
+  // Skip checkout/payment pages: DOM recording is not allowed there without
+  // the read_advanced_dom_pixel_events scope.
   (function _adrayAutoResume() {
     try {
+      if (_adrayIsBlockedPage()) {
+        console.log('[ADRAY-REC] blocked page → skipping auto-resume', window.location.pathname);
+        return;
+      }
       var persisted = sessionStorage.getItem(_SS_REC_KEY);
       if (persisted) {
         console.log('[ADRAY-REC] persisted recording detected → auto-resuming', persisted);

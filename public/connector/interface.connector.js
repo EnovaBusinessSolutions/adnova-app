@@ -3,9 +3,14 @@
 
 /**
  * ADRAY Shopify Connector (Embedded)
- * - Si el backend ya marcó CONNECTED=true (meta tag), habilita CTA inmediatamente.
- * - Fallback: verifica via GET /connector/ping?shop= (no requiere JWT).
- * - Usa App Bridge Redirect para navegación embedded dentro de Shopify admin.
+ *
+ * App Bridge v4 (CDN-only):
+ * - El <script src="https://cdn.shopify.com/shopifycloud/app-bridge.js" data-api-key="...">
+ *   expone un global `shopify` ya inicializado.
+ * - Token de sesión: `await shopify.idToken()`
+ * - Navegación fuera del iframe: `window.open(url, '_top')` (App Bridge lo intercepta).
+ *
+ * Shopify PROHÍBE bundlear o self-hostear App Bridge (revisión automática cada 2h).
  */
 
 (function () {
@@ -43,38 +48,16 @@
     return new Promise(function (r) { setTimeout(r, ms); });
   }
 
-  function getCreateAppFn() {
-    var ab = window["app-bridge"] || window.appBridge || window.AppBridge || null;
-    if (!ab) return null;
-    var fn = ab.default || ab.createApp || null;
-    return typeof fn === "function" ? fn : null;
-  }
-
-  function getGetSessionTokenFn() {
-    var u = window["app-bridge-utils"] || window.appBridgeUtils || window.AppBridgeUtils || null;
-    if (!u) return null;
-    var fn = u.getSessionToken || null;
-    return typeof fn === "function" ? fn : null;
-  }
-
-  function getRedirectFn() {
-    var ab = window["app-bridge"] || window.appBridge || window.AppBridge || null;
-    if (!ab) return null;
-    // App Bridge v2 exposes actions.Redirect
-    var actions = ab.actions || (ab.default && ab.default.actions) || null;
-    if (actions && actions.Redirect) return actions.Redirect;
-    return null;
-  }
-
-  async function waitForUmdGlobals(timeoutMs) {
+  // Espera a que el global `shopify` (App Bridge v4) esté disponible.
+  async function waitForShopifyGlobal(timeoutMs) {
     var start = Date.now();
     while (Date.now() - start < timeoutMs) {
-      var createApp = getCreateAppFn();
-      var getSessionToken = getGetSessionTokenFn();
-      if (createApp && getSessionToken) return { createApp: createApp, getSessionToken: getSessionToken };
+      if (window.shopify && typeof window.shopify.idToken === "function") {
+        return window.shopify;
+      }
       await sleep(60);
     }
-    return { createApp: null, getSessionToken: null };
+    return null;
   }
 
   function saveSession(opts) {
@@ -94,17 +77,13 @@
     if (kvHost) kvHost.textContent = host || "—";
   }
 
-  // ✅ Navegar usando App Bridge Redirect (embedded) o window.top como fallback
-  function navigateTo(app, url) {
+  // Navega fuera del iframe. Con App Bridge v4 cargado, `window.open(url, '_top')`
+  // es el patrón oficial para redirects remotos (App Bridge lo intercepta).
+  function navigateTo(url) {
     try {
-      var Redirect = getRedirectFn();
-      if (app && Redirect) {
-        var redirect = Redirect.create(app);
-        redirect.dispatch(Redirect.Action.REMOTE, url);
-        return;
-      }
-    } catch (e) { /* fall through */ }
-    // Fallback: salir del iframe hacia el destino
+      window.open(url, "_top");
+      return;
+    } catch (e) { /* fallback */ }
     try {
       if (window.top && window.top !== window.self) {
         window.top.location.href = url;
@@ -116,7 +95,7 @@
     }
   }
 
-  function enableCTA(shop, host, appUrl, app) {
+  function enableCTA(shop, host, appUrl) {
     setStatus("Listo ✅");
     hideError();
     if (btnGo) {
@@ -127,7 +106,7 @@
           base + "/onboarding?from=shopify" +
           "&shop=" + encodeURIComponent(shop) +
           "&host=" + encodeURIComponent(host);
-        navigateTo(app, url);
+        navigateTo(url);
       };
     }
   }
@@ -141,6 +120,16 @@
     return r;
   }
 
+  // Pide session token (JWT) via App Bridge v4. No bloquea la UI si falla.
+  async function fetchSessionToken(shop, host) {
+    try {
+      var sh = await waitForShopifyGlobal(4000);
+      if (!sh) return;
+      var tok = await sh.idToken();
+      if (tok) saveSession({ token: tok, shop: shop, host: host });
+    } catch (e) { /* silencioso */ }
+  }
+
   async function boot() {
     hideError();
     setStatus("Preparando…");
@@ -148,7 +137,6 @@
     var cfg     = window.__ADRAY_CONNECTOR__ || {};
     var shop    = String(cfg.shop   || "").trim();
     var host    = String(cfg.host   || "").trim();
-    var apiKey  = String(cfg.apiKey || getMeta("shopify-api-key") || "").trim();
     var appUrl  = String(cfg.appUrl || getMeta("app-url") || "").trim();
     var alreadyConnected = getMeta("shopify-connected") === "true";
 
@@ -162,23 +150,9 @@
 
     // ✅ Ruta rápida: backend ya confirmó conexión al servir el HTML
     if (alreadyConnected) {
-      // Habilitar CTA INMEDIATAMENTE, sin esperar App Bridge
-      enableCTA(shop, host, appUrl, null);
-      // Inicializar App Bridge en background para mejorar navegación (no bloquea)
-      (async function () {
-        try {
-          var globs = await waitForUmdGlobals(4000);
-          if (globs.createApp && apiKey && host) {
-            var appInst = globs.createApp({ apiKey: apiKey, host: host, forceRedirect: false });
-            if (globs.getSessionToken) {
-              var tok = await globs.getSessionToken(appInst);
-              if (tok) saveSession({ token: tok, shop: shop, host: host });
-            }
-            // Actualizar el onclick con instancia real de App Bridge
-            enableCTA(shop, host, appUrl, appInst);
-          }
-        } catch (e) { /* silent */ }
-      })();
+      enableCTA(shop, host, appUrl);
+      // Obtener session token en background (no bloquea el CTA)
+      fetchSessionToken(shop, host);
       return;
     }
 
@@ -188,18 +162,8 @@
       var pingRes = await pingConnector(shop);
       if (pingRes.ok) {
         saveSession({ shop: shop, host: host });
-        var appInst2 = null;
-        try {
-          var globs2 = await waitForUmdGlobals(4000);
-          if (globs2.createApp && apiKey && host) {
-            appInst2 = globs2.createApp({ apiKey: apiKey, host: host, forceRedirect: false });
-            if (globs2.getSessionToken) {
-              var tok2 = await globs2.getSessionToken(appInst2);
-              if (tok2) saveSession({ token: tok2, shop: shop, host: host });
-            }
-          }
-        } catch (e) { /* silent */ }
-        enableCTA(shop, host, appUrl, appInst2);
+        enableCTA(shop, host, appUrl);
+        fetchSessionToken(shop, host);
         return;
       }
     } catch (e) { /* si el ping falla de red, continuamos */ }
