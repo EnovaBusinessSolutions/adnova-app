@@ -41,7 +41,7 @@ export function AttributionHeader({
   isRefreshing,
 }: AttributionHeaderProps) {
   return (
-    <div className="sticky top-0 z-50 border-b border-white/[0.06] bg-[#050508]/90 backdrop-blur-md">
+    <div className="sticky top-0 z-[30] border-b border-white/[0.06] bg-[#050508]/90 backdrop-blur-md">
       <div className="flex flex-wrap items-center gap-2 px-4 py-2.5 sm:px-6">
         {/* Badge */}
         <div className="inline-flex items-center gap-1.5 rounded-full border border-[#B55CFF]/30 bg-[#B55CFF]/10 px-2.5 py-1 text-[10px] font-semibold tracking-wider text-[#D8B8FF]">

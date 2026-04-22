@@ -5,9 +5,7 @@ import { AttributionHeader } from '@/features/attribution/components/Attribution
 import { KpiGrid } from '@/features/attribution/components/KpiGrid';
 import { LiveFeed } from '@/features/attribution/components/LiveFeed';
 import { ConversionPaths } from '@/features/attribution/components/ConversionPaths';
-import { AttributionChart } from '@/features/attribution/components/AttributionChart';
 import { AttributionPieChart } from '@/features/attribution/components/AttributionPieChart';
-import { TrendChart } from '@/features/attribution/components/TrendChart';
 import { useShops } from '@/features/attribution/hooks/useShops';
 import { useShopPersistence } from '@/features/attribution/hooks/useShopPersistence';
 import { useAttributionFilters } from '@/features/attribution/hooks/useAttributionFilters';
@@ -38,13 +36,12 @@ export default function Attribution() {
     return <Navigate to="/?openPixelWizard=1" replace />;
   }
 
-  const daily = analyticsData?.daily ?? [];
   const channels = analyticsData?.channels;
   const purchases = analyticsData?.recentPurchases ?? [];
 
   return (
     <DashboardLayout>
-      <div className="flex min-h-screen flex-col bg-[#050508]">
+      <div className="flex flex-col bg-[#050508]">
         <AttributionHeader
           shops={shopsData?.shops ?? []}
           shopsLoading={shopsLoading}
@@ -75,31 +72,24 @@ export default function Attribution() {
             <KpiGrid data={analyticsData} loading={analyticsLoading} />
           </section>
 
-          {/* Live Feed + Conversion Paths */}
+          {/* Live Feed (1/3) + Conversion Paths (2/3) */}
           {resolvedShop && (
-            <section className="grid grid-cols-1 gap-5 lg:grid-cols-2" style={{ height: 420 }}>
-              <LiveFeed shopId={resolvedShop} />
-              <ConversionPaths purchases={purchases} />
+            <section className="grid grid-cols-1 gap-5 lg:grid-cols-3" style={{ height: 440 }}>
+              <div className="lg:col-span-1">
+                <LiveFeed shopId={resolvedShop} />
+              </div>
+              <div className="lg:col-span-2">
+                <ConversionPaths purchases={purchases} />
+              </div>
             </section>
           )}
 
-          {/* Charts */}
-          {!analyticsLoading && daily.length > 0 && (
+          {/* Revenue by Channel pie */}
+          {!analyticsLoading && channels && (
             <section className="grid grid-cols-1 gap-5 lg:grid-cols-3">
-              <div className="lg:col-span-2" style={{ height: 268 }}>
-                <AttributionChart daily={daily} />
+              <div style={{ height: 280 }}>
+                <AttributionPieChart channels={channels} />
               </div>
-              <div style={{ height: 268 }}>
-                {channels ? (
-                  <AttributionPieChart channels={channels} />
-                ) : null}
-              </div>
-            </section>
-          )}
-
-          {!analyticsLoading && daily.length > 0 && (
-            <section style={{ height: 268 }}>
-              <TrendChart daily={daily} />
             </section>
           )}
         </div>
