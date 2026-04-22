@@ -976,6 +976,19 @@ if (oauthRouter.dynamicClientRegistrationHandler) {
   app.post('/register', express.json(), oauthRouter.dynamicClientRegistrationHandler);
 }
 
+// Claude.ai (and some other MCP clients) hit /authorize and /token at the root
+// instead of the /oauth/* paths advertised in the metadata. Redirect transparently
+// so they work without requiring a change on the client side.
+app.get('/authorize', (req, res) => {
+  const qs = new URLSearchParams(req.query).toString();
+  res.redirect(302, `/oauth/authorize${qs ? '?' + qs : ''}`);
+});
+// 307 preserves method + body so the client re-POSTs to /oauth/token.
+app.post('/token', (req, res) => {
+  const qs = new URLSearchParams(req.query).toString();
+  res.redirect(307, `/oauth/token${qs ? '?' + qs : ''}`);
+});
+
 // OAuth 2.0 Authorization Server Metadata (RFC 8414)
 // Required by the MCP spec for remote servers so clients (Claude, ChatGPT, etc.)
 // can auto-discover the authorization and token endpoints.
