@@ -27,7 +27,7 @@ import GeminiMcp from "./pages/GeminiMcp";
 
 // ✅ NUEVO: Panel interno (equipo)
 import InternalAdmin from "./pages/InternalAdmin";
-import AttributionEmbed from "./pages/AttributionEmbed";
+import Attribution from "./pages/Attribution";
 
 const queryClient = new QueryClient();
 
@@ -332,7 +332,7 @@ function AppRoutes() {
       <Route path="meta-ads" element={<MetaAds />} />
       <Route path="creative-intelligence" element={<CreativeIntelligence />} />
       <Route path="generate-audit" element={<GenerateAudit />} />
-      <Route path="attribution" element={<AttributionEmbed />} />
+      <Route path="attribution" element={<Attribution />} />
       <Route path="settings" element={<Settings />} />
       <Route path="studio" element={<Studio />} />
 
