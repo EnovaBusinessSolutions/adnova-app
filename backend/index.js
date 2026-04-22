@@ -224,12 +224,23 @@ function hasLandingAdrayBuild() {
 app.disable("x-powered-by");
 
 // HTTPS redirect — Render termina SSL en el edge y reenvía via x-forwarded-proto.
-// Excluye /connector/* (embedded Shopify, el iframe ya va sobre HTTPS del admin).
+// Excluye:
+//   - /connector/*                  (embedded Shopify iframe ya va sobre HTTPS del admin)
+//   - /.well-known/*, /mcp*, /oauth/*, /register, /authorize, /token
+//     Rutas del flujo OAuth/MCP. Un 301 en respuesta a un POST (ej. DCR
+//     /register o /oauth/token) hace que el cliente descarte el body y
+//     reintente como GET, rompiendo el handshake en silencio.
 app.use((req, res, next) => {
   if (
     process.env.NODE_ENV === 'production' &&
     req.headers['x-forwarded-proto'] !== 'https' &&
-    !req.path.startsWith('/connector')
+    !req.path.startsWith('/connector') &&
+    !req.path.startsWith('/.well-known/') &&
+    !req.path.startsWith('/mcp') &&
+    !req.path.startsWith('/oauth/') &&
+    req.path !== '/register' &&
+    req.path !== '/authorize' &&
+    req.path !== '/token'
   ) {
     return res.redirect(301, 'https://' + req.headers.host + req.originalUrl);
   }
@@ -976,11 +987,29 @@ if (oauthRouter.dynamicClientRegistrationHandler) {
   app.post('/register', express.json(), oauthRouter.dynamicClientRegistrationHandler);
 }
 
+// Claude.ai (and some other MCP clients) hit /authorize and /token at the root
+// instead of the /oauth/* paths advertised in the metadata. Redirect transparently
+// so they work without requiring a change on the client side.
+app.get('/authorize', (req, res) => {
+  const qs = new URLSearchParams(req.query).toString();
+  res.redirect(302, `/oauth/authorize${qs ? '?' + qs : ''}`);
+});
+// 307 preserves method + body so the client re-POSTs to /oauth/token.
+app.post('/token', (req, res) => {
+  const qs = new URLSearchParams(req.query).toString();
+  res.redirect(307, `/oauth/token${qs ? '?' + qs : ''}`);
+});
+
 // OAuth 2.0 Authorization Server Metadata (RFC 8414)
 // Required by the MCP spec for remote servers so clients (Claude, ChatGPT, etc.)
 // can auto-discover the authorization and token endpoints.
 app.get('/.well-known/oauth-authorization-server', (req, res) => {
-  const base = (process.env.APP_URL || 'https://adray.ai').replace(/\/$/, '');
+  // Host-aware base. We previously used APP_URL, but that forced every client to
+  // follow endpoints on a single host. Claude.ai's infra cannot reach the legacy
+  // apex A-record for adray.ai (216.24.57.1); it only reaches Render's
+  // CF-anycast subdomains. By reflecting the Host the client actually hit, the
+  // full OAuth flow stays on that same (reachable) host.
+  const base = `${req.protocol}://${req.get('host')}`;
   res.json({
     issuer: base,
     authorization_endpoint: `${base}/oauth/authorize`,
@@ -999,7 +1028,9 @@ app.get('/.well-known/oauth-authorization-server', (req, res) => {
 // Required by the MCP spec (2025-06-18+) for Claude.ai and other remote MCP
 // clients to discover which authorization server protects this MCP endpoint.
 app.get('/.well-known/oauth-protected-resource', (req, res) => {
-  const base = (process.env.APP_URL || 'https://adray.ai').replace(/\/$/, '');
+  // Host-aware: mirror the host the client actually reached. See the note on
+  // /.well-known/oauth-authorization-server above for why.
+  const base = `${req.protocol}://${req.get('host')}`;
   res.json({
     resource: `${base}/mcp`,
     authorization_servers: [base],
