@@ -1,9 +1,21 @@
 // dashboard-src/src/components/Sidebar.tsx
-import React, { useEffect, useMemo, useState } from "react";
-import { Settings, ChevronLeft, ChevronRight, LogOut, Compass, ChartColumn } from "lucide-react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  ArrowRight,
+  ChartColumn,
+  ChevronLeft,
+  ChevronRight,
+  Compass,
+  Lock,
+  LogOut,
+  Settings,
+} from "lucide-react";
 import { Link, useLocation } from "react-router-dom";
 
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card";
+import { Button } from "@/components/ui/button";
+import { PixelSetupWizard } from "@/components/PixelSetupWizard";
 import adrayLogo from "@/assets/adray-logo.png";
 
 export interface SidebarProps {
@@ -163,18 +175,36 @@ function StartBadge({ isOpen }: { isOpen: boolean }) {
   );
 }
 
+function LockBadge({ isOpen }: { isOpen: boolean }) {
+  if (isOpen) {
+    return (
+      <span className="ml-auto inline-flex h-6 w-6 items-center justify-center rounded-full border border-white/12 bg-white/[0.04]">
+        <Lock className="h-3 w-3 text-white/55" />
+      </span>
+    );
+  }
+
+  return (
+    <span className="pointer-events-none absolute -bottom-0.5 -right-0.5 inline-flex h-3.5 w-3.5 items-center justify-center rounded-full border border-[#0B0B0D] bg-white/14">
+      <Lock className="h-2 w-2 text-white/70" />
+    </span>
+  );
+}
+
 function RowShell({
   isOpen,
   active,
   children,
   onClick,
   emphasize,
+  locked = false,
 }: {
   isOpen: boolean;
   active: boolean;
   children: React.ReactNode;
   onClick?: () => void;
   emphasize?: boolean;
+  locked?: boolean;
 }) {
   return (
     <div
@@ -210,6 +240,7 @@ function RowShell({
                 "hover:bg-white/[0.045]",
                 "focus-visible:ring-2 focus-visible:ring-[#B55CFF]/35",
               ].join(" "),
+        locked ? "cursor-not-allowed opacity-55 hover:!border-transparent hover:!bg-white/[0.02] hover:!shadow-none" : "",
         !isOpen ? "justify-center" : "",
       ].join(" ")}
       aria-current={active ? "page" : undefined}
@@ -234,11 +265,15 @@ function NavRow({
   isOpen,
   active,
   onLogout,
+  locked = false,
+  lockedContent,
 }: {
   item: NavItem;
   isOpen: boolean;
   active: boolean;
   onLogout?: () => void;
+  locked?: boolean;
+  lockedContent?: React.ReactNode;
 }) {
   const isStart = item.path === START_PATH;
   const isSpecial = isStart;
@@ -265,11 +300,52 @@ function NavRow({
     <>
       <span className={iconWrapClass}>{item.icon}</span>
       {isOpen ? <span className={labelClass}>{item.label}</span> : null}
-      {isStart ? <StartBadge isOpen={isOpen} /> : item.badge ? item.badge({ isOpen }) : null}
+      {locked
+        ? <LockBadge isOpen={isOpen} />
+        : isStart
+          ? <StartBadge isOpen={isOpen} />
+          : item.badge
+            ? item.badge({ isOpen })
+            : null}
     </>
   );
 
   const emphasizeRow = isStart && !active;
+
+  if (locked) {
+    const row = (
+      <RowShell isOpen={isOpen} active={false} locked>
+        {content}
+      </RowShell>
+    );
+
+    return (
+      <HoverCard openDelay={150} closeDelay={120}>
+        <HoverCardTrigger asChild>
+          <div
+            role="button"
+            aria-disabled="true"
+            tabIndex={0}
+            className="block cursor-not-allowed rounded-2xl outline-none focus-visible:ring-2 focus-visible:ring-[#B55CFF]/40"
+            onClick={(e) => e.preventDefault()}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") e.preventDefault();
+            }}
+          >
+            {row}
+          </div>
+        </HoverCardTrigger>
+        <HoverCardContent
+          side="right"
+          align="start"
+          sideOffset={14}
+          className="w-80 border border-white/10 bg-[#0B0B0D] p-0 text-white shadow-[0_0_28px_rgba(181,92,255,0.22)]"
+        >
+          {lockedContent}
+        </HoverCardContent>
+      </HoverCard>
+    );
+  }
 
   if (item.path === LOGOUT_PATH) {
     const row = (
@@ -353,6 +429,53 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onToggle }) => {
   const location = useLocation();
   const [displayName, setDisplayName] = useState<string | null>(null);
 
+  // Pixel connection state — mirrors the pattern used in Index.tsx.
+  // Initial value is optimistic from localStorage (instant) and then confirmed
+  // by the authoritative API call to /api/onboarding/status.
+  const [pixelConnected, setPixelConnected] = useState<boolean>(() => {
+    if (typeof window === "undefined") return false;
+    return !!localStorage.getItem("adray_analytics_shop");
+  });
+  const [pixelShop, setPixelShop] = useState<string | null>(() => {
+    if (typeof window === "undefined") return null;
+    return localStorage.getItem("adray_analytics_shop");
+  });
+  const [pixelWizardOpen, setPixelWizardOpen] = useState(false);
+  const pixelFetchInFlight = useRef(false);
+
+  const refreshPixelStatus = useCallback(async () => {
+    if (pixelFetchInFlight.current) return;
+    pixelFetchInFlight.current = true;
+    try {
+      const res = await fetch("/api/onboarding/status", {
+        credentials: "include",
+        cache: "no-store",
+      });
+      if (!res.ok) throw new Error(`status ${res.status}`);
+      const json = await res.json();
+      const connected = !!json?.status?.pixel?.connected;
+      const shop: string | null = json?.status?.pixel?.shop ?? null;
+      setPixelConnected(connected);
+      setPixelShop(shop);
+      if (typeof window !== "undefined") {
+        if (connected && shop) {
+          try { localStorage.setItem("adray_analytics_shop", shop); } catch {}
+        }
+      }
+    } catch {
+      // Leave the optimistic localStorage-derived state as-is on failure.
+    } finally {
+      pixelFetchInFlight.current = false;
+    }
+  }, []);
+
+  useEffect(() => {
+    refreshPixelStatus();
+    const onFocus = () => { refreshPixelStatus(); };
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, [refreshPixelStatus]);
+
   useEffect(() => {
   let cancelled = false;
 
@@ -411,6 +534,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onToggle }) => {
   };
 
   return (
+    <>
     <aside
       className={[
         "adray-sidebar-glass fixed left-0 top-0 z-50 h-full",
@@ -468,7 +592,35 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onToggle }) => {
           <div className="mb-3 h-px w-full bg-gradient-to-r from-transparent via-white/8 to-transparent" />
           <div className="space-y-1">
             {ATTRIBUTION.map((item) => (
-              <NavRow key={item.path} item={item} isOpen={isOpen} active={isActivePath(pathname, item.path)} />
+              <NavRow
+                key={item.path}
+                item={item}
+                isOpen={isOpen}
+                active={isActivePath(pathname, item.path)}
+                locked={!pixelConnected}
+                lockedContent={
+                  <div className="flex flex-col gap-3 p-4">
+                    <div className="flex items-center gap-2">
+                      <span className="inline-flex h-6 w-6 items-center justify-center rounded-full border border-[#B55CFF]/30 bg-[#B55CFF]/12">
+                        <Lock className="h-3 w-3 text-[#D8B8FF]" />
+                      </span>
+                      <p className="text-[10px] uppercase tracking-[0.22em] text-[#E6D2FF]/70">
+                        Pixel required
+                      </p>
+                    </div>
+                    <p className="text-sm leading-6 text-white/85">
+                      Please connect the Adray Core pixel to activate this dashboard.
+                    </p>
+                    <Button
+                      onClick={() => setPixelWizardOpen(true)}
+                      className="h-10 w-full rounded-xl bg-[#B55CFF] text-sm font-semibold text-white shadow-[0_0_22px_rgba(181,92,255,0.28)] transition-all hover:bg-[#A664FF] hover:shadow-[0_0_28px_rgba(181,92,255,0.36)]"
+                    >
+                      Connect
+                      <ArrowRight className="ml-2 h-4 w-4" />
+                    </Button>
+                  </div>
+                }
+              />
             ))}
           </div>
         </div>
@@ -507,6 +659,18 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onToggle }) => {
         </div>
       </div>
     </aside>
+
+    <PixelSetupWizard
+      open={pixelWizardOpen}
+      onOpenChange={(next) => {
+        setPixelWizardOpen(next);
+        if (!next) {
+          window.setTimeout(() => { refreshPixelStatus(); }, 250);
+        }
+      }}
+      currentShop={pixelShop || undefined}
+    />
+    </>
   );
 };
 
