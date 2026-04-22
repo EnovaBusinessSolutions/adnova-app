@@ -993,7 +993,12 @@ if (oauthRouter.dynamicClientRegistrationHandler) {
 // Required by the MCP spec for remote servers so clients (Claude, ChatGPT, etc.)
 // can auto-discover the authorization and token endpoints.
 app.get('/.well-known/oauth-authorization-server', (req, res) => {
-  const base = (process.env.APP_URL || 'https://adray.ai').replace(/\/$/, '');
+  // Host-aware base. We previously used APP_URL, but that forced every client to
+  // follow endpoints on a single host. Claude.ai's infra cannot reach the legacy
+  // apex A-record for adray.ai (216.24.57.1); it only reaches Render's
+  // CF-anycast subdomains. By reflecting the Host the client actually hit, the
+  // full OAuth flow stays on that same (reachable) host.
+  const base = `${req.protocol}://${req.get('host')}`;
   res.json({
     issuer: base,
     authorization_endpoint: `${base}/oauth/authorize`,
@@ -1012,7 +1017,9 @@ app.get('/.well-known/oauth-authorization-server', (req, res) => {
 // Required by the MCP spec (2025-06-18+) for Claude.ai and other remote MCP
 // clients to discover which authorization server protects this MCP endpoint.
 app.get('/.well-known/oauth-protected-resource', (req, res) => {
-  const base = (process.env.APP_URL || 'https://adray.ai').replace(/\/$/, '');
+  // Host-aware: mirror the host the client actually reached. See the note on
+  // /.well-known/oauth-authorization-server above for why.
+  const base = `${req.protocol}://${req.get('host')}`;
   res.json({
     resource: `${base}/mcp`,
     authorization_servers: [base],
