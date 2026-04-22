@@ -104,6 +104,18 @@ export function HistoricalJourneys({
                     {formatCurrency(p.revenue, p.currency)}
                   </span>
                 </div>
+                {/* Customer name + email */}
+                {(() => {
+                  const name  = p.customerName ?? null;
+                  const email = p.events.find((e) => e.customerEmail)?.customerEmail ?? null;
+                  return (name || email) ? (
+                    <div className="mt-0.5 truncate text-[10px] text-white/35">
+                      {name && <span>{name}</span>}
+                      {name && email && <span className="mx-1 text-white/20">·</span>}
+                      {email && <span>{email}</span>}
+                    </div>
+                  ) : null;
+                })()}
                 <div className="mt-1 flex items-center justify-between gap-2">
                   <Badge
                     variant="outline"

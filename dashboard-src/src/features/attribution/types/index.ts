@@ -159,6 +159,7 @@ export interface RecentPurchase {
   rrwebRecordingId: string | null;
   behavioralSignals: unknown;
   recordingStatus: string | null;
+  customerName: string | null;
   items: LineItem[];
   events: JourneyEvent[];
 }

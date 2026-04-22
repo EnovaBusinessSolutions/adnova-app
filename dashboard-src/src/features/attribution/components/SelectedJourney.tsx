@@ -66,7 +66,15 @@ function downloadCsv(purchase: RecentPurchase) {
 // ─── Journey summary strip ────────────────────────────────────
 const KEY_EVENTS = ['page_view', 'view_item', 'add_to_cart', 'begin_checkout', 'purchase'];
 
-function JourneySummary({ events }: { events: JourneyEvent[] }) {
+function JourneySummary({
+  events,
+  activeFilter,
+  onFilter,
+}: {
+  events: JourneyEvent[];
+  activeFilter: string | null;
+  onFilter: (key: string | null) => void;
+}) {
   const present = KEY_EVENTS.filter((key) =>
     events.some((e) => e.eventName.toLowerCase() === key),
   );
@@ -75,21 +83,36 @@ function JourneySummary({ events }: { events: JourneyEvent[] }) {
     <div className="flex items-center gap-1.5 overflow-x-auto border-b border-white/[0.04] px-4 py-2.5 [&::-webkit-scrollbar]:hidden">
       {present.map((key, i) => {
         const cfg = getEventConfig(key);
+        const isActive = activeFilter === key;
         return (
           <div key={key} className="flex shrink-0 items-center gap-1.5">
-            <div
-              className="flex items-center gap-1 rounded-full px-2 py-0.5"
-              style={{ background: cfg.bg, color: cfg.color }}
+            <button
+              onClick={() => onFilter(isActive ? null : key)}
+              className="flex items-center gap-1 rounded-full px-2 py-0.5 transition-all"
+              style={{
+                background: isActive ? cfg.color + '30' : cfg.bg,
+                color: cfg.color,
+                outline: isActive ? `1px solid ${cfg.color}60` : 'none',
+              }}
+              title={`Filter by ${cfg.label}`}
             >
               {cfg.icon}
               <span className="text-[9px] font-semibold uppercase tracking-wide">{cfg.label}</span>
-            </div>
+            </button>
             {i < present.length - 1 && (
               <span className="text-[10px] text-white/20">→</span>
             )}
           </div>
         );
       })}
+      {activeFilter && (
+        <button
+          onClick={() => onFilter(null)}
+          className="ml-1 shrink-0 text-[9px] text-white/30 underline hover:text-white/60"
+        >
+          clear
+        </button>
+      )}
     </div>
   );
 }
@@ -179,7 +202,12 @@ function EventRow({
 // ─── Main component ───────────────────────────────────────────
 export function SelectedJourney({ purchase, onClose }: SelectedJourneyProps) {
   const [condensed, setCondensed] = useState(false);
+  const [eventFilter, setEventFilter] = useState<string | null>(null);
   const handleDownload = useCallback(() => downloadCsv(purchase), [purchase]);
+
+  const visibleEvents = eventFilter
+    ? purchase.events.filter((e) => e.eventName.toLowerCase() === eventFilter)
+    : purchase.events;
 
   const chColor = channelColor(purchase.attributedChannel);
 
@@ -241,20 +269,24 @@ export function SelectedJourney({ purchase, onClose }: SelectedJourneyProps) {
       </div>
 
       {/* Journey summary */}
-      <JourneySummary events={purchase.events} />
+      <JourneySummary
+        events={purchase.events}
+        activeFilter={eventFilter}
+        onFilter={setEventFilter}
+      />
 
       {/* Timeline */}
       <div className="min-h-0 flex-1 overflow-y-auto [&::-webkit-scrollbar]:w-[3px] [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-white/20 [&::-webkit-scrollbar-track]:bg-transparent">
-        {purchase.events.length === 0 ? (
-          <p className="py-8 text-center text-xs text-white/25">No events recorded</p>
+        {visibleEvents.length === 0 ? (
+          <p className="py-8 text-center text-xs text-white/25">No events of this type</p>
         ) : (
           <div className="py-2">
-            {purchase.events.map((event, i) => (
+            {visibleEvents.map((event, i) => (
               <EventRow
                 key={event.eventId ?? `ev-${i}`}
                 event={event}
                 condensed={condensed}
-                isLast={i === purchase.events.length - 1}
+                isLast={i === visibleEvents.length - 1}
               />
             ))}
           </div>
