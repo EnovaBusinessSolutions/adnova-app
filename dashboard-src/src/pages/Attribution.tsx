@@ -1,6 +1,7 @@
 import { useCallback, useState } from 'react';
 import { Navigate } from 'react-router-dom';
 import { DashboardLayout } from '@/components/DashboardLayout';
+import { Skeleton } from '@/components/ui/skeleton';
 import { AttributionHeader } from '@/features/attribution/components/AttributionHeader';
 import { KpiGrid } from '@/features/attribution/components/KpiGrid';
 import { LiveFeed } from '@/features/attribution/components/LiveFeed';
@@ -9,10 +10,28 @@ import { AttributionPieChart } from '@/features/attribution/components/Attributi
 import { PaidMediaPanel } from '@/features/attribution/components/PaidMediaPanel';
 import { TopProductsPanel } from '@/features/attribution/components/TopProductsPanel';
 import { SessionDetailPanel } from '@/features/attribution/components/SessionDetailPanel';
+import { ExportModal } from '@/features/attribution/components/ExportModal';
 import { useShops } from '@/features/attribution/hooks/useShops';
 import { useShopPersistence } from '@/features/attribution/hooks/useShopPersistence';
 import { useAttributionFilters } from '@/features/attribution/hooks/useAttributionFilters';
 import { useAnalytics } from '@/features/attribution/hooks/useAnalytics';
+
+function SupportGridSkeleton() {
+  return (
+    <section className="grid grid-cols-1 gap-5 md:grid-cols-2">
+      {[0, 1].map((i) => (
+        <div key={i} className="rounded-2xl border border-white/[0.06] bg-white/[0.02] p-4">
+          <Skeleton className="mb-4 h-4 w-28 rounded bg-white/[0.06]" />
+          <div className="space-y-3">
+            {Array.from({ length: 3 }).map((_, j) => (
+              <Skeleton key={j} className="h-14 w-full rounded-xl bg-white/[0.04]" />
+            ))}
+          </div>
+        </div>
+      ))}
+    </section>
+  );
+}
 
 export default function Attribution() {
   const { data: shopsData, isLoading: shopsLoading } = useShops();
@@ -33,9 +52,10 @@ export default function Attribution() {
   } = useAnalytics({ shopId: resolvedShop, model, range, start, end });
 
   const [detailSessionId, setDetailSessionId] = useState<string | null>(null);
+  const [exportOpen, setExportOpen] = useState(false);
 
   const handleRefresh = useCallback(() => { void refetch(); }, [refetch]);
-  const handleExport = useCallback(() => { /* Phase D */ }, []);
+  const handleExport = useCallback(() => setExportOpen(true), []);
 
   if (!shopsLoading && shopsData?.shops?.length === 0) {
     return <Navigate to="/?openPixelWizard=1" replace />;
@@ -91,7 +111,9 @@ export default function Attribution() {
           )}
 
           {/* Support Grid: Paid Media | Top Products */}
-          {!analyticsLoading && analyticsData && (
+          {analyticsLoading ? (
+            <SupportGridSkeleton />
+          ) : analyticsData ? (
             <section className="grid grid-cols-1 gap-5 md:grid-cols-2">
               <PaidMediaPanel
                 paidMedia={analyticsData.paidMedia}
@@ -100,7 +122,7 @@ export default function Attribution() {
               />
               <TopProductsPanel products={analyticsData.topProducts} currency={currency} />
             </section>
-          )}
+          ) : null}
 
           {/* Revenue by Channel pie */}
           {!analyticsLoading && channels && (
@@ -113,11 +135,21 @@ export default function Attribution() {
         </div>
       </div>
 
-      {/* Session Detail Sheet (overlay) */}
+      {/* Overlays */}
       <SessionDetailPanel
         shopId={resolvedShop}
         sessionId={detailSessionId}
         onClose={() => setDetailSessionId(null)}
+      />
+      <ExportModal
+        open={exportOpen}
+        onClose={() => setExportOpen(false)}
+        data={analyticsData}
+        shop={resolvedShop}
+        model={model}
+        range={range}
+        start={start}
+        end={end}
       />
     </DashboardLayout>
   );
