@@ -1,7 +1,6 @@
 import { useState, useMemo, useEffect } from 'react';
 import { Search } from 'lucide-react';
 import { Input } from '@/components/ui/input';
-import { ScrollArea } from '@/components/ui/scroll-area';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 import { formatCurrency } from '../utils/formatters';
@@ -75,7 +74,7 @@ export function HistoricalJourneys({
         />
       </div>
 
-      <ScrollArea className="flex-1">
+      <div className="min-h-0 flex-1 overflow-y-auto [&::-webkit-scrollbar]:w-[3px] [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-white/20 [&::-webkit-scrollbar-track]:bg-transparent">
         {filtered.length === 0 ? (
           <p className="py-8 text-center text-xs text-white/25">No journeys found</p>
         ) : (
@@ -127,7 +126,7 @@ export function HistoricalJourneys({
             )}
           </div>
         )}
-      </ScrollArea>
+      </div>
     </div>
   );
 }

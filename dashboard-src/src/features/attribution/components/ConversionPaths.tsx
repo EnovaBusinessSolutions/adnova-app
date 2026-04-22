@@ -44,7 +44,7 @@ export function ConversionPaths({ purchases }: ConversionPathsProps) {
       {/* Content: list + detail side by side */}
       <div className="flex min-h-0 flex-1 gap-0">
         {/* Journey list */}
-        <div className={`flex flex-col p-3 ${selected ? 'w-2/5 border-r border-white/[0.06]' : 'w-full'}`}>
+        <div className={`flex min-h-0 flex-col p-3 ${selected ? 'w-2/5 border-r border-white/[0.06]' : 'w-full'}`}>
           <HistoricalJourneys
             purchases={purchases}
             channelFilter={channelFilter}
@@ -55,7 +55,7 @@ export function ConversionPaths({ purchases }: ConversionPathsProps) {
 
         {/* Selected journey detail */}
         {selected && (
-          <div className="flex w-3/5 flex-col p-3">
+          <div className="flex min-h-0 w-3/5 flex-col p-3">
             <SelectedJourney
               purchase={selected}
               onClose={() => setSelected(null)}

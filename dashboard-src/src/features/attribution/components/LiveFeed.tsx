@@ -1,7 +1,6 @@
 import { useState } from 'react';
 import { Pause, Play, Radio, ChevronDown } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { ScrollArea } from '@/components/ui/scroll-area';
 import { cn } from '@/lib/utils';
 import { useLiveFeed } from '../hooks/useLiveFeed';
 import { LiveFeedItem } from './LiveFeedItem';
@@ -64,7 +63,7 @@ export function LiveFeed({ shopId }: LiveFeedProps) {
       </div>
 
       {/* Events list */}
-      <ScrollArea className="flex-1">
+      <div className="min-h-0 flex-1 overflow-y-auto [&::-webkit-scrollbar]:w-[3px] [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-white/20 [&::-webkit-scrollbar-track]:bg-transparent">
         {events.length === 0 ? (
           <div className="flex flex-col items-center justify-center gap-2 py-12">
             <Radio size={20} className="text-white/15" />
@@ -89,7 +88,7 @@ export function LiveFeed({ shopId }: LiveFeedProps) {
             )}
           </>
         )}
-      </ScrollArea>
+      </div>
     </div>
   );
 }

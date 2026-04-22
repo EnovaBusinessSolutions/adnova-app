@@ -74,11 +74,11 @@ export default function Attribution() {
 
           {/* Live Feed (1/3) + Conversion Paths (2/3) */}
           {resolvedShop && (
-            <section className="grid grid-cols-1 gap-5 lg:grid-cols-3" style={{ height: 440 }}>
-              <div className="lg:col-span-1">
+            <section className="flex flex-col gap-5 lg:h-[520px] lg:flex-row">
+              <div className="h-[420px] overflow-hidden lg:h-full lg:flex-[1]">
                 <LiveFeed shopId={resolvedShop} />
               </div>
-              <div className="lg:col-span-2">
+              <div className="h-[520px] overflow-hidden lg:h-full lg:flex-[2]">
                 <ConversionPaths purchases={purchases} />
               </div>
             </section>
