@@ -32,14 +32,6 @@
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
 
-        @font-face {
-            font-family: "Ulm Grotesk";
-            src: url("/fonts/UlmGrotesk-Bold.otf") format("opentype");
-            font-weight: 700;
-            font-style: normal;
-            font-display: swap;
-        }
-
         :root {
             --dash-bg: #0b0b0d;
             --dash-panel: rgba(21, 18, 26, 0.96);
@@ -60,6 +52,16 @@
             --dash-scrollbar-track: rgba(255, 255, 255, 0.06);
             --dash-scrollbar-thumb: rgba(181, 92, 255, 0.52);
             --dash-scrollbar-thumb-hover: rgba(181, 92, 255, 0.78);
+            /* Adray design system (unified with dashboard-src/src/index.css) */
+            --adray-purple: #b55cff;
+            --adray-purple-strong: #c87cff;
+            --adray-cyan: #4fe3c1;
+            --adray-surface: rgba(18, 14, 28, 0.64);
+            --adray-surface-2: rgba(11, 11, 16, 0.78);
+            --adray-line: rgba(255, 255, 255, 0.08);
+            --adray-line-strong: rgba(181, 92, 255, 0.28);
+            --adray-shadow-purple: 0 0 30px rgba(181, 92, 255, 0.16);
+            --adray-shadow-emerald: 0 0 28px rgba(79, 227, 193, 0.14);
         }
 
         body.adray-dashboard {
@@ -163,7 +165,7 @@
 
         .analytics-loader-title {
             margin-top: 0.8rem;
-            font-family: "Ulm Grotesk", 'Inter', sans-serif;
+            font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
             font-size: clamp(1.8rem, 4vw, 2.6rem);
             line-height: 1;
             color: #f6efff;
@@ -313,14 +315,31 @@
 
         .dashboard-hero {
             position: sticky;
-            top: 1rem;
-            z-index: 30;
-            background: linear-gradient(180deg, rgba(21, 18, 26, 0.96) 0%, rgba(15, 12, 20, 0.94) 100%);
+            top: 0.75rem;
+            z-index: 50;
+            background: linear-gradient(180deg, rgba(21, 18, 26, 0.97) 0%, rgba(15, 12, 20, 0.95) 100%);
             border: 1px solid var(--dash-border-strong);
             border-radius: 34px;
-            box-shadow: var(--dash-shadow);
+            box-shadow: var(--dash-shadow), var(--adray-shadow-purple);
             padding: 1.65rem 1.75rem;
-            backdrop-filter: blur(18px);
+            backdrop-filter: blur(22px) saturate(140%);
+            -webkit-backdrop-filter: blur(22px) saturate(140%);
+            transition: box-shadow 220ms ease, border-color 220ms ease, background 220ms ease;
+            will-change: transform;
+        }
+
+        .dashboard-hero::before {
+            content: '';
+            position: absolute;
+            inset: 0;
+            border-radius: inherit;
+            padding: 1px;
+            background: linear-gradient(135deg, rgba(181, 92, 255, 0.22) 0%, rgba(79, 227, 193, 0.10) 55%, rgba(181, 92, 255, 0.16) 100%);
+            -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+            -webkit-mask-composite: xor;
+                    mask-composite: exclude;
+            pointer-events: none;
+            opacity: 0.9;
         }
 
         .dashboard-kicker,
@@ -451,7 +470,7 @@
         .dashboard-title,
         .panel-title,
         .brand-mark {
-            font-family: "Ulm Grotesk", 'Inter', sans-serif;
+            font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
             letter-spacing: -0.03em;
         }
 
@@ -999,7 +1018,7 @@
         }
 
         #session-detail-panel h4 {
-            font-family: "Ulm Grotesk", 'Inter', sans-serif;
+            font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
             letter-spacing: -0.02em;
         }
 
@@ -2675,6 +2694,53 @@
         @keyframes slideIn {
             from { opacity: 0; transform: translateY(-10px); }
             to { opacity: 1; transform: translateY(0); }
+        }
+
+        /* Adray premium animations (unified with dashboard-src/src/index.css) */
+        @keyframes adray-shimmer {
+            0% { transform: translateX(-120%); }
+            60% { transform: translateX(120%); }
+            100% { transform: translateX(120%); }
+        }
+
+        @keyframes adray-pulse-soft {
+            0%, 100% { opacity: 0.55; }
+            50% { opacity: 1; }
+        }
+
+        .adray-shimmer-wrap {
+            position: relative;
+            overflow: hidden;
+            isolation: isolate;
+        }
+
+        .adray-shimmer-wrap::after {
+            content: '';
+            position: absolute;
+            inset: 0;
+            background: linear-gradient(100deg,
+                rgba(255, 255, 255, 0) 20%,
+                rgba(255, 255, 255, 0.06) 45%,
+                rgba(181, 92, 255, 0.08) 50%,
+                rgba(255, 255, 255, 0.06) 55%,
+                rgba(255, 255, 255, 0) 80%);
+            transform: translateX(-120%);
+            animation: adray-shimmer 5.4s ease-in-out infinite;
+            animation-delay: 1.2s;
+            pointer-events: none;
+            z-index: 0;
+        }
+
+        .adray-shimmer-wrap > * {
+            position: relative;
+            z-index: 1;
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            .adray-shimmer-wrap::after {
+                animation: none;
+                opacity: 0;
+            }
         }
     </style>
 </head>
