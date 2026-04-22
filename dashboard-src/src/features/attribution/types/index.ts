@@ -214,3 +214,124 @@ export interface AnalyticsResponse {
   degradedReason?: string;
   cache?: { hit: boolean; ttlMs: number };
 }
+
+// ─── Session Explorer ─────────────────────────────────────────
+export interface SessionProfile {
+  profileKey: string;
+  profileType: string;
+  profileLabel: string;
+  customerDisplayName: string | null;
+  customerId: string | null;
+  sessionCount: number;
+  orderCount: number;
+  totalRevenue: number;
+  recentSessionId: string | null;
+  recentSessionStartedAt: string | null;
+  lastSeenAt: string | null;
+  lastOrderAt: string | null;
+  lastLandingPageUrl: string | null;
+  lastCampaign: string | null;
+}
+
+export interface SessionExplorerResponse {
+  summary: {
+    storePlatform: string;
+    totalProfiles: number;
+    totalSessions: number;
+    totalOrders: number;
+    totalRevenue: number;
+  };
+  profiles: SessionProfile[];
+  degraded?: boolean;
+  cache?: { hit: boolean; ttlMs: number };
+}
+
+// ─── Session Detail ───────────────────────────────────────────
+export interface SessionMetrics {
+  totalEvents: number;
+  logins: number;
+  pageViews: number;
+  viewItem: number;
+  addToCart: number;
+  beginCheckout: number;
+  purchase: number;
+  revenue: number;
+  uniquePages: number;
+  uniqueProducts: number;
+  orderCount: number;
+}
+
+export interface SessionTimelineEvent {
+  eventId: string;
+  eventName: string;
+  bucket: string;
+  createdAt: string;
+  collectedAt: string | null;
+  pageUrl: string;
+  productId: string;
+  revenue: number;
+  currency: string;
+  utmSource: string | null;
+  utmCampaign: string | null;
+  customerId: string | null;
+  customerName: string | null;
+}
+
+export interface SessionDetailData {
+  session: {
+    sessionId: string;
+    accountId: string;
+    userKey: string;
+    startedAt: string;
+    lastEventAt: string;
+    sessionEndAt: string | null;
+    utmSource: string | null;
+    utmMedium: string | null;
+    utmCampaign: string | null;
+    utmContent: string | null;
+    utmTerm: string | null;
+    referrer: string | null;
+    landingPageUrl: string | null;
+    fbclid: string | null;
+    gclid: string | null;
+    ttclid: string | null;
+    clarityPlaybackUrl: string | null;
+    sessionDurationSeconds: number;
+  };
+  metrics: SessionMetrics;
+  journey: {
+    entryPage: string | null;
+    exitPage: string | null;
+    attribution: {
+      channel: string;
+      platform: string | null;
+      campaign: string | null;
+      confidence: number;
+      source: string;
+    };
+  };
+  timeline: SessionTimelineEvent[];
+}
+
+// ─── Recording ────────────────────────────────────────────────
+export interface RecordingInfo {
+  recordingId: string;
+  sessionId: string;
+  status: string;
+  outcome: string | null;
+  cartValue: number | null;
+  durationMs: number | null;
+  triggerAt: string | null;
+  deviceType?: string | null;
+  userKey?: string;
+  orderId?: string | null;
+  customerName?: string | null;
+  customerEmailMasked?: string | null;
+}
+
+export interface RecordingDetailResponse {
+  ok: boolean;
+  recording: RecordingInfo | null;
+  presignedUrl: string | null;
+  sessionId: string;
+}

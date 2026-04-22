@@ -1,4 +1,4 @@
-import { useCallback } from 'react';
+import { useCallback, useState } from 'react';
 import { Navigate } from 'react-router-dom';
 import { DashboardLayout } from '@/components/DashboardLayout';
 import { AttributionHeader } from '@/features/attribution/components/AttributionHeader';
@@ -6,6 +6,11 @@ import { KpiGrid } from '@/features/attribution/components/KpiGrid';
 import { LiveFeed } from '@/features/attribution/components/LiveFeed';
 import { ConversionPaths } from '@/features/attribution/components/ConversionPaths';
 import { AttributionPieChart } from '@/features/attribution/components/AttributionPieChart';
+import { PixelHealthPanel } from '@/features/attribution/components/PixelHealthPanel';
+import { PaidMediaPanel } from '@/features/attribution/components/PaidMediaPanel';
+import { TopProductsPanel } from '@/features/attribution/components/TopProductsPanel';
+import { UserExplorerPanel } from '@/features/attribution/components/UserExplorerPanel';
+import { SessionDetailPanel } from '@/features/attribution/components/SessionDetailPanel';
 import { useShops } from '@/features/attribution/hooks/useShops';
 import { useShopPersistence } from '@/features/attribution/hooks/useShopPersistence';
 import { useAttributionFilters } from '@/features/attribution/hooks/useAttributionFilters';
@@ -29,6 +34,8 @@ export default function Attribution() {
     refetch,
   } = useAnalytics({ shopId: resolvedShop, model, range, start, end });
 
+  const [detailSessionId, setDetailSessionId] = useState<string | null>(null);
+
   const handleRefresh = useCallback(() => { void refetch(); }, [refetch]);
   const handleExport = useCallback(() => { /* Phase D */ }, []);
 
@@ -38,6 +45,7 @@ export default function Attribution() {
 
   const channels = analyticsData?.channels;
   const purchases = analyticsData?.recentPurchases ?? [];
+  const currency = analyticsData?.paidMedia?.blended?.currency ?? null;
 
   return (
     <DashboardLayout>
@@ -84,6 +92,29 @@ export default function Attribution() {
             </section>
           )}
 
+          {/* Support Grid: Pixel Health | Paid Media | Top Products */}
+          {!analyticsLoading && analyticsData && (
+            <section className="grid grid-cols-1 gap-5 md:grid-cols-2 lg:grid-cols-3">
+              <PixelHealthPanel
+                pixelHealth={analyticsData.pixelHealth}
+                events={analyticsData.events}
+              />
+              <PaidMediaPanel
+                paidMedia={analyticsData.paidMedia}
+                integrationHealth={analyticsData.integrationHealth}
+                currency={currency}
+              />
+              <TopProductsPanel products={analyticsData.topProducts} currency={currency} />
+            </section>
+          )}
+
+          {/* User Explorer */}
+          {resolvedShop && (
+            <section>
+              <UserExplorerPanel shopId={resolvedShop} onSessionSelect={setDetailSessionId} />
+            </section>
+          )}
+
           {/* Revenue by Channel pie */}
           {!analyticsLoading && channels && (
             <section className="grid grid-cols-1 gap-5 lg:grid-cols-3">
@@ -94,6 +125,13 @@ export default function Attribution() {
           )}
         </div>
       </div>
+
+      {/* Session Detail Sheet (overlay) */}
+      <SessionDetailPanel
+        shopId={resolvedShop}
+        sessionId={detailSessionId}
+        onClose={() => setDetailSessionId(null)}
+      />
     </DashboardLayout>
   );
 }

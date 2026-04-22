@@ -1,4 +1,11 @@
-import type { ShopsResponse, AnalyticsResponse, AttributionModel } from '../types';
+import type {
+  ShopsResponse,
+  AnalyticsResponse,
+  AttributionModel,
+  SessionExplorerResponse,
+  SessionDetailData,
+  RecordingDetailResponse,
+} from '../types';
 
 export interface FetchAnalyticsParams {
   shopId: string;
@@ -30,4 +37,42 @@ export async function fetchAnalytics(
   });
   if (!res.ok) throw new Error(`Failed to fetch analytics: ${res.status}`);
   return res.json() as Promise<AnalyticsResponse>;
+}
+
+export async function fetchSessionExplorer(
+  shopId: string,
+  signal?: AbortSignal,
+): Promise<SessionExplorerResponse> {
+  const res = await fetch(
+    `/api/analytics/${encodeURIComponent(shopId)}/session-explorer`,
+    { credentials: 'include', signal },
+  );
+  if (!res.ok) throw new Error(`Failed to fetch session explorer: ${res.status}`);
+  return res.json() as Promise<SessionExplorerResponse>;
+}
+
+export async function fetchSessionDetail(
+  shopId: string,
+  sessionId: string,
+  signal?: AbortSignal,
+): Promise<SessionDetailData> {
+  const res = await fetch(
+    `/api/analytics/${encodeURIComponent(shopId)}/sessions/${encodeURIComponent(sessionId)}`,
+    { credentials: 'include', signal },
+  );
+  if (!res.ok) throw new Error(`Failed to fetch session detail: ${res.status}`);
+  return res.json() as Promise<SessionDetailData>;
+}
+
+export async function fetchRecording(
+  shopId: string,
+  recordingId: string,
+  signal?: AbortSignal,
+): Promise<RecordingDetailResponse> {
+  const res = await fetch(
+    `/api/recording/${encodeURIComponent(shopId)}/${encodeURIComponent(recordingId)}`,
+    { credentials: 'include', signal },
+  );
+  if (!res.ok) throw new Error(`Failed to fetch recording: ${res.status}`);
+  return res.json() as Promise<RecordingDetailResponse>;
 }
