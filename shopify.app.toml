@@ -1,6 +1,6 @@
 # Learn more about configuring your app at https://shopify.dev/docs/apps/tools/cli/configuration
 
-client_id = "168d118e58d5e1bd2bd787957e136f2b"
+client_id = "116be5fccac0891355a948bc16e22cb1"
 name = "Adray AI Connector"
 application_url = "https://adray.ai/connector"
 embedded = true
