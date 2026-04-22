@@ -112,6 +112,18 @@ export default function Attribution() {
             </section>
           )}
 
+          {/* ROAS Comparison + Attributed Orders — 50/50 */}
+          {!analyticsLoading && analyticsData && channels && (
+            <section className="grid grid-cols-1 gap-5 lg:grid-cols-2">
+              <div className="h-[300px]">
+                <RoasComparisonChart paidMedia={analyticsData.paidMedia} model={model} />
+              </div>
+              <div className="h-[300px]">
+                <AttributionPieChart channels={channels} />
+              </div>
+            </section>
+          )}
+
           {/* Support Grid: Paid Media | Top Products */}
           {analyticsLoading ? (
             <SupportGridSkeleton />
@@ -125,18 +137,6 @@ export default function Attribution() {
               <TopProductsPanel products={analyticsData.topProducts} currency={currency} />
             </section>
           ) : null}
-
-          {/* ROAS Comparison + Attributed Orders — 50/50 */}
-          {!analyticsLoading && analyticsData && channels && (
-            <section className="grid grid-cols-1 gap-5 lg:grid-cols-2">
-              <div className="h-[300px]">
-                <RoasComparisonChart paidMedia={analyticsData.paidMedia} model={model} />
-              </div>
-              <div className="h-[300px]">
-                <AttributionPieChart channels={channels} />
-              </div>
-            </section>
-          )}
 
           {/* Data Enrichment */}
           <section>
