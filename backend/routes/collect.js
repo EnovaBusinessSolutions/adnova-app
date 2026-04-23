@@ -289,7 +289,10 @@ router.post('/', async (req, res) => {
       rawPayload: payload,
       collectedAt: new Date(),
       browserReceivedAt: payload.timestamp ? new Date(payload.timestamp) : null,
-      serverReceivedAt: new Date()
+      serverReceivedAt: new Date(),
+      capturedAt: payload.captured_at ? new Date(payload.captured_at) : (payload.timestamp ? new Date(payload.timestamp) : new Date()),
+      seq: Number.isFinite(Number(payload.seq)) ? Number(payload.seq) : null,
+      postPurchase: Boolean(payload.post_purchase) === true,
     };
 
     const legacyEventData = {

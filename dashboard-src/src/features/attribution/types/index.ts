@@ -129,6 +129,9 @@ export interface JourneyEvent {
   eventId: string;
   eventName: string;
   createdAt: string;
+  capturedAt: string | null;   // client-clock timestamp (preferred for ordering)
+  seq: number | null;          // per-session monotonic sequence
+  postPurchase: boolean;       // true if fired after purchase was captured
   collectedAt: string | null;
   pageUrl: string | null;
   productId: string | null;
