@@ -9,6 +9,7 @@ import {
   ResponsiveContainer,
 } from 'recharts';
 import type { PaidMedia, AttributionModel } from '../types';
+import { ADRAY_PURPLE, ADRAY_CYAN } from '../utils/adrayColors';
 
 const MODEL_LABELS: Record<AttributionModel, string> = {
   last_touch:  'LastClick',
@@ -59,7 +60,6 @@ function CustomLegend({ payload }: { payload?: Array<{ value: string; color: str
 }
 
 export function RoasComparisonChart({ paidMedia: pm, model }: Props) {
-  const tickStyle = { fill: 'rgba(255,255,255,0.3)', fontSize: 10 };
 
   const safeRoas = (revenue: number | null, spend: number | null) =>
     spend && spend > 0 && revenue != null ? +(revenue / spend).toFixed(2) : undefined;
@@ -80,11 +80,11 @@ export function RoasComparisonChart({ paidMedia: pm, model }: Props) {
   const hasData = data.some((d) => d['AdNova ROAS'] != null || d['Platform ROAS'] != null);
 
   return (
-    <div className="flex h-full flex-col rounded-2xl border border-white/[0.06] bg-white/[0.02] p-4">
+    <div className="futuristic-surface flex h-full flex-col rounded-2xl p-4">
       {/* Header */}
-      <div className="mb-3 flex items-start justify-between">
+      <div className="mb-3 flex flex-col items-start gap-1 sm:flex-row sm:items-start sm:justify-between">
         <div>
-          <p className="text-[9px] font-semibold uppercase tracking-wider text-[#B55CFF]/70">Commercial</p>
+          <p className="text-[9px] font-semibold uppercase tracking-wider text-[var(--adray-purple)]/70">Commercial</p>
           <p className="text-xs font-semibold text-white/70">ROAS Comparison (AdNova vs Native)</p>
         </div>
         <span className="text-[10px] text-white/30">Model: {MODEL_LABELS[model]}</span>
@@ -97,14 +97,65 @@ export function RoasComparisonChart({ paidMedia: pm, model }: Props) {
       ) : (
         <div className="min-h-0 flex-1">
           <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={data} margin={{ top: 4, right: 4, left: 0, bottom: 0 }} barCategoryGap="30%">
-              <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" vertical={false} />
-              <XAxis dataKey="platform" tick={tickStyle} tickLine={false} axisLine={false} />
-              <YAxis tick={tickStyle} tickLine={false} axisLine={false} width={32} allowDecimals={false} />
-              <Tooltip content={<CustomTooltip />} cursor={{ fill: 'rgba(255,255,255,0.03)' }} />
+            <BarChart data={data} margin={{ top: 8, right: 4, left: 0, bottom: 0 }} barCategoryGap="30%">
+              <defs>
+                <linearGradient id="roas-gradient-adnova" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor={ADRAY_PURPLE} stopOpacity={0.55} />
+                  <stop offset="100%" stopColor={ADRAY_PURPLE} stopOpacity={0.08} />
+                </linearGradient>
+                <linearGradient id="roas-gradient-platform" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor={ADRAY_CYAN} stopOpacity={0.55} />
+                  <stop offset="100%" stopColor={ADRAY_CYAN} stopOpacity={0.08} />
+                </linearGradient>
+                <filter id="roas-glow-adnova" x="-50%" y="-50%" width="200%" height="200%">
+                  <feGaussianBlur stdDeviation="2.5" result="blur" />
+                  <feMerge>
+                    <feMergeNode in="blur" />
+                    <feMergeNode in="SourceGraphic" />
+                  </feMerge>
+                </filter>
+                <filter id="roas-glow-platform" x="-50%" y="-50%" width="200%" height="200%">
+                  <feGaussianBlur stdDeviation="2.5" result="blur" />
+                  <feMerge>
+                    <feMergeNode in="blur" />
+                    <feMergeNode in="SourceGraphic" />
+                  </feMerge>
+                </filter>
+              </defs>
+              <CartesianGrid strokeDasharray="2 5" stroke="rgba(255,255,255,0.035)" vertical={false} />
+              <XAxis
+                dataKey="platform"
+                tick={{ fill: 'rgba(255,255,255,0.4)', fontSize: 10, fontWeight: 500 }}
+                tickLine={false}
+                axisLine={false}
+              />
+              <YAxis
+                tick={{ fill: 'rgba(255,255,255,0.22)', fontSize: 10 }}
+                tickLine={false}
+                axisLine={false}
+                width={32}
+                allowDecimals={false}
+              />
+              <Tooltip content={<CustomTooltip />} cursor={{ fill: 'rgba(181, 92, 255, 0.04)' }} />
               <Legend content={<CustomLegend />} />
-              <Bar dataKey="AdNova ROAS"   fill="#B55CFF" radius={[4, 4, 0, 0]} maxBarSize={48} />
-              <Bar dataKey="Platform ROAS" fill="#4FE3C1" radius={[4, 4, 0, 0]} maxBarSize={48} />
+              <Bar
+                dataKey="AdNova ROAS"
+                fill="url(#roas-gradient-adnova)"
+                stroke={ADRAY_PURPLE}
+                strokeWidth={1.5}
+                radius={[6, 6, 0, 0]}
+                maxBarSize={52}
+                filter="url(#roas-glow-adnova)"
+              />
+              <Bar
+                dataKey="Platform ROAS"
+                fill="url(#roas-gradient-platform)"
+                stroke={ADRAY_CYAN}
+                strokeWidth={1.5}
+                radius={[6, 6, 0, 0]}
+                maxBarSize={52}
+                filter="url(#roas-glow-platform)"
+              />
             </BarChart>
           </ResponsiveContainer>
         </div>

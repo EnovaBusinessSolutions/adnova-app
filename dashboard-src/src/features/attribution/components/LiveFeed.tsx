@@ -22,9 +22,9 @@ export function LiveFeed({ shopId }: LiveFeedProps) {
   const remaining = events.length - displayLimit;
 
   return (
-    <div className="flex h-full flex-col rounded-2xl border border-white/[0.06] bg-white/[0.02]">
+    <div className="futuristic-panel flex h-full flex-col">
       {/* Header */}
-      <div className="flex items-center justify-between border-b border-white/[0.06] px-4 py-3">
+      <div className="relative z-[1] flex items-center justify-between border-b border-[var(--adray-line)] px-3 py-2.5 sm:px-4 sm:py-3">
         <div className="flex items-center gap-2">
           <Radio size={13} className="text-white/40" />
           <span className="text-xs font-semibold text-white/70">Live Feed</span>
@@ -44,7 +44,7 @@ export function LiveFeed({ shopId }: LiveFeedProps) {
               variant="ghost"
               size="sm"
               onClick={loadMore}
-              className="h-6 gap-1 px-2 text-[10px] text-[#4FE3C1] hover:bg-[#4FE3C1]/10"
+              className="h-7 gap-1 px-2 text-[10px] text-[var(--adray-cyan)] hover:bg-[var(--adray-cyan)]/10 sm:h-6"
             >
               <ChevronDown size={10} />
               {bufferedCount} new
@@ -54,7 +54,7 @@ export function LiveFeed({ shopId }: LiveFeedProps) {
             variant="ghost"
             size="sm"
             onClick={togglePause}
-            className="h-6 gap-1 px-2 text-[10px] text-white/50 hover:bg-white/[0.05] hover:text-white"
+            className="h-7 gap-1 px-2 text-[10px] text-white/50 hover:bg-white/[0.05] hover:text-white sm:h-6"
           >
             {paused ? <Play size={10} /> : <Pause size={10} />}
             {paused ? 'Resume' : 'Pause'}
@@ -63,7 +63,7 @@ export function LiveFeed({ shopId }: LiveFeedProps) {
       </div>
 
       {/* Events list */}
-      <div className="min-h-0 flex-1 overflow-y-auto [&::-webkit-scrollbar]:w-[3px] [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-white/20 [&::-webkit-scrollbar-track]:bg-transparent">
+      <div className="relative z-[1] min-h-0 flex-1 overflow-y-auto [&::-webkit-scrollbar]:w-[3px] [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-white/20 [&::-webkit-scrollbar-track]:bg-transparent">
         {events.length === 0 ? (
           <div className="flex flex-col items-center justify-center gap-2 py-12">
             <Radio size={20} className="text-white/15" />

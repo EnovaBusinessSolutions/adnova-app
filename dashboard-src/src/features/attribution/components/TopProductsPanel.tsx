@@ -12,7 +12,7 @@ export function TopProductsPanel({ products, currency }: Props) {
   const maxRevenue = top[0]?.revenue ?? 1;
 
   return (
-    <div className="flex flex-col rounded-2xl border border-white/[0.06] bg-white/[0.02] p-4">
+    <div className="futuristic-surface flex flex-col rounded-2xl p-3 sm:p-4">
       <div className="mb-3 flex items-center gap-2">
         <Package size={13} className="text-[#F59E0B]" />
         <span className="text-xs font-semibold text-white/70">Top Products</span>

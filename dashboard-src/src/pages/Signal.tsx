@@ -4,6 +4,7 @@ import { useNavigate } from "react-router-dom";
 import { DashboardLayout } from "@/components/DashboardLayout";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { ParticleField } from "@/components/ParticleField";
 
 import {
   ArrowLeft,
@@ -632,19 +633,14 @@ function BuildProgressPanel({
     : "bg-[linear-gradient(90deg,#B55CFF_0%,#D66BFF_55%,#4FE3C1_100%)] shadow-[0_0_20px_rgba(181,92,255,0.35)]";
 
   return (
-    <div className="mt-6">
+    <div className="mt-5 sm:mt-6">
       <div
-        className={`adray-border-flow relative overflow-hidden rounded-[30px] border p-5 sm:rounded-[32px] sm:p-6 ${wrapperTone}`}
+        className={`relative overflow-hidden rounded-[24px] border p-5 backdrop-blur-xl sm:rounded-[28px] sm:p-6 ${wrapperTone}`}
       >
-        <div className="absolute inset-0 pointer-events-none opacity-70">
+        <div className="absolute inset-0 pointer-events-none opacity-55">
           <div
-            className={`absolute -top-20 left-0 h-56 w-56 rounded-full blur-3xl ${
-              showSuccessTone ? "bg-[#4FE3C1]/14" : "bg-[#B55CFF]/14"
-            }`}
-          />
-          <div
-            className={`absolute -bottom-20 right-0 h-56 w-56 rounded-full blur-3xl ${
-              showSuccessTone ? "bg-[#B8FFF0]/10" : "bg-[#4FE3C1]/10"
+            className={`absolute -top-24 right-[-10%] h-60 w-60 rounded-full blur-3xl ${
+              showSuccessTone ? "bg-[#4FE3C1]/[0.08]" : "bg-[#B55CFF]/[0.08]"
             }`}
           />
         </div>
@@ -662,19 +658,19 @@ function BuildProgressPanel({
                 ) : null}
               </div>
 
-              <div className="mt-4 text-xl font-bold text-white/95 sm:text-2xl">{label}</div>
-              <p className="mt-2 max-w-2xl text-sm leading-7 text-white/58">{hint}</p>
+              <div className="mt-4 text-lg font-semibold text-white/95 sm:text-xl">{label}</div>
+              <p className="mt-2 max-w-2xl text-[13px] leading-6 text-white/58 sm:text-sm sm:leading-7">{hint}</p>
             </div>
 
             <div className="shrink-0 text-right">
               <div
-                className={`text-3xl font-extrabold sm:text-4xl ${
+                className={`text-2xl font-bold sm:text-3xl ${
                   showSuccessTone ? "text-[#CFFFF0]" : "text-white/95"
                 }`}
               >
                 {displayProgress}%
               </div>
-              <div className="mt-1 text-xs text-white/45">
+              <div className="mt-1 text-[11px] font-semibold uppercase tracking-wider text-white/45">
                 {isFullyUnlocked ? "Ready for PDF" : "Signal in progress"}
               </div>
             </div>
@@ -752,10 +748,9 @@ function BuildProgressPanel({
 
 function WhileYouWaitCard() {
   return (
-    <div className="adray-border-flow relative overflow-hidden rounded-[30px] border border-white/[0.10] bg-[linear-gradient(180deg,rgba(16,13,25,0.82)_0%,rgba(8,9,13,0.94)_100%)] p-5 sm:rounded-[32px] sm:p-6">
-      <div className="absolute inset-0 pointer-events-none opacity-65">
-        <div className="absolute -top-20 left-[10%] h-52 w-52 rounded-full blur-3xl bg-[#B55CFF]/12" />
-        <div className="absolute -bottom-20 right-[8%] h-52 w-52 rounded-full blur-3xl bg-[#4FE3C1]/10" />
+    <div className="relative overflow-hidden rounded-[24px] border border-white/[0.08] bg-[rgba(10,10,14,0.78)] p-5 backdrop-blur-xl sm:rounded-[28px] sm:p-6">
+      <div className="absolute inset-0 pointer-events-none opacity-55">
+        <div className="absolute -top-24 right-[-10%] h-60 w-60 rounded-full blur-3xl bg-[#B55CFF]/[0.07]" />
       </div>
 
       <div className="relative">
@@ -966,7 +961,7 @@ function SignalPromptAccordionCard({
 }
 
 function SignalPromptsSection() {
-  const [openId, setOpenId] = useState<string>(SIGNAL_PROMPTS[0]?.id || "");
+  const [openId, setOpenId] = useState<string>("");
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
   const onCopy = async (text: string, id: string) => {
@@ -982,10 +977,9 @@ function SignalPromptsSection() {
   };
 
   return (
-    <div className="adray-border-flow relative overflow-hidden rounded-[30px] border border-white/[0.10] bg-[linear-gradient(180deg,rgba(14,12,22,0.86)_0%,rgba(8,9,13,0.96)_100%)] p-5 sm:rounded-[32px] sm:p-6">
-      <div className="absolute inset-0 pointer-events-none opacity-75">
-        <div className="absolute -top-16 right-[8%] h-56 w-56 rounded-full blur-3xl bg-[#B55CFF]/10" />
-        <div className="absolute bottom-0 left-[5%] h-56 w-56 rounded-full blur-3xl bg-[#4FE3C1]/8" />
+    <div className="relative overflow-hidden rounded-[24px] border border-white/[0.08] bg-[rgba(10,10,14,0.78)] p-5 backdrop-blur-xl sm:rounded-[28px] sm:p-6">
+      <div className="absolute inset-0 pointer-events-none opacity-55">
+        <div className="absolute -top-20 right-[-6%] h-60 w-60 rounded-full blur-3xl bg-[#B55CFF]/[0.07]" />
       </div>
 
       <div className="relative">
@@ -995,13 +989,13 @@ function SignalPromptsSection() {
         </div>
 
         <div className="mt-4 max-w-2xl">
-  <h3 className="text-[1.8rem] font-semibold tracking-tight text-white/94 sm:text-[2.2rem]">
-    Prompt Library
-  </h3>
-  <p className="mt-2 text-sm leading-6 text-white/58 sm:text-[15px]">
-    Open, copy, and use with your Signal PDF.
-  </p>
-</div>
+          <h3 className="text-[1.5rem] font-semibold tracking-tight text-white/94 sm:text-[1.85rem]">
+            Prompt Library
+          </h3>
+          <p className="mt-2 text-[13px] leading-6 text-white/58 sm:text-[14.5px]">
+            Open, copy, and use with your Signal PDF.
+          </p>
+        </div>
 
         <div className="mt-6 space-y-3">
           {SIGNAL_PROMPTS.map((item) => (
@@ -1077,21 +1071,20 @@ function PdfLaunchCard({
             : "The PDF button will unlock once the build is fully completed.";
 
   return (
-    <div className="adray-border-flow relative overflow-hidden rounded-[30px] border border-white/[0.10] bg-[linear-gradient(180deg,rgba(18,14,28,0.84)_0%,rgba(9,10,13,0.95)_100%)] p-5 sm:rounded-[32px] sm:p-6">
-      <div className="absolute inset-0 pointer-events-none opacity-70">
-        <div className="absolute -top-20 right-0 h-56 w-56 rounded-full blur-3xl bg-[#4FE3C1]/12" />
-        <div className="absolute -bottom-20 left-0 h-56 w-56 rounded-full blur-3xl bg-[#B55CFF]/14" />
+    <div className="relative overflow-hidden rounded-[24px] border border-white/[0.08] bg-[rgba(10,10,14,0.78)] p-5 backdrop-blur-xl sm:rounded-[28px] sm:p-6">
+      <div className="absolute inset-0 pointer-events-none opacity-55">
+        <div className="absolute -top-24 right-[-8%] h-64 w-64 rounded-full blur-3xl bg-[#4FE3C1]/[0.08]" />
       </div>
 
       <div className="relative flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
         <div className="min-w-0 max-w-2xl">
-          <div className="inline-flex items-center gap-2 rounded-full border border-[#4FE3C1]/18 bg-[#4FE3C1]/10 px-3 py-1 text-[11px] uppercase tracking-[0.18em] text-[#CFFFF0]">
+          <div className="inline-flex items-center gap-2 rounded-full border border-[#4FE3C1]/22 bg-[#4FE3C1]/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.22em] text-[#CFFFF0]">
             <FileText className="h-3.5 w-3.5" />
             Your Signal PDF
           </div>
 
-          <h2 className="mt-4 text-2xl font-bold tracking-tight text-white/95 sm:text-3xl">{title}</h2>
-          <p className="mt-3 max-w-xl text-sm leading-7 text-white/56 sm:text-base">{description}</p>
+          <h2 className="mt-4 text-xl font-bold tracking-tight text-white/95 sm:text-2xl">{title}</h2>
+          <p className="mt-3 max-w-xl text-[13px] leading-6 text-white/58 sm:text-[15px] sm:leading-7">{description}</p>
         </div>
 
         <div className="w-full lg:w-auto">
@@ -1144,7 +1137,7 @@ function PdfLaunchCard({
             {canStartDownload ? (
               <Button
                 onClick={onDownload}
-                className="mt-5 h-12 w-full rounded-2xl bg-gradient-to-r from-[#A64DFA] via-[#B55CFF] to-[#C16BFF] px-5 text-white hover:from-[#9B43F0] hover:via-[#A64DFA] hover:to-[#B95DFF] shadow-[0_0_30px_rgba(181,92,255,0.34)]"
+                className="mt-5 h-12 w-full rounded-2xl bg-[#4FE3C1] px-5 text-sm font-semibold text-[#062B21] shadow-[0_0_28px_rgba(79,227,193,0.34)] transition-all hover:bg-[#3FD4B1] hover:shadow-[0_0_38px_rgba(79,227,193,0.46)]"
               >
                 <Download className="mr-2 h-4 w-4" />
                 Download PDF
@@ -1152,7 +1145,7 @@ function PdfLaunchCard({
             ) : canStart ? (
               <Button
                 onClick={onGenerate}
-                className="mt-5 h-12 w-full rounded-2xl bg-gradient-to-r from-[#A64DFA] via-[#B55CFF] to-[#C16BFF] px-5 text-white hover:from-[#9B43F0] hover:via-[#A64DFA] hover:to-[#B95DFF] shadow-[0_0_30px_rgba(181,92,255,0.34)]"
+                className="mt-5 h-12 w-full rounded-2xl bg-[#B55CFF] px-5 text-sm font-semibold text-white shadow-[0_0_24px_rgba(181,92,255,0.30)] transition-all hover:bg-[#A664FF] hover:shadow-[0_0_34px_rgba(181,92,255,0.42)]"
               >
                 <Sparkles className="mr-2 h-4 w-4" />
                 {pdfStatus === "failed" ? "Retry PDF generation" : "Generate PDF"}
@@ -1237,29 +1230,53 @@ function ModelCompatibilityCard({
   return (
     <div
       className={[
-        "group relative overflow-hidden rounded-[30px] border bg-white/[0.018] transition-all duration-300",
-        "min-h-[250px] sm:min-h-[280px] xl:min-h-[310px]",
+        "group relative overflow-hidden rounded-[24px] border bg-[rgba(10,10,14,0.70)] backdrop-blur-xl transition-all duration-500",
+        "min-h-[240px] sm:min-h-[280px] xl:min-h-[310px]",
         theme.border,
         theme.hover,
-        "hover:bg-white/[0.03]",
+        "hover:bg-[rgba(12,12,18,0.82)] hover:shadow-[0_18px_48px_rgba(0,0,0,0.38)]",
       ].join(" ")}
     >
-      <div className="pointer-events-none absolute inset-0 opacity-0 transition-opacity duration-300 group-hover:opacity-100">
-        <div className={["absolute -bottom-24 -left-12 h-48 w-48 rounded-full blur-3xl", theme.glowA].join(" ")} />
-        <div className={["absolute -top-24 right-0 h-48 w-48 rounded-full blur-3xl", theme.glowB].join(" ")} />
+      {/* Subtle gradient border (mask technique, premium Adray look) */}
+      <div
+        className="pointer-events-none absolute inset-0 rounded-[24px] opacity-70 transition-opacity duration-500 group-hover:opacity-100"
+        style={{
+          padding: "1px",
+          background:
+            "linear-gradient(135deg, rgba(255,255,255,0.10) 0%, rgba(255,255,255,0.04) 45%, rgba(255,255,255,0.10) 100%)",
+          WebkitMask: "linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0)",
+          WebkitMaskComposite: "xor",
+          maskComposite: "exclude",
+        }}
+      />
+
+      {/* Glow layers — visible on hover */}
+      <div className="pointer-events-none absolute inset-0 opacity-0 transition-opacity duration-500 group-hover:opacity-100">
+        <div className={["absolute -bottom-24 -left-12 h-56 w-56 rounded-full blur-3xl", theme.glowA].join(" ")} />
+        <div className={["absolute -top-24 right-0 h-56 w-56 rounded-full blur-3xl", theme.glowB].join(" ")} />
       </div>
 
-      <div className="relative flex h-full items-center justify-center px-8 py-8 sm:px-10 sm:py-10">
-        <div className="absolute right-5 top-5 inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.03] px-3 py-1.5 text-[11px] font-medium text-white/78 backdrop-blur-md">
-          <span className={["inline-block h-2 w-2 rounded-full", theme.dot].join(" ")} />
+      {/* Ambient float + glow under the logo (always visible, subtle) */}
+      <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+        <div className={["h-40 w-40 rounded-full blur-3xl opacity-40 sm:h-48 sm:w-48", theme.glowA].join(" ")} />
+      </div>
+
+      <div className="relative flex h-full items-center justify-center px-7 py-8 sm:px-10 sm:py-10">
+        {/* Compatible chip top-right */}
+        <div className="absolute right-4 top-4 inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.04] px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-white/72 backdrop-blur-md">
+          <span className={["inline-flex h-1.5 w-1.5 rounded-full shadow-[0_0_10px_currentColor]", theme.dot].join(" ")} />
           Compatible
         </div>
 
         <img
           src={logoSrc}
           alt={title}
-          className="max-h-[170px] w-auto max-w-[90%] object-contain opacity-95 transition-transform duration-300 group-hover:scale-[1.03] sm:max-h-[210px] xl:max-h-[250px]"
+          className="max-h-[170px] w-auto max-w-[90%] object-contain opacity-95 transition-all duration-700 group-hover:scale-[1.06] group-hover:opacity-100 sm:max-h-[210px] xl:max-h-[250px]"
           draggable={false}
+          style={{
+            animation: "adray-model-float 6s ease-in-out infinite",
+            filter: "drop-shadow(0 10px 24px rgba(0,0,0,0.45))",
+          }}
         />
       </div>
     </div>
@@ -1899,62 +1916,73 @@ export default function Signal() {
 
   return (
     <DashboardLayout>
-      <div className="min-h-screen overflow-x-hidden bg-[#050507]">
-        <div className="overflow-x-hidden p-2.5 sm:p-6">
-          <Card className="glass-effect mx-auto w-full max-w-full overflow-hidden rounded-[30px] border border-white/[0.06] bg-[#0F1012] shadow-[0_20px_80px_rgba(0,0,0,0.45)] sm:rounded-[34px]">
+      <div className="relative min-h-screen overflow-x-hidden bg-[#050507]">
+        {/* Ambient particle field (viewport-level, sits behind content) */}
+        <ParticleField
+          variant="multiverse"
+          count={22}
+          className="pointer-events-none absolute inset-0 overflow-hidden"
+        />
+
+        <div className="relative overflow-x-hidden p-2.5 sm:p-6">
+          <Card className="relative mx-auto w-full max-w-full overflow-hidden rounded-[26px] border border-white/[0.06] bg-[rgba(10,10,14,0.78)] shadow-[0_20px_80px_rgba(0,0,0,0.45)] backdrop-blur-xl sm:rounded-[30px]">
             <div className="relative">
-              <div className="pointer-events-none absolute inset-0 opacity-70">
-                <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-[#B55CFF]/35 to-transparent" />
-                <div className="absolute -top-20 left-[8%] h-72 w-72 rounded-full bg-[#B55CFF]/10 blur-3xl" />
-                <div className="absolute top-[22%] right-[4%] h-72 w-72 rounded-full bg-[#4FE3C1]/8 blur-3xl" />
-                <div className="absolute bottom-0 left-1/2 h-60 w-[44rem] -translate-x-1/2 rounded-full bg-[#B55CFF]/8 blur-3xl" />
+              {/* Single soft cyan glow top-right — Signal identity anchor */}
+              <div className="pointer-events-none absolute inset-0">
+                <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-[#4FE3C1]/22 to-transparent" />
+                <div className="absolute -top-24 right-[-6%] h-80 w-80 rounded-full bg-[#4FE3C1]/[0.06] blur-3xl" />
+                <div className="absolute -bottom-20 left-[-6%] h-72 w-72 rounded-full bg-[#B55CFF]/[0.05] blur-3xl" />
               </div>
 
-              <CardContent className="relative min-w-0 max-w-full p-2.5 sm:p-6">
-                <div className="adray-dashboard-shell relative min-w-0 max-w-full overflow-x-hidden">
-                  <div className="adray-hero-bg relative min-w-0 max-w-full overflow-hidden rounded-[30px] border border-white/[0.08] bg-[linear-gradient(180deg,rgba(18,14,28,0.94)_0%,rgba(10,10,14,0.98)_100%)] p-4 sm:rounded-[36px] sm:p-8">
-                    <div className="adray-hero-grid" />
-                    <div className="adray-hero-beam" />
+              <CardContent className="relative min-w-0 max-w-full p-4 sm:p-7">
+                <div className="relative min-w-0 max-w-full overflow-hidden rounded-[22px] border border-white/[0.06] bg-[rgba(8,8,12,0.72)] p-5 sm:rounded-[26px] sm:p-9">
+                  {/* Subtle gradient border overlay (Adray premium) */}
+                  <div
+                    className="pointer-events-none absolute inset-0 rounded-[22px] sm:rounded-[26px]"
+                    style={{
+                      padding: "1px",
+                      background:
+                        "linear-gradient(135deg, rgba(79,227,193,0.18) 0%, rgba(181,92,255,0.10) 55%, rgba(79,227,193,0.14) 100%)",
+                      WebkitMask:
+                        "linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0)",
+                      WebkitMaskComposite: "xor",
+                      maskComposite: "exclude",
+                      opacity: 0.7,
+                    }}
+                  />
 
-                    <span className="adray-particle left-[12%] top-[16%]" style={{ animationDelay: "0s" }} />
-                    <span className="adray-particle left-[18%] top-[70%]" style={{ animationDelay: ".8s" }} />
-                    <span className="adray-particle left-[62%] top-[22%]" style={{ animationDelay: "1.4s" }} />
-                    <span className="adray-particle left-[74%] top-[62%]" style={{ animationDelay: "2s" }} />
-                    <span className="adray-particle left-[48%] top-[78%]" style={{ animationDelay: "2.8s" }} />
+                  <div className="relative z-10">
+                    <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                      <StepProgress step={2} />
 
-                    <div className="relative z-10">
-                      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-                        <StepProgress step={2} />
+                      <Button
+                        variant="ghost"
+                        onClick={() => nav("/laststep")}
+                        className="w-full justify-center rounded-xl border border-white/10 bg-white/[0.03] text-white/82 hover:bg-white/[0.06] sm:w-auto sm:justify-start"
+                      >
+                        <ArrowLeft className="mr-2 h-4 w-4" />
+                        Back
+                      </Button>
+                    </div>
 
-                        <Button
-                          variant="ghost"
-                          onClick={() => nav("/laststep")}
-                          className="w-full justify-center rounded-xl border border-white/10 bg-white/[0.03] text-white/85 hover:bg-white/[0.08] sm:w-auto sm:justify-start"
-                        >
-                          <ArrowLeft className="mr-2 h-4 w-4" />
-                          Back
-                        </Button>
+                    <div className="mt-7 max-w-3xl">
+                      <div className="inline-flex max-w-full items-center gap-2 rounded-full border border-[#4FE3C1]/22 bg-[#4FE3C1]/10 px-3 py-1 text-[11px] text-[#CFFFF0] backdrop-blur-md">
+                        <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
+                        <span className="truncate">{effectiveHeroChipText}</span>
                       </div>
 
-                      <div className="mt-6 max-w-4xl">
-                        <div className="inline-flex max-w-full items-center gap-2 rounded-full border border-[#B55CFF]/20 bg-[#B55CFF]/10 px-3 py-1 text-[11px] text-[#E7D3FF] backdrop-blur-md">
-                          <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
-                          <span className="truncate">{effectiveHeroChipText}</span>
-                        </div>
+                      <div className="mt-5 min-w-0">
+                        <p className="text-[10.5px] font-semibold uppercase tracking-[0.22em] text-[#CFFFF0]/70">
+                          Final Step · Signal Intelligence
+                        </p>
 
-                        <div className="mt-5 min-w-0">
-                          <p className="text-[11px] uppercase tracking-[0.24em] text-white/38">
-                            Final Step · Signal Intelligence
-                          </p>
+                        <h1 className="mt-3 max-w-[760px] text-[1.85rem] font-bold leading-[1.02] tracking-[-0.03em] text-white/95 sm:text-[2.6rem]">
+                          {effectiveHeroTitle}
+                        </h1>
 
-                          <h1 className="mt-3 max-w-[820px] text-[1.9rem] font-extrabold leading-[0.96] tracking-[-0.04em] text-white/95 sm:text-[3.65rem]">
-                            {effectiveHeroTitle}
-                          </h1>
-
-                          <p className="mt-4 max-w-3xl text-[13px] leading-6 text-white/56 sm:text-[16px] sm:leading-7">
-                            {effectiveHeroDescription}
-                          </p>
-                        </div>
+                        <p className="mt-4 max-w-2xl text-[13px] leading-6 text-white/58 sm:text-[15px] sm:leading-7">
+                          {effectiveHeroDescription}
+                        </p>
                       </div>
                     </div>
                   </div>
@@ -1997,14 +2025,14 @@ export default function Signal() {
                   <SignalPromptsSection />
                 </div>
 
-                <div className="mt-6 rounded-[30px] border border-white/10 bg-white/[0.025] p-5 sm:p-6 xl:p-7">
+                <div className="mt-6 rounded-[24px] border border-white/10 bg-[rgba(10,10,14,0.72)] p-5 backdrop-blur-xl sm:rounded-[28px] sm:p-6 xl:p-7">
                   <div className="max-w-3xl">
-                    <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.03] px-3 py-1 text-[10.5px] uppercase tracking-[0.18em] text-white/62">
+                    <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.03] px-3 py-1 text-[10.5px] font-semibold uppercase tracking-[0.22em] text-white/62">
                       <Bot className="h-3.5 w-3.5" />
                       AI Compatibility
                     </div>
 
-                    <h3 className="mt-4 text-[2rem] font-semibold tracking-tight text-white/94 sm:text-[2.35rem]">
+                    <h3 className="mt-4 text-[1.5rem] font-semibold tracking-tight text-white/94 sm:text-[1.85rem]">
                       Works with top AI models
                     </h3>
                   </div>
@@ -2036,6 +2064,19 @@ export default function Signal() {
             </div>
           </Card>
         </div>
+
+        {/* Premium animations local to Signal panel */}
+        <style>{`
+          @keyframes adray-model-float {
+            0%, 100% { transform: translateY(0px); }
+            50% { transform: translateY(-6px); }
+          }
+          @media (prefers-reduced-motion: reduce) {
+            @keyframes adray-model-float {
+              0%, 100% { transform: translateY(0px); }
+            }
+          }
+        `}</style>
       </div>
     </DashboardLayout>
   );

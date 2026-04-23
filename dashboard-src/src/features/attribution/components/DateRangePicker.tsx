@@ -36,17 +36,17 @@ export function DateRangePicker({
   onEndChange,
 }: DateRangePickerProps) {
   return (
-    <div className="flex items-center gap-2">
+    <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
       <Select
         value={String(range)}
         onValueChange={(v) => onRangeChange(v === 'custom' ? 'custom' : (Number(v) as RangePreset))}
       >
-        <SelectTrigger className="h-8 w-[130px] border-white/[0.10] bg-white/[0.04] text-xs text-white/80 hover:bg-white/[0.07] focus:ring-[#B55CFF]/40">
+        <SelectTrigger className="h-9 w-full border-white/[0.10] bg-white/[0.04] text-xs text-white/80 hover:bg-white/[0.07] focus:ring-[var(--adray-purple)]/40 sm:h-8 sm:w-[130px]">
           <SelectValue />
         </SelectTrigger>
         <SelectContent className="border-white/[0.10] bg-[#0f0f14]">
           {PRESETS.map((p) => (
-            <SelectItem key={String(p)} value={String(p)} className="text-xs text-white/80 focus:bg-[#B55CFF]/10 focus:text-white">
+            <SelectItem key={String(p)} value={String(p)} className="text-xs text-white/80 focus:bg-[var(--adray-purple)]/10 focus:text-white">
               {RANGE_LABELS[String(p)]}
             </SelectItem>
           ))}
@@ -59,14 +59,14 @@ export function DateRangePicker({
             type="date"
             value={start ?? ''}
             onChange={(e) => onStartChange(e.target.value || null)}
-            className="h-8 w-[130px] border-white/[0.10] bg-white/[0.04] text-xs text-white/80 [color-scheme:dark]"
+            className="h-9 w-full border-white/[0.10] bg-white/[0.04] text-xs text-white/80 [color-scheme:dark] sm:h-8 sm:w-[130px]"
           />
           <span className="text-xs text-white/30">→</span>
           <Input
             type="date"
             value={end ?? ''}
             onChange={(e) => onEndChange(e.target.value || null)}
-            className="h-8 w-[130px] border-white/[0.10] bg-white/[0.04] text-xs text-white/80 [color-scheme:dark]"
+            className="h-9 w-full border-white/[0.10] bg-white/[0.04] text-xs text-white/80 [color-scheme:dark] sm:h-8 sm:w-[130px]"
           />
         </>
       )}

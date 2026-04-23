@@ -36,9 +36,9 @@ export function ConversionPaths({ purchases }: ConversionPathsProps) {
   }, [purchases]);
 
   return (
-    <div className="flex h-full flex-col rounded-2xl border border-white/[0.06] bg-white/[0.02]">
+    <div className="futuristic-panel flex h-full flex-col">
       {/* Header */}
-      <div className="border-b border-white/[0.06] px-4 py-3">
+      <div className="relative z-[1] border-b border-[var(--adray-line)] px-4 py-3">
         <p className="mb-2 text-xs font-semibold text-white/70">Conversion Paths</p>
         <Tabs value={channelFilter} onValueChange={(v) => { setChannelFilter(v); setSelected(firstInChannel(purchases, v)); }}>
           <TabsList className="h-7 gap-0.5 bg-white/[0.04] p-0.5">
@@ -46,7 +46,7 @@ export function ConversionPaths({ purchases }: ConversionPathsProps) {
               <TabsTrigger
                 key={tab.value}
                 value={tab.value}
-                className="h-6 px-2.5 text-[10px] data-[state=active]:bg-[#B55CFF]/20 data-[state=active]:text-[#D8B8FF] data-[state=active]:shadow-none"
+                className="h-6 px-2.5 text-[10px] data-[state=active]:bg-[var(--adray-purple)]/20 data-[state=active]:text-[#D8B8FF] data-[state=active]:shadow-none"
               >
                 {tab.label}
               </TabsTrigger>
@@ -55,10 +55,16 @@ export function ConversionPaths({ purchases }: ConversionPathsProps) {
         </Tabs>
       </div>
 
-      {/* Content: list + detail side by side */}
-      <div className="flex min-h-0 flex-1 gap-0">
+      {/* Content: list + detail side by side (desktop) / drill-down (mobile) */}
+      <div className="relative z-[1] flex min-h-0 flex-1 gap-0">
         {/* Journey list */}
-        <div className={`flex min-h-0 flex-col p-3 ${selected ? 'w-2/5 border-r border-white/[0.06]' : 'w-full'}`}>
+        <div
+          className={`flex min-h-0 min-w-0 flex-col p-2 sm:p-3 ${
+            selected
+              ? 'hidden lg:flex lg:w-2/5 lg:border-r lg:border-[var(--adray-line)]'
+              : 'w-full'
+          }`}
+        >
           <HistoricalJourneys
             purchases={purchases}
             channelFilter={channelFilter}
@@ -69,11 +75,22 @@ export function ConversionPaths({ purchases }: ConversionPathsProps) {
 
         {/* Selected journey detail */}
         {selected && (
-          <div className="flex min-h-0 w-3/5 flex-col p-3">
-            <SelectedJourney
-              purchase={selected}
-              onClose={() => setSelected(null)}
-            />
+          <div className="flex min-h-0 w-full min-w-0 flex-col lg:w-3/5">
+            {/* Mobile-only back button (hidden on lg+) */}
+            <button
+              type="button"
+              onClick={() => setSelected(null)}
+              className="flex shrink-0 items-center gap-2 border-b border-[var(--adray-line)] px-4 py-2.5 text-xs text-white/60 transition-colors hover:bg-white/[0.03] hover:text-white lg:hidden"
+            >
+              <span aria-hidden>←</span>
+              Back to journeys
+            </button>
+            <div className="flex min-h-0 min-w-0 flex-1 flex-col p-2 sm:p-3">
+              <SelectedJourney
+                purchase={selected}
+                onClose={() => setSelected(null)}
+              />
+            </div>
           </div>
         )}
       </div>
