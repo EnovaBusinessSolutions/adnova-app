@@ -338,6 +338,17 @@ app.use(
   rateLimitCollect,
   collectRoutes
 );
+
+// Ad-blocker bypass alias — same handler, less obvious path.
+// Used by the first-party pixel to avoid EasyList /collect rules.
+app.use(
+  "/m/s",
+  cookieParser(),
+  express.json({ limit: "1mb" }),
+  express.urlencoded({ extended: true }),
+  rateLimitCollect,
+  collectRoutes
+);
 // Sweep also accessible internally via /collect/x/sweep (no sessionGuard)
 // The route handler itself validates x-adray-internal header
 
