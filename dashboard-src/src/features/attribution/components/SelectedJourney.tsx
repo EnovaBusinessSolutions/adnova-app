@@ -213,7 +213,7 @@ export function SelectedJourney({ purchase, onClose }: SelectedJourneyProps) {
   const chColor = channelColor(purchase.attributedChannel);
 
   return (
-    <div className="flex h-full flex-col overflow-hidden rounded-2xl border border-white/[0.08] bg-white/[0.02]">
+    <div className="flex h-full min-w-0 flex-col overflow-hidden rounded-2xl border border-white/[0.08] bg-white/[0.02]">
       {/* Header */}
       <div className="border-b border-white/[0.06] px-3 py-3 sm:flex sm:items-start sm:justify-between sm:px-4">
         {/* Info (left on desktop, top on mobile) */}
