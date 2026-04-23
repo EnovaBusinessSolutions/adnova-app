@@ -16,7 +16,7 @@ interface KpiCardProps {
 }
 
 const ACCENT_BORDER: Record<KpiAccent, string> = {
-  default: 'border-white/[0.06]',
+  default: 'border-[var(--adray-line)]',
   meta:    'border-[#1877F2]/25',
   google:  'border-[#4285F4]/25',
   tiktok:  'border-white/[0.12]',
@@ -35,7 +35,7 @@ export function KpiCard({ label, value, sub, icon, loading, accent = 'default', 
   return (
     <Card
       className={cn(
-        'relative overflow-hidden rounded-2xl border bg-white/[0.025] backdrop-blur-md transition-all duration-200 hover:bg-white/[0.04] hover:shadow-lg',
+        'relative overflow-hidden rounded-2xl border bg-[var(--adray-surface-2)] backdrop-blur-md transition-all duration-200 hover:bg-[rgba(255,255,255,0.035)] hover:shadow-[var(--adray-shadow-lg)]',
         ACCENT_BORDER[accent],
         ACCENT_GLOW[accent],
         className,

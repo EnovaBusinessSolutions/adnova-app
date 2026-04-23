@@ -9,6 +9,7 @@ import {
   ResponsiveContainer,
 } from 'recharts';
 import type { PaidMedia, AttributionModel } from '../types';
+import { ADRAY_PURPLE, ADRAY_CYAN } from '../utils/adrayColors';
 
 const MODEL_LABELS: Record<AttributionModel, string> = {
   last_touch:  'LastClick',
@@ -80,11 +81,11 @@ export function RoasComparisonChart({ paidMedia: pm, model }: Props) {
   const hasData = data.some((d) => d['AdNova ROAS'] != null || d['Platform ROAS'] != null);
 
   return (
-    <div className="flex h-full flex-col rounded-2xl border border-white/[0.06] bg-white/[0.02] p-4">
+    <div className="futuristic-surface flex h-full flex-col rounded-2xl p-4">
       {/* Header */}
       <div className="mb-3 flex items-start justify-between">
         <div>
-          <p className="text-[9px] font-semibold uppercase tracking-wider text-[#B55CFF]/70">Commercial</p>
+          <p className="text-[9px] font-semibold uppercase tracking-wider text-[var(--adray-purple)]/70">Commercial</p>
           <p className="text-xs font-semibold text-white/70">ROAS Comparison (AdNova vs Native)</p>
         </div>
         <span className="text-[10px] text-white/30">Model: {MODEL_LABELS[model]}</span>
@@ -103,8 +104,8 @@ export function RoasComparisonChart({ paidMedia: pm, model }: Props) {
               <YAxis tick={tickStyle} tickLine={false} axisLine={false} width={32} allowDecimals={false} />
               <Tooltip content={<CustomTooltip />} cursor={{ fill: 'rgba(255,255,255,0.03)' }} />
               <Legend content={<CustomLegend />} />
-              <Bar dataKey="AdNova ROAS"   fill="#B55CFF" radius={[4, 4, 0, 0]} maxBarSize={48} />
-              <Bar dataKey="Platform ROAS" fill="#4FE3C1" radius={[4, 4, 0, 0]} maxBarSize={48} />
+              <Bar dataKey="AdNova ROAS"   fill={ADRAY_PURPLE} radius={[4, 4, 0, 0]} maxBarSize={48} />
+              <Bar dataKey="Platform ROAS" fill={ADRAY_CYAN} radius={[4, 4, 0, 0]} maxBarSize={48} />
             </BarChart>
           </ResponsiveContainer>
         </div>

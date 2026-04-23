@@ -36,9 +36,9 @@ export function ConversionPaths({ purchases }: ConversionPathsProps) {
   }, [purchases]);
 
   return (
-    <div className="flex h-full flex-col rounded-2xl border border-white/[0.06] bg-white/[0.02]">
+    <div className="futuristic-panel flex h-full flex-col">
       {/* Header */}
-      <div className="border-b border-white/[0.06] px-4 py-3">
+      <div className="relative z-[1] border-b border-[var(--adray-line)] px-4 py-3">
         <p className="mb-2 text-xs font-semibold text-white/70">Conversion Paths</p>
         <Tabs value={channelFilter} onValueChange={(v) => { setChannelFilter(v); setSelected(firstInChannel(purchases, v)); }}>
           <TabsList className="h-7 gap-0.5 bg-white/[0.04] p-0.5">
@@ -46,7 +46,7 @@ export function ConversionPaths({ purchases }: ConversionPathsProps) {
               <TabsTrigger
                 key={tab.value}
                 value={tab.value}
-                className="h-6 px-2.5 text-[10px] data-[state=active]:bg-[#B55CFF]/20 data-[state=active]:text-[#D8B8FF] data-[state=active]:shadow-none"
+                className="h-6 px-2.5 text-[10px] data-[state=active]:bg-[var(--adray-purple)]/20 data-[state=active]:text-[#D8B8FF] data-[state=active]:shadow-none"
               >
                 {tab.label}
               </TabsTrigger>
@@ -56,9 +56,9 @@ export function ConversionPaths({ purchases }: ConversionPathsProps) {
       </div>
 
       {/* Content: list + detail side by side */}
-      <div className="flex min-h-0 flex-1 gap-0">
+      <div className="relative z-[1] flex min-h-0 flex-1 gap-0">
         {/* Journey list */}
-        <div className={`flex min-h-0 flex-col p-3 ${selected ? 'w-2/5 border-r border-white/[0.06]' : 'w-full'}`}>
+        <div className={`flex min-h-0 flex-col p-3 ${selected ? 'w-2/5 border-r border-[var(--adray-line)]' : 'w-full'}`}>
           <HistoricalJourneys
             purchases={purchases}
             channelFilter={channelFilter}

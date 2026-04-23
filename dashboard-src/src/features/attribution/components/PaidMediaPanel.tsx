@@ -24,7 +24,7 @@ interface PlatformRowProps {
 
 function PlatformRow({ name, color, connected, spend, revenue, roas, currency }: PlatformRowProps) {
   return (
-    <div className="rounded-xl border border-white/[0.04] bg-white/[0.02] p-3">
+    <div className="rounded-xl border border-[var(--adray-line-soft)] bg-[var(--adray-surface-2)] p-3">
       <div className="mb-2 flex items-center gap-1.5">
         <span className="h-2 w-2 rounded-full" style={{ background: color }} />
         <span className="text-[11px] font-semibold text-white/70">{name}</span>
@@ -70,12 +70,12 @@ export function PaidMediaPanel({ paidMedia: pm, integrationHealth: ih, currency 
     : pm.google.roas ?? null;
 
   return (
-    <div className="flex flex-col rounded-2xl border border-white/[0.06] bg-white/[0.02] p-4">
+    <div className="futuristic-surface flex flex-col rounded-2xl p-4">
       <div className="mb-3 flex items-center gap-2">
-        <TrendingUp size={13} className="text-[#B55CFF]" />
+        <TrendingUp size={13} className="text-[var(--adray-purple)]" />
         <span className="text-xs font-semibold text-white/70">Paid Media</span>
         {pm.blended.roas != null && pm.blended.roas > 0 && (
-          <span className="ml-auto text-[10px] font-semibold text-[#B55CFF]">
+          <span className="ml-auto text-[10px] font-semibold text-[var(--adray-purple)]">
             Blended ROAS {pm.blended.roas.toFixed(2)}x
           </span>
         )}

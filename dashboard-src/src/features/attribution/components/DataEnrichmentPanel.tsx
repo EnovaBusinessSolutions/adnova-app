@@ -186,7 +186,7 @@ function PlatformBadge({
 function SignalTag({ label, tip }: { label: string; tip: string }) {
   return (
     <Tip content={tip}>
-      <span className="cursor-default rounded-md border border-[#B55CFF]/20 bg-[#B55CFF]/10 px-2 py-0.5 text-[10px] font-medium text-[#B55CFF]/80">
+      <span className="cursor-default rounded-md border border-[var(--adray-purple)]/20 bg-[var(--adray-purple)]/10 px-2 py-0.5 text-[10px] font-medium text-[var(--adray-purple)]/80">
         {label}
       </span>
     </Tip>
@@ -276,10 +276,10 @@ function CardSkeleton() {
 export function DataEnrichmentPanel({ purchases, loading }: Props) {
   return (
     <TooltipProvider delayDuration={300}>
-      <div className="rounded-2xl border border-white/[0.06] bg-white/[0.02] p-4">
+      <div className="futuristic-surface rounded-2xl p-4">
         {/* Header */}
         <div className="mb-1">
-          <p className="text-[9px] font-semibold uppercase tracking-wider text-[#B55CFF]/70">
+          <p className="text-[9px] font-semibold uppercase tracking-wider text-[var(--adray-purple)]/70">
             Data Pipeline
           </p>
           <Tip content="Shows the enrichment signals captured per order and whether a Conversions API (CAPI) event was successfully sent to Meta and/or Google for each one.">

@@ -89,7 +89,7 @@ export function HistoricalJourneys({
                 className={cn(
                   'w-full rounded-xl border px-3 py-2.5 text-left transition-all',
                   selectedId === p.orderId
-                    ? 'border-[#B55CFF]/40 bg-[#B55CFF]/8'
+                    ? 'border-[var(--adray-purple)]/40 bg-[var(--adray-purple)]/10'
                     : 'border-transparent hover:border-white/[0.06] hover:bg-white/[0.03]',
                 )}
               >
