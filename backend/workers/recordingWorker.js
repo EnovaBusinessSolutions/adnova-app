@@ -377,6 +377,18 @@ async function handleAnalyzeSession(job) {
   }).catch((err) => console.error(`[recordingWorker:analyze-session] update failed:`, err.message));
 
   console.log(`[recordingWorker:analyze-session] ${sessionId} done — archetype=${analysis.archetype} organic=${analysis.organic_converter}`);
+
+  // Phase 7: resolve Person identity (non-blocking)
+  try {
+    const { resolvePersonForPacket } = require('../services/personResolver');
+    const freshPacket = await prisma.sessionPacket.findUnique({ where: { sessionId } });
+    if (freshPacket) {
+      const personId = await resolvePersonForPacket(freshPacket, { prisma });
+      if (personId) console.log(`[recordingWorker:analyze-session] ${sessionId} → personId=${personId}`);
+    }
+  } catch (err) {
+    console.warn(`[recordingWorker:analyze-session] person resolution failed (non-fatal):`, err.message);
+  }
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────

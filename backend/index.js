@@ -229,7 +229,9 @@ app.disable("x-powered-by");
 //   - /.well-known/*, /mcp*, /oauth/*, /register, /authorize, /token
 //     Rutas del flujo OAuth/MCP. Un 301 en respuesta a un POST (ej. DCR
 //     /register o /oauth/token) hace que el cliente descarte el body y
-//     reintente como GET, rompiendo el handshake en silencio.
+//     reintente como GET, rompiendo el handshake en silencio. Si el edge
+//     por alguna razón no setea x-forwarded-proto en estas peticiones,
+//     preferimos atenderlas tal cual antes que un 301 que rompe el flujo.
 app.use((req, res, next) => {
   if (
     process.env.NODE_ENV === 'production' &&
@@ -806,6 +808,7 @@ app.use("/api/feed", require("./routes/feed"));
 app.use("/api/recording", recordingRoutes);
 app.use('/api', wooOrdersRoutes);
 app.use('/api/platform-connections', require('./routes/platformConnections'));
+app.use('/api/bri', require('./routes/bri'));
 app.use('/wp-plugin', wordpressPluginRoutes);
 
 // AdRay collect ya estĂĄ montado arriba (con rateLimitCollect). SeĂąal interna y plataformas (main):

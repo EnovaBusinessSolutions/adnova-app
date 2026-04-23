@@ -38,7 +38,7 @@ async function withRetry(fn, jobType, payload, maxAttempts = 3, delays = [1000, 
  *   1. PlatformConnection (Prisma/PostgreSQL) — works for Woo + Shopify
  *   2. MongoDB MetaAccount / PixelSelection   — legacy Shopify fallback
  */
-async function sendToMeta(order) {
+async function sendToMeta(order, bri = null) {
   return withRetry(async () => {
     const accountId = order.accountId;
     console.log(`[Meta CAPI] Starting fanout for order ${order.orderId} / account ${accountId}`);
@@ -107,6 +107,7 @@ async function sendToMeta(order) {
       accessToken,
       pixelId,
       testEventCode: process.env.META_CAPI_TEST_CODE || undefined,
+      bri,
     });
 
     if (!result.success) throw new Error(result.reason || 'Meta CAPI call failed');
@@ -158,6 +159,37 @@ async function sendToGoogle(order) {
 }
 
 /**
+ * Fetch BRI signals from the SessionPacket linked to this order.
+ * Returns null if no packet / no aiAnalysis yet — CAPI still fires, just without enrichment.
+ */
+async function fetchBriSignals(order) {
+  if (!order.sessionId && !order.orderId) return null;
+  try {
+    const packet = await prisma.sessionPacket.findFirst({
+      where: {
+        accountId: order.accountId,
+        OR: [
+          ...(order.sessionId ? [{ sessionId: order.sessionId }] : []),
+          ...(order.orderId   ? [{ orderId:    order.orderId   }] : []),
+        ],
+      },
+      select: { aiAnalysis: true, outcome: true },
+    });
+    if (!packet?.aiAnalysis) return null;
+    const a = packet.aiAnalysis;
+    return {
+      archetype:                a.archetype                || null,
+      organic_converter:        Boolean(a.organic_converter),
+      exclude_from_retargeting: Boolean(a.exclude_from_retargeting),
+      confidence:               a.confidence_score         ?? null,
+      customer_tier:            a.customer_tier            || null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Main fanout router - calls all platforms in parallel
  */
 async function sendToAllPlatforms(orderId) {
@@ -170,8 +202,19 @@ async function sendToAllPlatforms(orderId) {
     return;
   }
 
+  // BRI enrichment — non-blocking, CAPI fires regardless
+  const bri = await fetchBriSignals(order);
+
+  if (bri) {
+    console.log(`[CAPI] BRI signals for ${orderId}: archetype=${bri.archetype} organic=${bri.organic_converter} suppress=${bri.exclude_from_retargeting}`);
+    if (bri.exclude_from_retargeting) {
+      // TODO Fase 10b: add to Meta Custom Audience suppression list
+      console.log(`[CAPI] ⚠️  ${orderId} flagged exclude_from_retargeting — suppression list pending Fase 10b`);
+    }
+  }
+
   const results = await Promise.allSettled([
-    sendToMeta(order),
+    sendToMeta(order, bri),
     sendToGoogle(order)
   ]);
 

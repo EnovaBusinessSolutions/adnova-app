@@ -162,6 +162,13 @@ export interface RecentPurchase {
   customerName: string | null;
   items: LineItem[];
   events: JourneyEvent[];
+  // BRI fields
+  briArchetype: string | null;
+  briConfidence: number | null;
+  briOrganicConverter: boolean | null;
+  briExcludeFromRetargeting: boolean | null;
+  briCustomerTier: string | null;
+  briNextBestAction: { type: string; content: string; priority: string } | null;
 }
 
 export interface LiveFeedEvent {

@@ -14,7 +14,7 @@ const FB_CAPI_BASE  = `https://graph.facebook.com/${FB_VERSION}`;
  * @returns {Promise<{ success: boolean, data?, reason? }>}
  */
 async function sendConversion(order, config) {
-  const { accessToken, pixelId, testEventCode } = config;
+  const { accessToken, pixelId, testEventCode, bri } = config;
 
   if (!accessToken) return { success: false, reason: 'Missing Meta accessToken' };
   if (!pixelId)     return { success: false, reason: 'Missing Meta pixelId' };
@@ -47,6 +47,15 @@ async function sendConversion(order, config) {
     num_items: lineItems.length,
   };
   if (contents.length > 0) customData.contents = contents;
+
+  // BRI enrichment — allows Meta to optimize audiences using behavioral signals
+  if (bri) {
+    if (bri.archetype)                          customData.bri_archetype    = bri.archetype;
+    if (bri.customer_tier)                      customData.bri_tier         = bri.customer_tier;
+    if (bri.confidence != null)                 customData.bri_confidence   = bri.confidence;
+    if (bri.organic_converter        === true)  customData.bri_organic      = '1';
+    if (bri.exclude_from_retargeting === true)  customData.bri_suppress     = '1';
+  }
 
   // ── event object ───────────────────────────────────────────────────────────
   const eventPayload = {
