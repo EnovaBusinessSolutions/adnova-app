@@ -173,7 +173,15 @@ function EventRow({
               converted
             </Badge>
           )}
-          <span className="ml-auto shrink-0 text-[10px] text-white/25">{formatTs(event.createdAt)}</span>
+          {event.postPurchase && !isPurchase && (
+            <Badge
+              variant="outline"
+              className="h-3.5 shrink-0 border-white/15 bg-white/[0.04] px-1 text-[8px] uppercase tracking-wider text-white/40"
+            >
+              post-purchase
+            </Badge>
+          )}
+          <span className="ml-auto shrink-0 text-[10px] text-white/25">{formatTs(event.capturedAt || event.createdAt)}</span>
         </div>
 
         {!condensed && (
@@ -206,9 +214,31 @@ export function SelectedJourney({ purchase, onClose }: SelectedJourneyProps) {
   const [eventFilter, setEventFilter] = useState<string | null>(null);
   const handleDownload = useCallback(() => downloadCsv(purchase), [purchase]);
 
-  const visibleEvents = eventFilter
-    ? purchase.events.filter((e) => e.eventName.toLowerCase() === eventFilter)
-    : purchase.events;
+  // Split events into pre-purchase (journey) and post-purchase (after the
+  // purchase event was captured). Backend now marks each with a postPurchase
+  // flag. If flag is absent (legacy events), fall back to: everything after
+  // the first purchase event index is treated as post-purchase.
+  const { preEvents, postEvents } = (() => {
+    const base = eventFilter
+      ? purchase.events.filter((e) => e.eventName.toLowerCase() === eventFilter)
+      : purchase.events;
+
+    const hasExplicitFlag = base.some((e) => e.postPurchase === true);
+    if (hasExplicitFlag) {
+      return {
+        preEvents:  base.filter((e) => !e.postPurchase),
+        postEvents: base.filter((e) =>  e.postPurchase),
+      };
+    }
+
+    // Legacy fallback: find purchase event, split by position.
+    const purchaseIdx = base.findIndex((e) => e.eventName.toLowerCase() === 'purchase');
+    if (purchaseIdx === -1) return { preEvents: base, postEvents: [] };
+    return {
+      preEvents:  base.slice(0, purchaseIdx + 1),
+      postEvents: base.slice(purchaseIdx + 1),
+    };
+  })();
 
   const chColor = channelColor(purchase.attributedChannel);
 
@@ -322,19 +352,43 @@ export function SelectedJourney({ purchase, onClose }: SelectedJourneyProps) {
 
       {/* Timeline */}
       <div className="min-h-0 flex-1 overflow-y-auto [&::-webkit-scrollbar]:w-[3px] [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-white/20 [&::-webkit-scrollbar-track]:bg-transparent">
-        {visibleEvents.length === 0 ? (
+        {preEvents.length === 0 && postEvents.length === 0 ? (
           <p className="py-8 text-center text-xs text-white/25">No events of this type</p>
         ) : (
-          <div className="py-2">
-            {visibleEvents.map((event, i) => (
-              <EventRow
-                key={event.eventId ?? `ev-${i}`}
-                event={event}
-                condensed={condensed}
-                isLast={i === visibleEvents.length - 1}
-              />
-            ))}
-          </div>
+          <>
+            <div className="py-2">
+              {preEvents.map((event, i) => (
+                <EventRow
+                  key={event.eventId ?? `ev-pre-${i}`}
+                  event={event}
+                  condensed={condensed}
+                  isLast={i === preEvents.length - 1 && postEvents.length === 0}
+                />
+              ))}
+            </div>
+
+            {postEvents.length > 0 && (
+              <>
+                <div className="flex items-center gap-2 px-4 pt-2 pb-1">
+                  <div className="h-px flex-1 bg-white/[0.06]" />
+                  <span className="text-[9px] font-semibold uppercase tracking-wider text-white/30">
+                    Post-purchase · {postEvents.length}
+                  </span>
+                  <div className="h-px flex-1 bg-white/[0.06]" />
+                </div>
+                <div className="pb-2 opacity-60">
+                  {postEvents.map((event, i) => (
+                    <EventRow
+                      key={event.eventId ?? `ev-post-${i}`}
+                      event={event}
+                      condensed={condensed}
+                      isLast={i === postEvents.length - 1}
+                    />
+                  ))}
+                </div>
+              </>
+            )}
+          </>
         )}
       </div>
     </div>
