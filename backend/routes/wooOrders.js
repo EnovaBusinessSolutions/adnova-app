@@ -338,18 +338,30 @@ router.post('/woo/orders-sync', async (req, res) => {
     const isRecentOrder = (new Date().getTime() - platformCreatedAtObj) < (1000 * 60 * 60 * 24); // 24 hours
 
     if (isRecentOrder) {
+      const identityCache = require('../utils/liveFeedIdentityCache');
+      const wooCustomerName = identityCache.extractCustomerName(payload) || identityCache.extractCustomerName(payload?.attribution_snapshot);
+      if (wooCustomerName) {
+        identityCache.cacheIdentity({
+          userKey: order.userKey,
+          sessionId: order.sessionId,
+          customerName: wooCustomerName,
+        });
+      }
+
       eventBus.emit('event', {
         type: 'WEBHOOK',
         accountId,
         sessionId: order.sessionId || null,
         userKey: order.userKey || null,
         eventId: order.eventId || null,
+        customerName: wooCustomerName,
         payload: {
           eventName: 'purchase',
           platform: 'woocommerce',
           orderId: order.orderId,
           revenue: order.revenue,
           currency: order.currency,
+          customerName: wooCustomerName,
           rawSource: payload.raw_source || 'api',
           matchType: order.sessionId ? 'deterministic' : 'probabilistic',
           confidenceScore: Number(order.confidenceScore || 0),
