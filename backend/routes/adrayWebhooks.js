@@ -337,6 +337,10 @@ router.post('/orders-create', async (req, res) => {
     });
 
     // Emit live event for dashboard after order/session context is known.
+    const customerFirstName = payload.customer?.first_name || payload.billing_address?.first_name || null;
+    const customerLastName  = payload.customer?.last_name  || payload.billing_address?.last_name  || null;
+    const customerName = [customerFirstName, customerLastName].filter(Boolean).join(' ') || null;
+
     eventBus.emit('event', {
       type: 'WEBHOOK',
       accountId,
@@ -344,6 +348,7 @@ router.post('/orders-create', async (req, res) => {
       sessionId: checkoutMap?.sessionId || null,
       userKey: checkoutMap?.userKey || null,
       eventId,
+      customerName,
       payload: {
         eventType: 'orders/create',
         timestamp: new Date().toISOString(),
@@ -351,6 +356,7 @@ router.post('/orders-create', async (req, res) => {
         checkoutToken: checkoutToken || null,
         revenue,
         currency: payload.currency || null,
+        customerName,
       }
     });
 

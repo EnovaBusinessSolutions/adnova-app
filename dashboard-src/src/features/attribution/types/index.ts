@@ -176,9 +176,11 @@ export interface LiveFeedEvent {
   accountId: string;
   sessionId?: string;
   userKey?: string;
+  customerName?: string;
   eventId?: string;
   timestamp?: string;
   payload?: {
+    customerName?: string | null;
     eventName: string;
     timestamp: string;
     pageUrl?: string;
