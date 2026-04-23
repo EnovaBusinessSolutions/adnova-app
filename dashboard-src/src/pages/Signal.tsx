@@ -632,19 +632,14 @@ function BuildProgressPanel({
     : "bg-[linear-gradient(90deg,#B55CFF_0%,#D66BFF_55%,#4FE3C1_100%)] shadow-[0_0_20px_rgba(181,92,255,0.35)]";
 
   return (
-    <div className="mt-6">
+    <div className="mt-5 sm:mt-6">
       <div
-        className={`adray-border-flow relative overflow-hidden rounded-[30px] border p-5 sm:rounded-[32px] sm:p-6 ${wrapperTone}`}
+        className={`relative overflow-hidden rounded-[24px] border p-5 sm:rounded-[28px] sm:p-6 ${wrapperTone}`}
       >
-        <div className="absolute inset-0 pointer-events-none opacity-70">
+        <div className="absolute inset-0 pointer-events-none opacity-50">
           <div
-            className={`absolute -top-20 left-0 h-56 w-56 rounded-full blur-3xl ${
-              showSuccessTone ? "bg-[#4FE3C1]/14" : "bg-[#B55CFF]/14"
-            }`}
-          />
-          <div
-            className={`absolute -bottom-20 right-0 h-56 w-56 rounded-full blur-3xl ${
-              showSuccessTone ? "bg-[#B8FFF0]/10" : "bg-[#4FE3C1]/10"
+            className={`absolute -top-24 right-[-10%] h-60 w-60 rounded-full blur-3xl ${
+              showSuccessTone ? "bg-[#4FE3C1]/[0.07]" : "bg-[#B55CFF]/[0.07]"
             }`}
           />
         </div>
@@ -662,19 +657,19 @@ function BuildProgressPanel({
                 ) : null}
               </div>
 
-              <div className="mt-4 text-xl font-bold text-white/95 sm:text-2xl">{label}</div>
-              <p className="mt-2 max-w-2xl text-sm leading-7 text-white/58">{hint}</p>
+              <div className="mt-4 text-lg font-semibold text-white/95 sm:text-xl">{label}</div>
+              <p className="mt-2 max-w-2xl text-[13px] leading-6 text-white/58 sm:text-sm sm:leading-7">{hint}</p>
             </div>
 
             <div className="shrink-0 text-right">
               <div
-                className={`text-3xl font-extrabold sm:text-4xl ${
+                className={`text-2xl font-bold sm:text-3xl ${
                   showSuccessTone ? "text-[#CFFFF0]" : "text-white/95"
                 }`}
               >
                 {displayProgress}%
               </div>
-              <div className="mt-1 text-xs text-white/45">
+              <div className="mt-1 text-[11px] uppercase tracking-wider text-white/45">
                 {isFullyUnlocked ? "Ready for PDF" : "Signal in progress"}
               </div>
             </div>
@@ -1077,21 +1072,20 @@ function PdfLaunchCard({
             : "The PDF button will unlock once the build is fully completed.";
 
   return (
-    <div className="adray-border-flow relative overflow-hidden rounded-[30px] border border-white/[0.10] bg-[linear-gradient(180deg,rgba(18,14,28,0.84)_0%,rgba(9,10,13,0.95)_100%)] p-5 sm:rounded-[32px] sm:p-6">
-      <div className="absolute inset-0 pointer-events-none opacity-70">
-        <div className="absolute -top-20 right-0 h-56 w-56 rounded-full blur-3xl bg-[#4FE3C1]/12" />
-        <div className="absolute -bottom-20 left-0 h-56 w-56 rounded-full blur-3xl bg-[#B55CFF]/14" />
+    <div className="relative overflow-hidden rounded-[24px] border border-white/[0.08] bg-[rgba(10,10,14,0.82)] p-5 sm:rounded-[28px] sm:p-6">
+      <div className="absolute inset-0 pointer-events-none opacity-55">
+        <div className="absolute -top-24 right-[-8%] h-64 w-64 rounded-full blur-3xl bg-[#4FE3C1]/[0.08]" />
       </div>
 
       <div className="relative flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
         <div className="min-w-0 max-w-2xl">
-          <div className="inline-flex items-center gap-2 rounded-full border border-[#4FE3C1]/18 bg-[#4FE3C1]/10 px-3 py-1 text-[11px] uppercase tracking-[0.18em] text-[#CFFFF0]">
+          <div className="inline-flex items-center gap-2 rounded-full border border-[#4FE3C1]/22 bg-[#4FE3C1]/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.22em] text-[#CFFFF0]">
             <FileText className="h-3.5 w-3.5" />
             Your Signal PDF
           </div>
 
-          <h2 className="mt-4 text-2xl font-bold tracking-tight text-white/95 sm:text-3xl">{title}</h2>
-          <p className="mt-3 max-w-xl text-sm leading-7 text-white/56 sm:text-base">{description}</p>
+          <h2 className="mt-4 text-xl font-bold tracking-tight text-white/95 sm:text-2xl">{title}</h2>
+          <p className="mt-3 max-w-xl text-[13px] leading-6 text-white/58 sm:text-[15px] sm:leading-7">{description}</p>
         </div>
 
         <div className="w-full lg:w-auto">
@@ -1144,7 +1138,7 @@ function PdfLaunchCard({
             {canStartDownload ? (
               <Button
                 onClick={onDownload}
-                className="mt-5 h-12 w-full rounded-2xl bg-gradient-to-r from-[#A64DFA] via-[#B55CFF] to-[#C16BFF] px-5 text-white hover:from-[#9B43F0] hover:via-[#A64DFA] hover:to-[#B95DFF] shadow-[0_0_30px_rgba(181,92,255,0.34)]"
+                className="mt-5 h-12 w-full rounded-2xl bg-[#4FE3C1] px-5 text-sm font-semibold text-[#062B21] shadow-[0_0_28px_rgba(79,227,193,0.34)] transition-all hover:bg-[#3FD4B1] hover:shadow-[0_0_38px_rgba(79,227,193,0.44)]"
               >
                 <Download className="mr-2 h-4 w-4" />
                 Download PDF
@@ -1152,7 +1146,7 @@ function PdfLaunchCard({
             ) : canStart ? (
               <Button
                 onClick={onGenerate}
-                className="mt-5 h-12 w-full rounded-2xl bg-gradient-to-r from-[#A64DFA] via-[#B55CFF] to-[#C16BFF] px-5 text-white hover:from-[#9B43F0] hover:via-[#A64DFA] hover:to-[#B95DFF] shadow-[0_0_30px_rgba(181,92,255,0.34)]"
+                className="mt-5 h-12 w-full rounded-2xl bg-[#B55CFF] px-5 text-sm font-semibold text-white shadow-[0_0_24px_rgba(181,92,255,0.30)] transition-all hover:bg-[#A664FF] hover:shadow-[0_0_34px_rgba(181,92,255,0.40)]"
               >
                 <Sparkles className="mr-2 h-4 w-4" />
                 {pdfStatus === "failed" ? "Retry PDF generation" : "Generate PDF"}
@@ -1901,27 +1895,17 @@ export default function Signal() {
     <DashboardLayout>
       <div className="min-h-screen overflow-x-hidden bg-[#050507]">
         <div className="overflow-x-hidden p-2.5 sm:p-6">
-          <Card className="glass-effect mx-auto w-full max-w-full overflow-hidden rounded-[30px] border border-white/[0.06] bg-[#0F1012] shadow-[0_20px_80px_rgba(0,0,0,0.45)] sm:rounded-[34px]">
+          <Card className="glass-effect mx-auto w-full max-w-full overflow-hidden rounded-[28px] border border-white/[0.06] bg-[#0B0B0F] shadow-[0_20px_80px_rgba(0,0,0,0.45)] sm:rounded-[32px]">
             <div className="relative">
-              <div className="pointer-events-none absolute inset-0 opacity-70">
-                <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-[#B55CFF]/35 to-transparent" />
-                <div className="absolute -top-20 left-[8%] h-72 w-72 rounded-full bg-[#B55CFF]/10 blur-3xl" />
-                <div className="absolute top-[22%] right-[4%] h-72 w-72 rounded-full bg-[#4FE3C1]/8 blur-3xl" />
-                <div className="absolute bottom-0 left-1/2 h-60 w-[44rem] -translate-x-1/2 rounded-full bg-[#B55CFF]/8 blur-3xl" />
+              {/* Minimalist ambient: a single soft cyan glow top-right to anchor the Signal identity. No beam, no grid, no particles. */}
+              <div className="pointer-events-none absolute inset-0">
+                <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-[#4FE3C1]/20 to-transparent" />
+                <div className="absolute -top-24 right-[-6%] h-80 w-80 rounded-full bg-[#4FE3C1]/[0.06] blur-3xl" />
               </div>
 
-              <CardContent className="relative min-w-0 max-w-full p-2.5 sm:p-6">
-                <div className="adray-dashboard-shell relative min-w-0 max-w-full overflow-x-hidden">
-                  <div className="adray-hero-bg relative min-w-0 max-w-full overflow-hidden rounded-[30px] border border-white/[0.08] bg-[linear-gradient(180deg,rgba(18,14,28,0.94)_0%,rgba(10,10,14,0.98)_100%)] p-4 sm:rounded-[36px] sm:p-8">
-                    <div className="adray-hero-grid" />
-                    <div className="adray-hero-beam" />
-
-                    <span className="adray-particle left-[12%] top-[16%]" style={{ animationDelay: "0s" }} />
-                    <span className="adray-particle left-[18%] top-[70%]" style={{ animationDelay: ".8s" }} />
-                    <span className="adray-particle left-[62%] top-[22%]" style={{ animationDelay: "1.4s" }} />
-                    <span className="adray-particle left-[74%] top-[62%]" style={{ animationDelay: "2s" }} />
-                    <span className="adray-particle left-[48%] top-[78%]" style={{ animationDelay: "2.8s" }} />
-
+              <CardContent className="relative min-w-0 max-w-full p-4 sm:p-6">
+                <div className="relative min-w-0 max-w-full overflow-x-hidden">
+                  <div className="relative min-w-0 max-w-full overflow-hidden rounded-[24px] border border-white/[0.06] bg-[rgba(10,10,14,0.82)] p-5 sm:rounded-[28px] sm:p-8">
                     <div className="relative z-10">
                       <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
                         <StepProgress step={2} />
@@ -1929,29 +1913,29 @@ export default function Signal() {
                         <Button
                           variant="ghost"
                           onClick={() => nav("/laststep")}
-                          className="w-full justify-center rounded-xl border border-white/10 bg-white/[0.03] text-white/85 hover:bg-white/[0.08] sm:w-auto sm:justify-start"
+                          className="w-full justify-center rounded-xl border border-white/10 bg-white/[0.03] text-white/82 hover:bg-white/[0.06] sm:w-auto sm:justify-start"
                         >
                           <ArrowLeft className="mr-2 h-4 w-4" />
                           Back
                         </Button>
                       </div>
 
-                      <div className="mt-6 max-w-4xl">
-                        <div className="inline-flex max-w-full items-center gap-2 rounded-full border border-[#B55CFF]/20 bg-[#B55CFF]/10 px-3 py-1 text-[11px] text-[#E7D3FF] backdrop-blur-md">
+                      <div className="mt-7 max-w-3xl">
+                        <div className="inline-flex max-w-full items-center gap-2 rounded-full border border-[#4FE3C1]/22 bg-[#4FE3C1]/10 px-3 py-1 text-[11px] text-[#CFFFF0] backdrop-blur-md">
                           <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
                           <span className="truncate">{effectiveHeroChipText}</span>
                         </div>
 
                         <div className="mt-5 min-w-0">
-                          <p className="text-[11px] uppercase tracking-[0.24em] text-white/38">
-                            Final Step · Signal Intelligence
+                          <p className="text-[10.5px] font-semibold uppercase tracking-[0.22em] text-[#CFFFF0]/70">
+                            Signal · Intelligence PDF
                           </p>
 
-                          <h1 className="mt-3 max-w-[820px] text-[1.9rem] font-extrabold leading-[0.96] tracking-[-0.04em] text-white/95 sm:text-[3.65rem]">
+                          <h1 className="mt-3 max-w-[760px] text-[1.75rem] font-bold leading-[1.02] tracking-[-0.03em] text-white/95 sm:text-[2.4rem]">
                             {effectiveHeroTitle}
                           </h1>
 
-                          <p className="mt-4 max-w-3xl text-[13px] leading-6 text-white/56 sm:text-[16px] sm:leading-7">
+                          <p className="mt-3 max-w-2xl text-[13px] leading-6 text-white/58 sm:text-[15px] sm:leading-7">
                             {effectiveHeroDescription}
                           </p>
                         </div>
@@ -1997,14 +1981,14 @@ export default function Signal() {
                   <SignalPromptsSection />
                 </div>
 
-                <div className="mt-6 rounded-[30px] border border-white/10 bg-white/[0.025] p-5 sm:p-6 xl:p-7">
+                <div className="mt-6 rounded-[24px] border border-white/10 bg-white/[0.025] p-5 sm:rounded-[28px] sm:p-6 xl:p-7">
                   <div className="max-w-3xl">
-                    <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.03] px-3 py-1 text-[10.5px] uppercase tracking-[0.18em] text-white/62">
+                    <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.03] px-3 py-1 text-[10.5px] font-semibold uppercase tracking-[0.22em] text-white/62">
                       <Bot className="h-3.5 w-3.5" />
                       AI Compatibility
                     </div>
 
-                    <h3 className="mt-4 text-[2rem] font-semibold tracking-tight text-white/94 sm:text-[2.35rem]">
+                    <h3 className="mt-4 text-[1.5rem] font-semibold tracking-tight text-white/94 sm:text-[1.8rem]">
                       Works with top AI models
                     </h3>
                   </div>
