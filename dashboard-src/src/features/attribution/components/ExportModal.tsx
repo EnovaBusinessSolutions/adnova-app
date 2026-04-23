@@ -160,7 +160,7 @@ function CheckRow({ id, label, description, checked, onChange }: CheckRowProps) 
         id={id}
         checked={checked}
         onCheckedChange={(v) => onChange(!!v)}
-        className="mt-0.5 border-white/20 data-[state=checked]:border-[#B55CFF] data-[state=checked]:bg-[#B55CFF]"
+        className="mt-0.5 border-white/20 data-[state=checked]:border-[var(--adray-purple)] data-[state=checked]:bg-[var(--adray-purple)]"
       />
       <div>
         <p className="text-xs font-medium text-white/75">{label}</p>
@@ -203,7 +203,7 @@ export function ExportModal({ open, onClose, data, shop, model, range, start, en
       <DialogContent className="border-white/[0.08] bg-[#0a0a0f] sm:max-w-md">
         <DialogHeader>
           <div className="flex items-center gap-2">
-            <FileText size={14} className="text-[#B55CFF]" />
+            <FileText size={14} className="text-[var(--adray-purple)]" />
             <DialogTitle className="text-sm font-semibold text-white/80">Export Data</DialogTitle>
           </div>
           {!data && (
@@ -241,7 +241,7 @@ export function ExportModal({ open, onClose, data, shop, model, range, start, en
               type="submit"
               size="sm"
               disabled={!data}
-              className="gap-1.5 bg-[#B55CFF] text-white hover:bg-[#9d4de8]"
+              className="gap-1.5 bg-[var(--adray-purple)] text-white hover:bg-[#9d4de8]"
             >
               <Download size={12} />
               Download CSV

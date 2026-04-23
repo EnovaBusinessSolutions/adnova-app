@@ -5,6 +5,7 @@ import { Badge } from '@/components/ui/badge';
 import { formatCurrency } from '../utils/formatters';
 import { channelColor, channelLabel } from '../utils/channelColors';
 import type { RecentPurchase, JourneyEvent } from '../types';
+import { ADRAY_PURPLE } from '../utils/adrayColors';
 
 interface SelectedJourneyProps {
   purchase: RecentPurchase;
@@ -26,7 +27,7 @@ function getEventConfig(name: string): EventConfig {
   if (n === 'add_to_cart')     return { label: 'Add to Cart',     color: '#F59E0B', bg: '#F59E0B18', icon: <ShoppingCart size={9} /> };
   if (n === 'view_item')       return { label: 'View Item',       color: '#34D399', bg: '#34D39918', icon: <Package size={9} /> };
   if (n === 'page_view')       return { label: 'Page View',       color: '#60A5FA', bg: '#60A5FA18', icon: <Eye size={9} /> };
-  if (n === 'user_logged_in')  return { label: 'User Logged In',  color: '#B55CFF', bg: '#B55CFF18', icon: <User size={9} /> };
+  if (n === 'user_logged_in')  return { label: 'User Logged In',  color: ADRAY_PURPLE, bg: `${ADRAY_PURPLE}18`, icon: <User size={9} /> };
   return { label: name, color: '#6B7280', bg: '#6B728018', icon: <Zap size={9} /> };
 }
 
@@ -159,7 +160,7 @@ function EventRow({
           {hasClickId && (
             <Badge
               variant="outline"
-              className="h-3.5 border-[#B55CFF]/30 px-1 text-[8px] text-[#D8B8FF]"
+              className="h-3.5 border-[var(--adray-purple)]/30 px-1 text-[8px] text-[#D8B8FF]"
             >
               click ID
             </Badge>

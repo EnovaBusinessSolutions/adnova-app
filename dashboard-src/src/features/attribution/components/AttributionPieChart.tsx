@@ -2,6 +2,7 @@ import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from 'recharts';
 import { formatNumber } from '../utils/formatters';
 import { CHANNEL_COLORS, CHANNEL_LABELS } from '../utils/channelColors';
 import type { AnalyticsResponse } from '../types';
+import { ADRAY_PURPLE, ADRAY_CYAN } from '../utils/adrayColors';
 
 interface PieEntry {
   name: string;
@@ -42,10 +43,10 @@ export function AttributionPieChart({ channels }: AttributionPieChartProps) {
     .sort((a, b) => b.value - a.value);
 
   return (
-    <div className="flex h-full flex-col rounded-2xl border border-white/[0.06] bg-white/[0.02] p-4">
+    <div className="futuristic-surface flex h-full flex-col rounded-2xl p-4">
       {/* Header */}
       <div className="mb-3">
-        <p className="text-[9px] font-semibold uppercase tracking-wider text-[#B55CFF]/70">Distribution</p>
+        <p className="text-[9px] font-semibold uppercase tracking-wider text-[var(--adray-purple)]/70">Distribution</p>
         <p className="text-xs font-semibold text-white/70">Attributed Orders</p>
       </div>
 

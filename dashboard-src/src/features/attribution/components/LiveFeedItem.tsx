@@ -12,8 +12,8 @@ const EVENT_LABELS: Record<string, string> = {
 
 const EVENT_COLORS: Record<string, string> = {
   page_view:      'bg-white/20',
-  view_item:      'bg-[#4FE3C1]/60',
-  add_to_cart:    'bg-[#B55CFF]/60',
+  view_item:      'bg-[var(--adray-cyan)]/60',
+  add_to_cart:    'bg-[var(--adray-purple)]/60',
   begin_checkout: 'bg-yellow-400/60',
   purchase:       'bg-emerald-400/80',
   identify:       'bg-sky-400/60',
