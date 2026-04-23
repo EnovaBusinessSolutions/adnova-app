@@ -37,6 +37,7 @@ export function LiveFeedItem({ event }: LiveFeedItemProps) {
   const dotColor = EVENT_COLORS[normalizedName] ?? 'bg-white/30';
   const pageUrl = event.payload?.pageUrl;
   const ts = event.payload?.timestamp ?? event.timestamp ?? '';
+  const customerName = event.customerName || event.payload?.customerName || null;
 
   const displayUrl = pageUrl
     ? (() => { try { return new URL(pageUrl).pathname; } catch { return pageUrl; } })()
@@ -55,9 +56,9 @@ export function LiveFeedItem({ event }: LiveFeedItemProps) {
         {displayUrl && (
           <p className="mt-0.5 truncate text-[10px] text-white/35">{displayUrl}</p>
         )}
-        {event.sessionId && (
-          <p className="mt-0.5 truncate font-mono text-[9px] text-white/20">
-            {event.sessionId.slice(0, 16)}…
+        {customerName && (
+          <p className="mt-0.5 truncate text-[10px] font-medium text-white/60">
+            {customerName}
           </p>
         )}
       </div>

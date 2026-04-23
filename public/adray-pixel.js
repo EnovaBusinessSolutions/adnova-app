@@ -329,6 +329,15 @@
       }
     });
 
+    // If fbclid present but _fbc cookie not set, synthesize it so Meta CAPI works
+    // Format per Meta spec: fb.<subdomain_index>.<timestamp>.<fbclid>
+    var fbclid = getQueryParam('fbclid');
+    if (fbclid && !getCookie('_fbc')) {
+      var fbc = 'fb.1.' + Date.now() + '.' + fbclid;
+      setCookie('_fbc', fbc, 7776000); // 90 days
+      safeStorageSet(window.localStorage, '__adray_attr_fbc', fbc);
+    }
+
     if (changed) {
       safeStorageSet(window.localStorage, '__adray_attr_updated_at', String(Date.now()));
     }
@@ -574,30 +583,34 @@
    */
   function detectPageType() {
     const path = window.location.pathname.toLowerCase();
-    const host = (window.location.hostname || '').toLowerCase();
 
-    // Shopify patterns
-    if (path === '/') return 'home';
+    // Shopify patterns (most specific first)
     if (path.includes('/products/')) return 'product';
     if (path.includes('/collections/')) return 'collection';
     if (path.includes('/cart')) return 'cart';
     if (isOrderReceivedUrl(path)) return 'confirmation';
     if (path.includes('/checkout')) return 'checkout';
 
-    // WooCommerce patterns (by class)
-    if (document.body.classList.contains('home')) return 'home';
-    if (document.body.classList.contains('single-product')) return 'product';
-    if (document.body.classList.contains('woocommerce-shop') ||
-        document.body.classList.contains('archive')) return 'collection';
-    if (document.body.classList.contains('woocommerce-cart')) return 'cart';
-    if (document.body.classList.contains('woocommerce-order-received')) return 'confirmation';
-    if (document.body.classList.contains('woocommerce-checkout')) return 'checkout';
-
-    // WooCommerce patterns (by URL, multiple locales)
-    if (/\/(cart|carrito|my-cart|mi-carrito)(\?|$|\/)/i.test(path)) return 'cart';
-    if (/\/(checkout|pedir|pedido|mi-cuenta\/pedir)(\?|$|\/)/i.test(path)) return 'checkout';
+    // WooCommerce patterns (by URL, multiple locales) — priority over class/home
     if (/\/(order-received|pedido-recibido)(\?|$|\/)/i.test(path)) return 'confirmation';
-    if (/\/(product|producto|producto-|product-|product_)\w/i.test(path)) return 'product';
+    if (/\/(checkout|finalizar-compra|pedir|pagar)(\?|$|\/)/i.test(path)) return 'checkout';
+    if (/\/(cart|carrito|carro|mi-carrito|my-cart)(\?|$|\/)/i.test(path)) return 'cart';
+    if (/\/(product|producto|productos|shop|tienda)\/[^\/]+/i.test(path)) return 'product';
+
+    // WooCommerce patterns (by body class — requires document.body)
+    var body = document && document.body;
+    if (body && body.classList) {
+      if (body.classList.contains('woocommerce-order-received')) return 'confirmation';
+      if (body.classList.contains('woocommerce-checkout')) return 'checkout';
+      if (body.classList.contains('woocommerce-cart')) return 'cart';
+      if (body.classList.contains('single-product')) return 'product';
+      if (body.classList.contains('woocommerce-shop') ||
+          body.classList.contains('archive')) return 'collection';
+      if (body.classList.contains('home')) return 'home';
+    }
+
+    // Root path is home as last resort
+    if (path === '/' || path === '') return 'home';
 
     return 'other';
   }
@@ -666,6 +679,12 @@
     var msclkid = getAttributionParam('msclkid');
     var fbp = getCookie('_fbp');
     var fbc = getAttributionParam('fbc') || getCookie('_fbc');
+
+    // Fallback: extract fbclid from _fbc cookie (format: fb.1.<ts>.<fbclid>)
+    if (!fbclid && fbc) {
+      var fbcParts = String(fbc).split('.');
+      if (fbcParts.length >= 4) fbclid = fbcParts.slice(3).join('.');
+    }
 
     const capturedAt = new Date(now).toISOString();
     const seq = _adrayNextSeq();

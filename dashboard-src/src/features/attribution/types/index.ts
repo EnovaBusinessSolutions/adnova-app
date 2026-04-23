@@ -174,6 +174,7 @@ export interface LiveFeedEvent {
   userKey?: string;
   eventId?: string;
   timestamp?: string;
+  customerName?: string | null;
   payload?: {
     eventName: string;
     timestamp: string;
@@ -184,6 +185,7 @@ export interface LiveFeedEvent {
     confidenceScore?: number | null;
     collectedAt?: string;
     productId?: string | null;
+    customerName?: string | null;
     [key: string]: unknown;
   };
 }
