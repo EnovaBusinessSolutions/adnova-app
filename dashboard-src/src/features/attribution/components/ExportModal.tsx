@@ -200,7 +200,7 @@ export function ExportModal({ open, onClose, data, shop, model, range, start, en
 
   return (
     <Dialog open={open} onOpenChange={(o) => { if (!o) onClose(); }}>
-      <DialogContent className="border-white/[0.08] bg-[#0a0a0f] sm:max-w-md">
+      <DialogContent className="max-h-[92vh] overflow-y-auto border-white/[0.08] bg-[#0a0a0f] sm:max-w-md">
         <DialogHeader>
           <div className="flex items-center gap-2">
             <FileText size={14} className="text-[var(--adray-purple)]" />

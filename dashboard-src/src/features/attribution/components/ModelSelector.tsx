@@ -23,7 +23,7 @@ interface ModelSelectorProps {
 export function ModelSelector({ value, onValueChange }: ModelSelectorProps) {
   return (
     <Select value={value} onValueChange={(v) => onValueChange(v as AttributionModel)}>
-      <SelectTrigger className="h-8 w-[130px] border-white/[0.10] bg-white/[0.04] text-xs text-white/80 hover:bg-white/[0.07] focus:ring-[var(--adray-purple)]/40">
+      <SelectTrigger className="h-9 w-full border-white/[0.10] bg-white/[0.04] text-xs text-white/80 hover:bg-white/[0.07] focus:ring-[var(--adray-purple)]/40 sm:h-8 sm:w-[130px]">
         <SelectValue />
       </SelectTrigger>
       <SelectContent className="border-white/[0.10] bg-[#0f0f14]">
