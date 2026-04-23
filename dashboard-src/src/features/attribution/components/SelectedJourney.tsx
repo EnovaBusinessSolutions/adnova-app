@@ -81,7 +81,7 @@ function JourneySummary({
   );
 
   return (
-    <div className="flex items-center gap-1.5 overflow-x-auto border-b border-white/[0.04] px-4 py-2.5 [&::-webkit-scrollbar]:hidden">
+    <div className="flex items-center gap-1.5 overflow-x-auto border-b border-white/[0.04] px-3 py-2 sm:px-4 sm:py-2.5 [&::-webkit-scrollbar]:hidden">
       {present.map((key, i) => {
         const cfg = getEventConfig(key);
         const isActive = activeFilter === key;
@@ -134,7 +134,7 @@ function EventRow({
   const path = shortPath(event.pageUrl);
 
   return (
-    <div className={`flex gap-3 px-4 py-2 ${isPurchase ? 'bg-emerald-500/5' : ''}`}>
+    <div className={`flex gap-2 px-3 py-2 sm:gap-3 sm:px-4 ${isPurchase ? 'bg-emerald-500/5' : ''}`}>
       {/* Timeline indicator */}
       <div className="relative flex flex-col items-center">
         <div
@@ -215,7 +215,7 @@ export function SelectedJourney({ purchase, onClose }: SelectedJourneyProps) {
   return (
     <div className="flex h-full flex-col overflow-hidden rounded-2xl border border-white/[0.08] bg-white/[0.02]">
       {/* Header */}
-      <div className="flex items-start justify-between border-b border-white/[0.06] px-4 py-3">
+      <div className="flex items-start justify-between border-b border-white/[0.06] px-3 py-3 sm:px-4">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
             <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: chColor }} />
