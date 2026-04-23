@@ -59,7 +59,7 @@ export function ConversionPaths({ purchases }: ConversionPathsProps) {
       <div className="relative z-[1] flex min-h-0 flex-1 gap-0">
         {/* Journey list */}
         <div
-          className={`flex min-h-0 flex-col p-2 sm:p-3 ${
+          className={`flex min-h-0 min-w-0 flex-col p-2 sm:p-3 ${
             selected
               ? 'hidden lg:flex lg:w-2/5 lg:border-r lg:border-[var(--adray-line)]'
               : 'w-full'
@@ -75,7 +75,7 @@ export function ConversionPaths({ purchases }: ConversionPathsProps) {
 
         {/* Selected journey detail */}
         {selected && (
-          <div className="flex min-h-0 w-full flex-col lg:w-3/5">
+          <div className="flex min-h-0 w-full min-w-0 flex-col lg:w-3/5">
             {/* Mobile-only back button (hidden on lg+) */}
             <button
               type="button"
@@ -85,7 +85,7 @@ export function ConversionPaths({ purchases }: ConversionPathsProps) {
               <span aria-hidden>←</span>
               Back to journeys
             </button>
-            <div className="flex min-h-0 flex-1 flex-col p-2 sm:p-3">
+            <div className="flex min-h-0 min-w-0 flex-1 flex-col p-2 sm:p-3">
               <SelectedJourney
                 purchase={selected}
                 onClose={() => setSelected(null)}
