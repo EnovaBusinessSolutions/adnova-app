@@ -860,11 +860,11 @@ export default function Index() {
     }, 250);
   }, [loadingConnections, anyReady]);
 
-  const totalCount = 3;
+  const totalCount = 4;
 
   const completedCount = useMemo(() => {
-    return [metaReady, adsReady, gaReady].filter(Boolean).length;
-  }, [metaReady, adsReady, gaReady]);
+    return [metaReady, adsReady, gaReady, pixelConnected].filter(Boolean).length;
+  }, [metaReady, adsReady, gaReady, pixelConnected]);
 
   const pct = useMemo(() => {
     if (!totalCount) return 0;
@@ -873,7 +873,7 @@ export default function Index() {
 
   const heroTitle = "Connect Your Data Sources";
 
-  const allReady = metaReady && adsReady && gaReady;
+  const allReady = metaReady && adsReady && gaReady && pixelConnected;
   const heroDesc = allReady
     ? "Your platforms are already synchronized."
     : "Sync your platforms to unlock complete AI insights.";
@@ -1072,8 +1072,8 @@ export default function Index() {
   <>
     <DashboardLayout>
       <div className="min-h-screen overflow-x-hidden bg-[#050507]">
-        <div className="overflow-x-hidden p-2.5 sm:p-6">
-          <Card className="glass-effect mx-auto w-full max-w-full overflow-hidden rounded-[30px] border border-white/[0.06] shadow-[0_20px_80px_rgba(0,0,0,0.45)] sm:rounded-[34px]">
+        <div className="overflow-x-hidden p-2 sm:p-6">
+          <Card className="glass-effect mx-auto w-full max-w-full overflow-hidden rounded-[22px] border border-white/[0.06] shadow-[0_20px_80px_rgba(0,0,0,0.45)] sm:rounded-[34px]">
             <div className="relative">
               <div className="pointer-events-none absolute inset-0 opacity-70">
                 <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-[#B55CFF]/35 to-transparent" />
@@ -1082,9 +1082,9 @@ export default function Index() {
                 <div className="absolute bottom-0 left-1/2 h-60 w-[44rem] -translate-x-1/2 rounded-full bg-[#B55CFF]/8 blur-3xl" />
               </div>
 
-              <CardContent className="relative min-w-0 max-w-full p-2.5 sm:p-6">
+              <CardContent className="relative min-w-0 max-w-full p-2 sm:p-6">
                 <div className="adray-dashboard-shell relative min-w-0 max-w-full overflow-x-hidden">
-                  <div className="adray-hero-bg relative min-w-0 max-w-full overflow-hidden rounded-[30px] border border-white/[0.08] bg-[linear-gradient(180deg,rgba(18,14,28,0.94)_0%,rgba(10,10,14,0.98)_100%)] p-3.5 sm:rounded-[36px] sm:p-8">
+                  <div className="adray-hero-bg relative min-w-0 max-w-full overflow-hidden rounded-[24px] border border-white/[0.08] bg-[linear-gradient(180deg,rgba(18,14,28,0.94)_0%,rgba(10,10,14,0.98)_100%)] p-3 sm:rounded-[36px] sm:p-8">
                     <div className="adray-hero-grid" />
                     <div className="adray-hero-beam" />
 
@@ -1117,15 +1117,15 @@ export default function Index() {
                           </div>
 
                           <div className="min-w-0">
-                            <p className="text-[11px] uppercase tracking-[0.24em] text-white/38">
+                            <p className="text-[10px] uppercase tracking-[0.22em] text-white/38 sm:text-[11px] sm:tracking-[0.24em]">
                               Step 1 · Activation
                             </p>
 
-                            <h1 className="mt-3 max-w-[760px] text-[1.82rem] font-extrabold leading-[0.96] tracking-[-0.045em] text-white/95 sm:text-[3.65rem]">
+                            <h1 className="mt-3 max-w-[760px] break-words text-[1.55rem] font-bold leading-[1.05] tracking-[-0.02em] text-white/95 sm:text-[3.65rem] sm:font-extrabold sm:leading-[0.96] sm:tracking-[-0.045em]">
                               {heroTitle}
                             </h1>
 
-                            <p className="mt-4 max-w-3xl text-[13px] leading-6 text-white/56 sm:text-[16px] sm:leading-7">
+                            <p className="mt-3 max-w-3xl text-[12.5px] leading-5 text-white/56 sm:mt-4 sm:text-[16px] sm:leading-7">
                               {heroDesc}
                             </p>
 
@@ -1169,6 +1169,7 @@ export default function Index() {
                               <Pill label="Meta Ads" done={metaReady} />
                               <Pill label="Google Ads" done={adsReady} />
                               <Pill label="Google Analytics" done={gaReady} />
+                              <Pill label="Pixel" done={pixelConnected} />
                             </div>
                           </div>
                         </div>
