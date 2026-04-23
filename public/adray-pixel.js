@@ -1512,6 +1512,78 @@
     });
   })();
 
+  // 5b. Shopify: Purchase event on thank-you / order-status page.
+  // Shopify checkout URLs follow these patterns:
+  //   /checkouts/:token/thank_you            (standard)
+  //   /checkouts/c/:token/thank_you          (checkout extensibility)
+  //   /:shop/orders/:order_id                (order status page, logged-in customer)
+  // Shopify also exposes `Shopify.checkout` on the thank-you page with
+  //   { order_id, subtotal_price, total_price, currency, token, email, line_items }
+  (function detectShopifyPurchase() {
+    function looksLikeShopifyThankYou() {
+      var path = window.location.pathname || '';
+      if (/\/thank[-_]?you(\b|\/|$)/i.test(path)) return true;
+      if (/\/checkouts\/(c\/)?[^\/]+\/thank[-_]?you/i.test(path)) return true;
+      if (/\/orders\/\d+/i.test(path) && (window.Shopify || document.querySelector('meta[name="shopify-checkout-api-token"]'))) return true;
+      return false;
+    }
+
+    function shopifyRevenue(co) {
+      // Shopify price fields are strings or numbers — normalize.
+      var candidates = [co.total_price, co.totalPrice, co.subtotal_price];
+      for (var i = 0; i < candidates.length; i++) {
+        var n = Number(candidates[i]);
+        if (Number.isFinite(n) && n > 0) return n;
+      }
+      return null;
+    }
+
+    function shopifyLineItems(co) {
+      var items = co.line_items || co.lineItems || [];
+      if (!Array.isArray(items)) return null;
+      return items.map(function(li) {
+        return {
+          id:       li.id || li.product_id || li.variant_id || null,
+          sku:      li.sku || null,
+          name:     li.title || li.name || li.product_title || null,
+          quantity: Number(li.quantity || 1),
+          price:    Number(li.price || li.final_price || 0),
+        };
+      });
+    }
+
+    if (!looksLikeShopifyThankYou()) return;
+
+    // Primary: Shopify.checkout global on thank-you page.
+    var co = (window.Shopify && window.Shopify.checkout) || window.__SHOPIFY_CHECKOUT__ || null;
+
+    if (co) {
+      var orderId = String(co.order_id || co.orderId || '') || null;
+      var revenue = shopifyRevenue(co);
+      var currency = String(co.currency || co.presentment_currency || 'USD').toUpperCase();
+
+      sendEvent('purchase', {
+        event_id: orderId ? 'brw_sh_' + orderId : undefined,
+        order_id: orderId,
+        revenue:  revenue,
+        currency: currency,
+        items:    shopifyLineItems(co),
+        checkout_token: co.token || co.checkout_token || null,
+        customer_email: co.email || null,
+      });
+      return;
+    }
+
+    // Fallback: scrape from URL + meta tags.
+    var fromUrl = window.location.pathname.match(/\/orders\/(\d+)/) ||
+                  window.location.pathname.match(/\/checkouts\/(?:c\/)?([^\/]+)\/thank/i);
+    sendEvent('purchase', {
+      event_id: fromUrl ? 'brw_sh_' + fromUrl[1] : undefined,
+      order_id: fromUrl ? fromUrl[1] : null,
+      currency: (document.querySelector('meta[property="og:price:currency"]')||{}).content || null,
+    });
+  })();
+
   // 6. Expose for manual triggers with enhanced API
   window.AdRay = window.AdRay || {};
   window.AdRay.track = sendEvent;
