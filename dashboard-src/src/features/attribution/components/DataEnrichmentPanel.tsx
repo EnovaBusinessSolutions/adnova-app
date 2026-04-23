@@ -193,12 +193,31 @@ function SignalTag({ label, tip }: { label: string; tip: string }) {
   );
 }
 
+const ARCHETYPE_STYLES: Record<string, string> = {
+  high_intent:       'border-purple-500/30 bg-purple-500/10 text-purple-400',
+  new_visitor:       'border-blue-500/30 bg-blue-500/10 text-blue-400',
+  loyal_buyer:       'border-emerald-500/30 bg-emerald-500/10 text-emerald-400',
+  abandonment_risk:  'border-red-500/30 bg-red-500/10 text-red-400',
+  price_sensitive:   'border-amber-500/30 bg-amber-500/10 text-amber-400',
+  researcher:        'border-cyan-500/30 bg-cyan-500/10 text-cyan-400',
+};
+
+function archetypeTip(archetype: string | null, tier: string | null, confidence: number | null): string {
+  if (!archetype) return 'No BRI analysis available for this session yet.';
+  const conf = confidence != null ? ` (${Math.round(confidence * 100)}% confidence)` : '';
+  const tierStr = tier ? ` · Tier: ${tier}` : '';
+  return `BRI Archetype: ${archetype}${tierStr}${conf}. Behavioral Revenue Intelligence classifies buyers based on session signals to optimize retargeting.`;
+}
+
 function OrderCard({ purchase }: { purchase: RecentPurchase }) {
   const signals = extractSignals(purchase.events);
   const meta    = metaStatus(purchase.attributedChannel, signals);
   const google  = googleStatus(purchase.attributedChannel, signals);
   const overall = overallStatus(meta, google);
   const activeSignals = SIGNAL_LABELS.filter(({ key }) => signals[key]);
+
+  const { briArchetype, briConfidence, briOrganicConverter, briExcludeFromRetargeting, briCustomerTier, briNextBestAction } = purchase;
+  const archetypeStyle = briArchetype ? (ARCHETYPE_STYLES[briArchetype] ?? 'border-white/10 bg-white/5 text-white/50') : null;
 
   return (
     <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-3.5">
@@ -224,6 +243,42 @@ function OrderCard({ purchase }: { purchase: RecentPurchase }) {
             <PlatformBadge label="Meta"   status={meta}   channel={purchase.attributedChannel} />
             <PlatformBadge label="Google" status={google} channel={purchase.attributedChannel} />
           </div>
+
+          {/* BRI badges */}
+          {archetypeStyle && (
+            <div className="flex flex-wrap items-center gap-1.5">
+              <Tip content={archetypeTip(briArchetype, briCustomerTier, briConfidence)}>
+                <span className={`cursor-default inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium ${archetypeStyle}`}>
+                  <span className="h-1.5 w-1.5 rounded-full bg-current opacity-70" />
+                  {briArchetype!.replace(/_/g, ' ')}
+                  {briConfidence != null && (
+                    <span className="opacity-60 ml-0.5">{Math.round(briConfidence * 100)}%</span>
+                  )}
+                </span>
+              </Tip>
+              {briOrganicConverter && (
+                <Tip content="This buyer converted organically — no paid retargeting needed. Excluding from paid audiences saves budget.">
+                  <span className="cursor-default inline-flex items-center gap-1 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-[10px] font-medium text-emerald-400">
+                    organic
+                  </span>
+                </Tip>
+              )}
+              {briExcludeFromRetargeting && (
+                <Tip content="BRI flagged this buyer to be excluded from retargeting audiences — they convert without ad pressure.">
+                  <span className="cursor-default inline-flex items-center gap-1 rounded-full border border-orange-500/30 bg-orange-500/10 px-2 py-0.5 text-[10px] font-medium text-orange-400">
+                    suppress retargeting
+                  </span>
+                </Tip>
+              )}
+              {briNextBestAction && (
+                <Tip content={`Next best action: ${briNextBestAction.content} (${briNextBestAction.priority} priority)`}>
+                  <span className="cursor-default inline-flex items-center gap-1 rounded-full border border-[#B55CFF]/30 bg-[#B55CFF]/10 px-2 py-0.5 text-[10px] font-medium text-[#B55CFF]/80">
+                    {briNextBestAction.type}
+                  </span>
+                </Tip>
+              )}
+            </div>
+          )}
 
           {/* Signal tags */}
           {activeSignals.length > 0 && (

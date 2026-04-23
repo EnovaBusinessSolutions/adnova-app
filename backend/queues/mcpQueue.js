@@ -13,9 +13,17 @@ if (!REDIS_URL) {
 }
 
 const connection = REDIS_URL
-  ? new IORedis(REDIS_URL, {
-      maxRetriesPerRequest: null,
-    })
+  ? (() => {
+      const c = new IORedis(REDIS_URL, {
+        maxRetriesPerRequest: null,
+        retryStrategy: (times) => times >= 3 ? null : Math.min(times * 1000, 5000),
+      });
+      let _logged = false;
+      c.on('error', (err) => {
+        if (!_logged) { console.warn('[mcpQueue] Redis unavailable:', err.message); _logged = true; }
+      });
+      return c;
+    })()
   : null;
 
 const mcpQueue = connection

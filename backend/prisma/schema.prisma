@@ -52,6 +52,7 @@ model Account {
   snapshot             MerchantSnapshot?
   sessionRecordings    SessionRecording[]
   sessionPackets       SessionPacket[]
+  people               Person[]
   abandonmentRiskScores AbandonmentRiskScore[]
   abandonmentCohorts   AbandonmentCohort[]
 
@@ -401,4 +402,27 @@ model SessionPacket {
   @@index([accountId, outcome])
   @@index([accountId, orderId])
   @@map("session_packets")
+}
+
+// ─── BRI Phase 7: Person ──────────────────────────────────────────────────────
+// Aggregates multiple visitorIds (userKeys) that belong to the same real person.
+// Built incrementally by personResolver.js after each SessionPacket is analyzed.
+
+model Person {
+  id           String   @id @default(uuid())
+  accountId    String   @map("account_id")
+  visitorIds   String[] @map("visitor_ids")    // userKeys confirmed to be this person
+  emailHashes  String[] @map("email_hashes")
+  phoneHashes  String[] @map("phone_hashes")
+  customerIds  String[] @map("customer_ids")   // platform customer IDs (Shopify, Woo)
+  firstSeenAt  DateTime @map("first_seen_at")
+  lastSeenAt   DateTime @map("last_seen_at")
+  sessionCount Int      @default(0) @map("session_count")
+  orderCount   Int      @default(0) @map("order_count")
+  totalSpent   Float    @default(0) @map("total_spent")
+
+  account Account @relation(fields: [accountId], references: [accountId], onDelete: Cascade)
+
+  @@index([accountId])
+  @@map("people")
 }

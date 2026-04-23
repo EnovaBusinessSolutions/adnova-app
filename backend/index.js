@@ -808,6 +808,7 @@ app.use("/api/feed", require("./routes/feed"));
 app.use("/api/recording", recordingRoutes);
 app.use('/api', wooOrdersRoutes);
 app.use('/api/platform-connections', require('./routes/platformConnections'));
+app.use('/api/bri', require('./routes/bri'));
 app.use('/wp-plugin', wordpressPluginRoutes);
 
 // AdRay collect ya estĂĄ montado arriba (con rateLimitCollect). SeĂąal interna y plataformas (main):

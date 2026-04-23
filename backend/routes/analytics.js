@@ -3114,6 +3114,40 @@ router.get('/:account_id', async (req, res) => {
       // SessionRecording table may not exist in all envs.
     }
 
+    // Enrich recentPurchases with BRI AI analysis from SessionPacket.
+    try {
+      const sessionIds = recentPurchases.map((p) => p.sessionId).filter(Boolean);
+      const orderIds   = recentPurchases.map((p) => p.orderId).filter(Boolean);
+      if (sessionIds.length || orderIds.length) {
+        const packets = await prisma.sessionPacket.findMany({
+          where: {
+            accountId: account_id,
+            OR: [
+              ...(sessionIds.length ? [{ sessionId: { in: sessionIds } }] : []),
+              ...(orderIds.length   ? [{ orderId:   { in: orderIds   } }] : []),
+            ],
+          },
+          select: { sessionId: true, orderId: true, aiAnalysis: true },
+        });
+        const bySession = new Map(packets.filter(p => p.sessionId).map(p => [p.sessionId, p]));
+        const byOrder   = new Map(packets.filter(p => p.orderId).map(p => [p.orderId, p]));
+        for (const p of recentPurchases) {
+          const packet = (p.sessionId && bySession.get(p.sessionId))
+                      || (p.orderId   && byOrder.get(p.orderId))
+                      || null;
+          const ai = packet?.aiAnalysis || null;
+          p.briArchetype               = ai?.archetype               || null;
+          p.briConfidence              = ai?.confidence_score         ?? null;
+          p.briOrganicConverter        = ai?.organic_converter        ?? null;
+          p.briExcludeFromRetargeting  = ai?.exclude_from_retargeting ?? null;
+          p.briCustomerTier            = ai?.customer_tier            || null;
+          p.briNextBestAction          = ai?.next_best_action         || null;
+        }
+      }
+    } catch (_briErr) {
+      // SessionPacket table may not exist in all envs.
+    }
+
     // Recompute channel stats by selected attribution model over resolved conversions.
     Object.keys(channelStats).forEach((key) => {
       channelStats[key].revenue = 0;
