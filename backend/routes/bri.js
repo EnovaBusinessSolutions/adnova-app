@@ -52,6 +52,27 @@ router.get('/pipeline-stats', async (req, res) => {
 });
 
 /**
+ * GET /api/bri/persons?limit=20
+ * Returns recent Persons with their PersonAnalysis.
+ */
+router.get('/persons', async (req, res) => {
+  try {
+    const limit = Math.min(Number(req.query.limit) || 20, 100);
+
+    const persons = await prisma.person.findMany({
+      orderBy: { lastSeenAt: 'desc' },
+      take: limit,
+      include: { analysis: true },
+    });
+
+    return res.json(persons);
+  } catch (err) {
+    console.error('[BRI] persons error:', err.message);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+/**
  * GET /api/bri/session-packets?limit=50
  * Returns recent SessionPackets with their AI analysis.
  */

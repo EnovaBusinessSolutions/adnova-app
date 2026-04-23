@@ -421,8 +421,36 @@ model Person {
   orderCount   Int      @default(0) @map("order_count")
   totalSpent   Float    @default(0) @map("total_spent")
 
-  account Account @relation(fields: [accountId], references: [accountId], onDelete: Cascade)
+  account  Account        @relation(fields: [accountId], references: [accountId], onDelete: Cascade)
+  analysis PersonAnalysis?
 
   @@index([accountId])
   @@map("people")
+}
+
+// ─── BRI Phase 8: PersonAnalysis ─────────────────────────────────────────────
+// Cross-session AI profile per Person. Re-computed after each new SessionPacket.
+// Rate-limited to once per person per day.
+
+model PersonAnalysis {
+  id              String   @id @default(uuid())
+  personId        String   @unique @map("person_id")
+  accountId       String   @map("account_id")
+  tier            String?                         // vip | returning | new | at_risk
+  behaviorSummary String?  @map("behavior_summary")
+  conversionProb  Float?   @map("conversion_probability")
+  preferredChannel String? @map("preferred_channel")
+  nextBestAction  Json?    @map("next_best_action")
+  retentionInsight String? @map("retention_insight")
+  ltvEstimate     Float?   @map("ltv_estimate")
+  confidence      Float?
+  sessionCount    Int      @default(0) @map("session_count")
+  lastSessionId   String?  @map("last_session_id")
+  analyzedAt      DateTime @default(now()) @map("analyzed_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  person Person @relation(fields: [personId], references: [id], onDelete: Cascade)
+
+  @@index([accountId])
+  @@map("person_analysis")
 }

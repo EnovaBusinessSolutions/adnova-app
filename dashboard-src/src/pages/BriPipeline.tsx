@@ -39,6 +39,33 @@ interface AiAnalysis {
   predicted_ltv_multiplier?: number;
 }
 
+interface PersonAnalysis {
+  tier: string | null;
+  behaviorSummary: string | null;
+  conversionProb: number | null;
+  preferredChannel: string | null;
+  nextBestAction: { type: string; content: string; priority: string; timing_days?: number } | null;
+  retentionInsight: string | null;
+  ltvEstimate: number | null;
+  confidence: number | null;
+  sessionCount: number;
+  analyzedAt: string;
+}
+
+interface PersonRow {
+  id: string;
+  accountId: string;
+  visitorIds: string[];
+  emailHashes: string[];
+  customerIds: string[];
+  firstSeenAt: string;
+  lastSeenAt: string;
+  sessionCount: number;
+  orderCount: number;
+  totalSpent: number;
+  analysis: PersonAnalysis | null;
+}
+
 interface SessionPacketRow {
   sessionId: string;
   accountId: string;
@@ -396,25 +423,160 @@ function PacketRow({ packet }: { packet: SessionPacketRow }) {
   );
 }
 
+/* ── Person Row ─────────────────────────────────────────────────────────────── */
+
+const TIER_STYLES: Record<string, string> = {
+  vip:       "bg-yellow-500/15 text-yellow-400 border-yellow-500/30",
+  returning: "bg-emerald-500/15 text-emerald-400 border-emerald-500/30",
+  new:       "bg-blue-500/15 text-blue-400 border-blue-500/30",
+  at_risk:   "bg-red-500/15 text-red-400 border-red-500/30",
+};
+
+function PersonRow({ person }: { person: PersonRow }) {
+  const [open, setOpen] = useState(false);
+  const a = person.analysis;
+
+  return (
+    <div className="border-b border-white/[0.05] last:border-0">
+      <button
+        className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-white/[0.02] transition-colors"
+        onClick={() => setOpen(!open)}
+      >
+        {open ? <ChevronDown className="h-3.5 w-3.5 text-white/30 shrink-0" /> : <ChevronRight className="h-3.5 w-3.5 text-white/30 shrink-0" />}
+
+        <span className="font-mono text-xs text-white/40 w-[100px] shrink-0 truncate">
+          {person.id.slice(0, 8)}…
+        </span>
+
+        {a?.tier ? (
+          <Badge variant="outline" className={`text-[10px] px-1.5 py-0 shrink-0 ${TIER_STYLES[a.tier] || "bg-white/5 text-white/30 border-white/10"}`}>
+            {a.tier}
+          </Badge>
+        ) : (
+          <Badge variant="outline" className="text-[10px] px-1.5 py-0 shrink-0 bg-white/5 text-white/20 border-white/10">
+            no profile
+          </Badge>
+        )}
+
+        <span className="text-xs text-white/30 shrink-0">{person.sessionCount} sessions</span>
+        <span className="text-xs text-white/30 shrink-0">{person.orderCount} orders</span>
+
+        <span className="ml-auto text-xs text-white/50 shrink-0 font-medium">
+          ${person.totalSpent.toFixed(0)}
+        </span>
+
+        {a?.conversionProb != null && (
+          <span className="text-xs text-white/30 shrink-0 w-10 text-right">
+            {Math.round(a.conversionProb * 100)}%
+          </span>
+        )}
+      </button>
+
+      {open && (
+        <div className="px-4 pb-5 space-y-3 text-xs">
+          {/* Identifiers */}
+          <div className="flex flex-wrap gap-x-6 gap-y-1 text-[10px] text-white/30">
+            <span>first seen: <span className="text-white/50">{new Date(person.firstSeenAt).toLocaleDateString()}</span></span>
+            <span>last seen: <span className="text-white/50">{new Date(person.lastSeenAt).toLocaleDateString()}</span></span>
+            {person.visitorIds.length > 0 && <span>visitors: <span className="font-mono text-white/40">{person.visitorIds.length}</span></span>}
+            {person.emailHashes.length > 0 && <span>emails: <span className="font-mono text-white/40">{person.emailHashes.length}</span></span>}
+            {person.customerIds.length > 0 && <span>customerIds: <span className="font-mono text-white/40">{person.customerIds.length}</span></span>}
+          </div>
+
+          {!a && <p className="text-white/20 italic">No cross-session analysis yet — will generate after next session.</p>}
+
+          {a && (
+            <>
+              {/* Behavior summary */}
+              {a.behaviorSummary && (
+                <div className="rounded-lg bg-white/[0.03] border border-white/[0.05] p-3">
+                  <p className="text-[10px] font-semibold uppercase tracking-wider text-white/30 mb-1">Behavior summary</p>
+                  <p className="text-xs text-white/60 leading-relaxed">{a.behaviorSummary}</p>
+                </div>
+              )}
+
+              {/* Key metrics */}
+              <div className="flex flex-wrap gap-4">
+                {a.conversionProb != null && (
+                  <div>
+                    <p className="text-[10px] text-white/30">Conversion prob.</p>
+                    <p className="text-sm font-semibold text-white/70">{Math.round(a.conversionProb * 100)}%</p>
+                  </div>
+                )}
+                {a.ltvEstimate != null && (
+                  <div>
+                    <p className="text-[10px] text-white/30">LTV estimate</p>
+                    <p className="text-sm font-semibold text-white/70">${a.ltvEstimate.toFixed(0)}</p>
+                  </div>
+                )}
+                {a.preferredChannel && (
+                  <div>
+                    <p className="text-[10px] text-white/30">Preferred channel</p>
+                    <p className="text-sm font-semibold text-white/70">{a.preferredChannel}</p>
+                  </div>
+                )}
+                {a.confidence != null && (
+                  <div>
+                    <p className="text-[10px] text-white/30">Confidence</p>
+                    <p className="text-sm font-semibold text-white/70">{Math.round(a.confidence * 100)}%</p>
+                  </div>
+                )}
+              </div>
+
+              {/* Next best action */}
+              {a.nextBestAction && (
+                <div className="rounded-lg bg-purple-500/5 border border-purple-500/15 p-3">
+                  <div className="flex items-center gap-2 mb-1">
+                    <p className="text-[10px] font-semibold uppercase tracking-wider text-purple-400/60">Next best action</p>
+                    <span className="text-[10px] text-white/30">{a.nextBestAction.type}</span>
+                    <span className={`text-[10px] rounded-full px-1.5 border ${
+                      a.nextBestAction.priority === "high" ? "border-red-500/30 text-red-400 bg-red-500/10"
+                      : a.nextBestAction.priority === "medium" ? "border-amber-500/30 text-amber-400 bg-amber-500/10"
+                      : "border-white/10 text-white/30 bg-white/5"
+                    }`}>{a.nextBestAction.priority}</span>
+                    {a.nextBestAction.timing_days != null && (
+                      <span className="text-[10px] text-white/25">in {a.nextBestAction.timing_days}d</span>
+                    )}
+                  </div>
+                  <p className="text-xs text-white/60 leading-relaxed">{a.nextBestAction.content}</p>
+                </div>
+              )}
+
+              {/* Retention insight */}
+              {a.retentionInsight && (
+                <p className="text-xs text-white/40 italic">{a.retentionInsight}</p>
+              )}
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* ── Main Page ──────────────────────────────────────────────────────────────── */
 
 export default function BriPipeline() {
   const [stats, setStats] = useState<PipelineStats | null>(null);
   const [packets, setPackets] = useState<SessionPacketRow[]>([]);
+  const [persons, setPersons] = useState<PersonRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<"all" | "analyzed" | "pending">("all");
+  const [mainTab, setMainTab] = useState<"sessions" | "persons">("sessions");
 
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
-    const [statsRes, packetsRes] = await Promise.all([
+    const [statsRes, packetsRes, personsRes] = await Promise.all([
       apiFetch<PipelineStats>("/api/bri/pipeline-stats"),
       apiFetch<SessionPacketRow[]>("/api/bri/session-packets?limit=50"),
+      apiFetch<PersonRow[]>("/api/bri/persons?limit=30"),
     ]);
     if (!statsRes.ok) setError(statsRes.error || "Failed to load stats");
     if (statsRes.data) setStats(statsRes.data);
     if (packetsRes.data) setPackets(packetsRes.data);
+    if (personsRes.data) setPersons(personsRes.data);
     setLoading(false);
   }, []);
 
@@ -492,20 +654,32 @@ export default function BriPipeline() {
           </>
         )}
 
-        {/* Session Packets */}
+        {/* Main tabs: Sessions / Persons */}
         <Card className="bg-white/[0.03] border-white/[0.06]">
-          <CardHeader className="py-3 px-4 flex flex-row items-center justify-between">
-            <CardTitle className="text-sm font-medium text-white/60">Session Packets</CardTitle>
+          <CardHeader className="py-3 px-4 flex flex-row items-center justify-between border-b border-white/[0.05]">
             <div className="flex gap-1">
-              {(["all", "analyzed", "pending"] as const).map(f => (
-                <button key={f} onClick={() => setFilter(f)}
-                  className={`text-xs px-2.5 py-1 rounded-md transition-colors ${
-                    filter === f ? "bg-white/10 text-white" : "text-white/30 hover:text-white/60"
+              {(["sessions", "persons"] as const).map(t => (
+                <button key={t} onClick={() => setMainTab(t)}
+                  className={`text-sm px-3 py-1 rounded-md transition-colors font-medium ${
+                    mainTab === t ? "bg-white/10 text-white" : "text-white/30 hover:text-white/60"
                   }`}>
-                  {f}
+                  {t === "sessions" ? `Sessions (${packets.length})` : `Persons (${persons.length})`}
                 </button>
               ))}
             </div>
+
+            {mainTab === "sessions" && (
+              <div className="flex gap-1">
+                {(["all", "analyzed", "pending"] as const).map(f => (
+                  <button key={f} onClick={() => setFilter(f)}
+                    className={`text-xs px-2.5 py-1 rounded-md transition-colors ${
+                      filter === f ? "bg-white/10 text-white" : "text-white/30 hover:text-white/60"
+                    }`}>
+                    {f}
+                  </button>
+                ))}
+              </div>
+            )}
           </CardHeader>
           <CardContent className="p-0">
             {loading && packets.length === 0 && (
@@ -513,12 +687,28 @@ export default function BriPipeline() {
                 <Loader2 className="h-5 w-5 animate-spin mr-2" />Loading…
               </div>
             )}
-            {!loading && filteredPackets.length === 0 && (
-              <div className="flex flex-col items-center justify-center py-12 text-white/20 text-sm gap-2">
-                <CheckCircle2 className="h-8 w-8" />No session packets yet
-              </div>
+
+            {mainTab === "sessions" && (
+              <>
+                {!loading && filteredPackets.length === 0 && (
+                  <div className="flex flex-col items-center justify-center py-12 text-white/20 text-sm gap-2">
+                    <CheckCircle2 className="h-8 w-8" />No session packets yet
+                  </div>
+                )}
+                {filteredPackets.map(p => <PacketRow key={p.sessionId} packet={p} />)}
+              </>
             )}
-            {filteredPackets.map(p => <PacketRow key={p.sessionId} packet={p} />)}
+
+            {mainTab === "persons" && (
+              <>
+                {!loading && persons.length === 0 && (
+                  <div className="flex flex-col items-center justify-center py-12 text-white/20 text-sm gap-2">
+                    <Users className="h-8 w-8" />No persons resolved yet
+                  </div>
+                )}
+                {persons.map(p => <PersonRow key={p.id} person={p} />)}
+              </>
+            )}
           </CardContent>
         </Card>
       </div>

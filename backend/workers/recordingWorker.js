@@ -379,16 +379,123 @@ async function handleAnalyzeSession(job) {
   console.log(`[recordingWorker:analyze-session] ${sessionId} done — archetype=${analysis.archetype} organic=${analysis.organic_converter}`);
 
   // Phase 7: resolve Person identity (non-blocking)
+  let personId = null;
   try {
     const { resolvePersonForPacket } = require('../services/personResolver');
     const freshPacket = await prisma.sessionPacket.findUnique({ where: { sessionId } });
     if (freshPacket) {
-      const personId = await resolvePersonForPacket(freshPacket, { prisma });
+      personId = await resolvePersonForPacket(freshPacket, { prisma });
       if (personId) console.log(`[recordingWorker:analyze-session] ${sessionId} → personId=${personId}`);
     }
   } catch (err) {
     console.warn(`[recordingWorker:analyze-session] person resolution failed (non-fatal):`, err.message);
   }
+
+  // Phase 8: enqueue cross-session person analysis (rate-limited 1/day)
+  if (personId) {
+    try {
+      const existing = await prisma.personAnalysis.findUnique({
+        where: { personId },
+        select: { analyzedAt: true },
+      }).catch(() => null);
+
+      const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
+      const needsAnalysis = !existing || existing.analyzedAt < oneDayAgo;
+
+      if (needsAnalysis) {
+        await enqueueRecordingJob('person:re-analyze', { personId, accountId }, { delay: 5000 });
+        console.log(`[recordingWorker:analyze-session] enqueued person:re-analyze for ${personId}`);
+      }
+    } catch (err) {
+      console.warn(`[recordingWorker:analyze-session] person analysis enqueue failed (non-fatal):`, err.message);
+    }
+  }
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * Job: person:re-analyze  (Fase 8)
+ * Cross-session AI profile for a Person. Rate-limited to once per day by caller.
+ * ───────────────────────────────────────────────────────────────────────────── */
+async function handlePersonAnalysis(job) {
+  const { personId, accountId } = job.data;
+  console.log(`[recordingWorker:person-analyze] ${personId}`);
+
+  const person = await prisma.person.findUnique({ where: { id: personId } }).catch(() => null);
+  if (!person) {
+    console.warn(`[recordingWorker:person-analyze] person ${personId} not found`);
+    return;
+  }
+
+  // Load all analyzed SessionPackets for this person
+  const packets = await prisma.sessionPacket.findMany({
+    where: { accountId, personId },
+    orderBy: { startTs: 'asc' },
+    select: {
+      sessionId: true, startTs: true, endTs: true, durationMs: true,
+      outcome: true, orderId: true, cartValueAtEnd: true,
+      aiAnalysis: true, keyframes: true,
+    },
+  }).catch(() => []);
+
+  // Load orders linked to this person's visitorIds / emailHashes
+  const orders = await prisma.order.findMany({
+    where: {
+      accountId,
+      OR: [
+        ...(person.visitorIds.length   ? [{ userKey:   { in: person.visitorIds   } }] : []),
+        ...(person.emailHashes.length  ? [{ emailHash: { in: person.emailHashes  } }] : []),
+        ...(person.customerIds.length  ? [{ customerId:{ in: person.customerIds  } }] : []),
+      ],
+    },
+    select: { revenue: true, currency: true, platformCreatedAt: true, createdAt: true, attributedChannel: true },
+    orderBy: { platformCreatedAt: 'asc' },
+  }).catch(() => []);
+
+  const { analyzePerson } = require('../services/personAnalyst');
+
+  let profile;
+  try {
+    const timeout = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error('LLM timeout 45s')), 45_000)
+    );
+    profile = await Promise.race([analyzePerson(person, packets, orders), timeout]);
+  } catch (err) {
+    console.warn(`[recordingWorker:person-analyze] ${personId} failed:`, err.message);
+    return;
+  }
+
+  // Upsert PersonAnalysis
+  await prisma.personAnalysis.upsert({
+    where: { personId },
+    create: {
+      personId,
+      accountId,
+      tier:             profile.tier             || null,
+      behaviorSummary:  profile.behavior_summary  || null,
+      conversionProb:   profile.conversion_probability ?? null,
+      preferredChannel: profile.preferred_channel  || null,
+      nextBestAction:   profile.next_best_action   || null,
+      retentionInsight: profile.retention_insight  || null,
+      ltvEstimate:      profile.ltv_estimate       ?? null,
+      confidence:       profile.confidence         ?? null,
+      sessionCount:     packets.length,
+      lastSessionId:    packets[packets.length - 1]?.sessionId || null,
+    },
+    update: {
+      tier:             profile.tier             || null,
+      behaviorSummary:  profile.behavior_summary  || null,
+      conversionProb:   profile.conversion_probability ?? null,
+      preferredChannel: profile.preferred_channel  || null,
+      nextBestAction:   profile.next_best_action   || null,
+      retentionInsight: profile.retention_insight  || null,
+      ltvEstimate:      profile.ltv_estimate       ?? null,
+      confidence:       profile.confidence         ?? null,
+      sessionCount:     packets.length,
+      lastSessionId:    packets[packets.length - 1]?.sessionId || null,
+    },
+  }).catch((err) => console.error(`[recordingWorker:person-analyze] upsert failed:`, err.message));
+
+  console.log(`[recordingWorker:person-analyze] ${personId} done — tier=${profile.tier} ltv=${profile.ltv_estimate}`);
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
@@ -461,6 +568,7 @@ const worker = new Worker(
     if (name === 'recording:extract-signals') return handleExtractSignals(job);
     if (name === 'recording:build-packet') return handleBuildPacket(job);
     if (name === 'recording:analyze-session') return handleAnalyzeSession(job);
+    if (name === 'person:re-analyze') return handlePersonAnalysis(job);
     if (name === 'recording:erase-raw') return handleEraseRaw(job);
     console.warn(`[recordingWorker] Unknown job name: ${name}`);
   },
