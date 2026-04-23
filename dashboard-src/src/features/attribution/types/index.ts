@@ -182,6 +182,7 @@ export interface LiveFeedEvent {
   customerName?: string;
   eventId?: string;
   timestamp?: string;
+  customerName?: string | null;
   payload?: {
     customerName?: string | null;
     eventName: string;
@@ -193,6 +194,7 @@ export interface LiveFeedEvent {
     confidenceScore?: number | null;
     collectedAt?: string;
     productId?: string | null;
+    customerName?: string | null;
     [key: string]: unknown;
   };
 }

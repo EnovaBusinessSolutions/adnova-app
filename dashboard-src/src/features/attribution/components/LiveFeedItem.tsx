@@ -57,7 +57,9 @@ export function LiveFeedItem({ event }: LiveFeedItemProps) {
           <p className="mt-0.5 truncate text-[10px] text-white/35">{displayUrl}</p>
         )}
         {customerName && (
-          <p className="mt-0.5 text-[10px] text-white/50">{customerName}</p>
+          <p className="mt-0.5 truncate text-[10px] font-medium text-white/60">
+            {customerName}
+          </p>
         )}
       </div>
     </div>

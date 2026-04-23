@@ -329,11 +329,39 @@
       }
     });
 
+    // If fbclid present but _fbc cookie not set, synthesize it so Meta CAPI works
+    // Format per Meta spec: fb.<subdomain_index>.<timestamp>.<fbclid>
+    var fbclid = getQueryParam('fbclid');
+    if (fbclid && !getCookie('_fbc')) {
+      var fbc = 'fb.1.' + Date.now() + '.' + fbclid;
+      setCookie('_fbc', fbc, 7776000); // 90 days
+      safeStorageSet(window.localStorage, '__adray_attr_fbc', fbc);
+    }
+
     if (changed) {
       safeStorageSet(window.localStorage, '__adray_attr_updated_at', String(Date.now()));
     }
 
     persistTrackedUtmHistory();
+  }
+
+  // Ensure fbclid/gclid from entry URL are captured even if current page lost them
+  function captureClickIdFromEntryUrl() {
+    try {
+      var entryUrl = getLandingPageUrl();
+      if (!entryUrl) return;
+      var parsed = parseTrackedUrl(entryUrl);
+      if (!parsed) return;
+
+      var clicks = ['fbclid', 'gclid', 'ttclid', 'wbraid', 'gbraid', 'msclkid'];
+      clicks.forEach(function(key) {
+        if (safeStorageGet(window.localStorage, '__adray_attr_' + key)) return; // already have it
+        var val = parsed.searchParams.get(key);
+        if (val) {
+          safeStorageSet(window.localStorage, '__adray_attr_' + key, val);
+        }
+      });
+    } catch (_) {}
   }
 
   function getAttributionParam(key) {
@@ -551,28 +579,39 @@
   }
 
   /**
-   * Detects page type based on URL and DOM
+   * Detects page type based on URL and DOM (flexible for different locales and setups)
    */
   function detectPageType() {
-    const path = window.location.pathname;
-    
-    // Shopify patterns
-    if (path === '/') return 'home';
+    const path = window.location.pathname.toLowerCase();
+
+    // Shopify patterns (most specific first)
     if (path.includes('/products/')) return 'product';
     if (path.includes('/collections/')) return 'collection';
     if (path.includes('/cart')) return 'cart';
     if (isOrderReceivedUrl(path)) return 'confirmation';
     if (path.includes('/checkout')) return 'checkout';
-    
-    // WooCommerce patterns
-    if (document.body.classList.contains('home')) return 'home';
-    if (document.body.classList.contains('single-product')) return 'product';
-    if (document.body.classList.contains('woocommerce-shop') || 
-        document.body.classList.contains('archive')) return 'collection';
-    if (document.body.classList.contains('woocommerce-cart')) return 'cart';
-    if (document.body.classList.contains('woocommerce-order-received')) return 'confirmation';
-    if (document.body.classList.contains('woocommerce-checkout')) return 'checkout';
-    
+
+    // WooCommerce patterns (by URL, multiple locales) — priority over class/home
+    if (/\/(order-received|pedido-recibido)(\?|$|\/)/i.test(path)) return 'confirmation';
+    if (/\/(checkout|finalizar-compra|pedir|pagar)(\?|$|\/)/i.test(path)) return 'checkout';
+    if (/\/(cart|carrito|carro|mi-carrito|my-cart)(\?|$|\/)/i.test(path)) return 'cart';
+    if (/\/(product|producto|productos|shop|tienda)\/[^\/]+/i.test(path)) return 'product';
+
+    // WooCommerce patterns (by body class — requires document.body)
+    var body = document && document.body;
+    if (body && body.classList) {
+      if (body.classList.contains('woocommerce-order-received')) return 'confirmation';
+      if (body.classList.contains('woocommerce-checkout')) return 'checkout';
+      if (body.classList.contains('woocommerce-cart')) return 'cart';
+      if (body.classList.contains('single-product')) return 'product';
+      if (body.classList.contains('woocommerce-shop') ||
+          body.classList.contains('archive')) return 'collection';
+      if (body.classList.contains('home')) return 'home';
+    }
+
+    // Root path is home as last resort
+    if (path === '/' || path === '') return 'home';
+
     return 'other';
   }
 
@@ -640,6 +679,12 @@
     var msclkid = getAttributionParam('msclkid');
     var fbp = getCookie('_fbp');
     var fbc = getAttributionParam('fbc') || getCookie('_fbc');
+
+    // Fallback: extract fbclid from _fbc cookie (format: fb.1.<ts>.<fbclid>)
+    if (!fbclid && fbc) {
+      var fbcParts = String(fbc).split('.');
+      if (fbcParts.length >= 4) fbclid = fbcParts.slice(3).join('.');
+    }
 
     const capturedAt = new Date(now).toISOString();
     const seq = _adrayNextSeq();
@@ -1207,15 +1252,48 @@
 
   // 1. Send Page View immediately
   persistAttributionParams();
+  captureClickIdFromEntryUrl();  // Ensure fbclid/gclid captured from entry URL
   sendEvent("page_view");
 
-  // 1.1 Product page view for funnel completeness (view_item)
-  if (detectPageType() === 'product') {
-    const ctx = getProductContext();
-    sendEvent('view_item', {
-      product_id: ctx.product_id || null,
-      variant_id: ctx.variant_id || null
-    });
+  // Helper: detect cart/checkout and fire appropriate events
+  function detectAndFireFunnelEvents() {
+    var pageType = detectPageType();
+
+    // 1.1 Product page view for funnel completeness (view_item)
+    if (pageType === 'product') {
+      const ctx = getProductContext();
+      sendEvent('view_item', {
+        product_id: ctx.product_id || null,
+        variant_id: ctx.variant_id || null
+      });
+    }
+
+    // 1.2 Cart page → fire add_to_cart if not recent (simple page-based detection)
+    if (pageType === 'cart' && !isOrderReceivedUrl(window.location.pathname)) {
+      var lastCartFire = safeStorageGet(window.sessionStorage, '__adray_cart_page_fired');
+      var now = Date.now();
+      if (!lastCartFire || (now - Number(lastCartFire) > 10000)) { // once per 10s
+        safeStorageSet(window.sessionStorage, '__adray_cart_page_fired', String(now));
+        sendEvent('add_to_cart', { cart_value: detectCartValue(null, 1) });
+      }
+    }
+
+    // 1.3 Checkout page → fire begin_checkout immediately (platform-agnostic)
+    if (pageType === 'checkout' && !isOrderReceivedUrl(window.location.pathname)) {
+      trackBeginCheckout({
+        checkout_token: getCookie('woocommerce_cart_hash') || getCookie('cart') || getCookie('cart_sig') || null
+      }, window.location.href);
+    }
+  }
+
+  // Fire funnel events on initial page load
+  detectAndFireFunnelEvents();
+
+  // Re-detect on DOM ready (in case classes/content loaded after script)
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', detectAndFireFunnelEvents);
+  } else {
+    setTimeout(detectAndFireFunnelEvents, 100);
   }
 
   // 2. Intercept Add to Cart (multi-platform)
@@ -1398,13 +1476,6 @@
       }
     } catch (_) {}
   }, true);
-
-  // 4. Checkout page hit detection (platform-agnostic fallback).
-  if (detectPageType() === 'checkout' && !isOrderReceivedUrl(window.location.pathname)) {
-    trackBeginCheckout({
-      checkout_token: getCookie('woocommerce_cart_hash') || getCookie('cart') || getCookie('cart_sig') || null
-    }, window.location.href);
-  }
 
   setupCheckoutIdentityBlurTracking();
 
