@@ -45,7 +45,7 @@ const PROVIDERS: Provider[] = [
       <img
         src={chatgptLogo}
         alt="ChatGPT"
-        className="h-10 w-10 object-contain"
+        className="h-7 w-7 object-contain"
         draggable={false}
       />
     ),
@@ -63,7 +63,7 @@ const PROVIDERS: Provider[] = [
       <img
         src={claudeLogo}
         alt="Claude"
-        className="h-10 w-10 object-contain"
+        className="h-7 w-7 object-contain"
         draggable={false}
       />
     ),
