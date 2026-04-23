@@ -276,7 +276,7 @@ function CardSkeleton() {
 export function DataEnrichmentPanel({ purchases, loading }: Props) {
   return (
     <TooltipProvider delayDuration={300}>
-      <div className="futuristic-surface rounded-2xl p-4">
+      <div className="futuristic-surface rounded-2xl p-3 sm:p-4">
         {/* Header */}
         <div className="mb-1">
           <p className="text-[9px] font-semibold uppercase tracking-wider text-[var(--adray-purple)]/70">
