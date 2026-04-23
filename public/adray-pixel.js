@@ -347,21 +347,56 @@
 
   // Ensure fbclid/gclid from entry URL are captured even if current page lost them
   function captureClickIdFromEntryUrl() {
+    var captured = {};
     try {
+      // Source 1: landing page URL (saved on first load)
       var entryUrl = getLandingPageUrl();
-      if (!entryUrl) return;
-      var parsed = parseTrackedUrl(entryUrl);
-      if (!parsed) return;
-
-      var clicks = ['fbclid', 'gclid', 'ttclid', 'wbraid', 'gbraid', 'msclkid'];
-      clicks.forEach(function(key) {
-        if (safeStorageGet(window.localStorage, '__adray_attr_' + key)) return; // already have it
-        var val = parsed.searchParams.get(key);
-        if (val) {
-          safeStorageSet(window.localStorage, '__adray_attr_' + key, val);
+      if (entryUrl) {
+        var parsed = parseTrackedUrl(entryUrl);
+        if (parsed) {
+          var clicks = ['fbclid', 'gclid', 'ttclid', 'wbraid', 'gbraid', 'msclkid'];
+          clicks.forEach(function(key) {
+            if (safeStorageGet(window.localStorage, '__adray_attr_' + key)) return;
+            var val = parsed.searchParams.get(key);
+            if (val) {
+              safeStorageSet(window.localStorage, '__adray_attr_' + key, val);
+              captured[key] = val;
+            }
+          });
         }
-      });
+      }
+
+      // Source 2: document.referrer (when redirect stripped the param)
+      // Facebook: https://l.facebook.com/l.php?u=<target>&h=<hash>&fbclid=...
+      // The fbclid is in the referrer URL when coming from Facebook redirect
+      var referrer = document.referrer || '';
+      if (referrer) {
+        try {
+          var refUrl = new URL(referrer);
+          // Direct fbclid in referrer
+          var refFbclid = refUrl.searchParams.get('fbclid');
+          if (refFbclid && !safeStorageGet(window.localStorage, '__adray_attr_fbclid')) {
+            safeStorageSet(window.localStorage, '__adray_attr_fbclid', refFbclid);
+            captured.fbclid = refFbclid;
+          }
+          // Referrer from facebook.com without fbclid → we know it's FB traffic
+          if (/facebook\.com|fb\.com|instagram\.com/i.test(refUrl.hostname) &&
+              !safeStorageGet(window.localStorage, '__adray_attr_utm_source')) {
+            safeStorageSet(window.localStorage, '__adray_attr_utm_source', 'facebook');
+            safeStorageSet(window.localStorage, '__adray_attr_utm_medium', 'social');
+            captured.utm_source = 'facebook';
+          }
+          // Google referrer
+          if (/google\.com|googleadservices\.com/i.test(refUrl.hostname) &&
+              !safeStorageGet(window.localStorage, '__adray_attr_utm_source')) {
+            safeStorageSet(window.localStorage, '__adray_attr_utm_source', 'google');
+            captured.utm_source = 'google';
+          }
+        } catch (_) {}
+      }
     } catch (_) {}
+    adrayLog('captureClickIdFromEntryUrl:', captured, 'referrer:', document.referrer);
+    return captured;
   }
 
   function getAttributionParam(key) {
@@ -578,6 +613,21 @@
     return 'custom';
   }
 
+  // Debug mode: enable with ?adray_debug=1 or localStorage['__adray_debug']='1'
+  var ADRAY_DEBUG = false;
+  try {
+    ADRAY_DEBUG = new URLSearchParams(window.location.search).get('adray_debug') === '1'
+      || window.localStorage.getItem('__adray_debug') === '1';
+    if (new URLSearchParams(window.location.search).get('adray_debug') === '1') {
+      window.localStorage.setItem('__adray_debug', '1');
+    }
+  } catch (_) {}
+
+  function adrayLog() {
+    if (!ADRAY_DEBUG) return;
+    try { console.log.apply(console, ['[AdRay Pixel]'].concat([].slice.call(arguments))); } catch (_) {}
+  }
+
   /**
    * Detects page type based on URL and DOM (flexible for different locales and setups)
    */
@@ -592,9 +642,9 @@
     if (path.includes('/checkout')) return 'checkout';
 
     // WooCommerce patterns (by URL, multiple locales) — priority over class/home
-    if (/\/(order-received|pedido-recibido)(\?|$|\/)/i.test(path)) return 'confirmation';
-    if (/\/(checkout|finalizar-compra|pedir|pagar)(\?|$|\/)/i.test(path)) return 'checkout';
-    if (/\/(cart|carrito|carro|mi-carrito|my-cart)(\?|$|\/)/i.test(path)) return 'cart';
+    if (/\/(order-received|pedido-recibido|gracias|thank-you)(\?|$|\/)/i.test(path)) return 'confirmation';
+    if (/\/(checkout|finalizar-compra|finalizar|pedir|pagar|pago|compra|comprar)(\?|$|\/)/i.test(path)) return 'checkout';
+    if (/\/(cart|carrito|carro|mi-carrito|my-cart|bag|basket|canasta|cesta)(\?|$|\/)/i.test(path)) return 'cart';
     if (/\/(product|producto|productos|shop|tienda)\/[^\/]+/i.test(path)) return 'product';
 
     // WooCommerce patterns (by body class — requires document.body)
@@ -607,6 +657,28 @@
       if (body.classList.contains('woocommerce-shop') ||
           body.classList.contains('archive')) return 'collection';
       if (body.classList.contains('home')) return 'home';
+    }
+
+    // DOM content detection fallback — detect by presence of key elements
+    if (body) {
+      // Checkout detection: has checkout form, billing fields, payment methods
+      var hasCheckoutForm =
+        document.querySelector('form.checkout, form.woocommerce-checkout, form[name="checkout"], #order_review, .wc-block-checkout, [data-block-name="woocommerce/checkout"]') ||
+        document.querySelector('input[name="billing_email"], input[name="billing_first_name"], input[name="payment_method"]') ||
+        document.querySelector('.payment_methods, .wc_payment_methods');
+      if (hasCheckoutForm) return 'checkout';
+
+      // Cart detection: has cart items table, update cart button, quantity inputs for cart
+      var hasCartForm =
+        document.querySelector('form.woocommerce-cart-form, .cart_totals, .wc-block-cart, [data-block-name="woocommerce/cart"]') ||
+        document.querySelector('.shop_table.cart, .cart-collaterals, .cart-empty') ||
+        document.querySelector('button[name="update_cart"]');
+      if (hasCartForm) return 'cart';
+
+      // Product detection: single product page structure
+      var hasProduct =
+        document.querySelector('.single-product, .product-single, form.cart[data-product_id], [itemtype*="schema.org/Product"]');
+      if (hasProduct) return 'product';
     }
 
     // Root path is home as last resort
@@ -668,7 +740,10 @@
     const now = Date.now();
     const dedupKey = `${eventName}:${eventData.page_url || window.location.href}`;
     const last = sentEventMap.get(dedupKey) || 0;
-    if (now - last < EVENT_TTL_MS) return;
+    if (now - last < EVENT_TTL_MS) {
+      adrayLog('sendEvent: skipped', eventName, '(dedup, last fired', now - last, 'ms ago)');
+      return;
+    }
     sentEventMap.set(dedupKey, now);
 
     var fbclid = getAttributionParam('fbclid');
@@ -739,6 +814,7 @@
     }
 
     const body = JSON.stringify(payload);
+    adrayLog('sending', eventName, 'to', ADRAY_ENDPOINT, 'fbclid:', fbclid, 'seq:', seq, 'page_type:', payload.page_type);
 
     // sendBeacon first for all critical events (including purchase/begin_checkout/add_to_cart)
     // — survives page unload. sendBeacon does not send credentials, so we enqueue a
@@ -754,10 +830,12 @@
           ADRAY_ENDPOINT,
           new Blob([body], { type: 'application/json' })
         );
-      } catch (_) { beaconOk = false; }
+        adrayLog('sendBeacon:', eventName, '→', beaconOk ? 'OK' : 'FAILED');
+      } catch (e) { beaconOk = false; adrayLog('sendBeacon error:', e); }
     }
 
     if (!beaconOk) {
+      adrayLog('falling back to fetch for', eventName);
       fetch(ADRAY_ENDPOINT, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -765,7 +843,7 @@
         mode: "cors",
         credentials: "include",
         keepalive: true, // survive pagehide for every event, not just begin_checkout
-      }).catch(err => {
+      }).then(r => adrayLog('fetch', eventName, '→', r.status)).catch(err => {
         console.error("AdRay Pixel Error:", err);
         _adrayEnqueueOffline(body);
       });
@@ -1258,10 +1336,12 @@
   // Helper: detect cart/checkout and fire appropriate events
   function detectAndFireFunnelEvents() {
     var pageType = detectPageType();
+    adrayLog('detectAndFireFunnelEvents: pageType =', pageType, 'url =', window.location.href);
 
     // 1.1 Product page view for funnel completeness (view_item)
     if (pageType === 'product') {
       const ctx = getProductContext();
+      adrayLog('→ firing view_item', ctx);
       sendEvent('view_item', {
         product_id: ctx.product_id || null,
         variant_id: ctx.variant_id || null
@@ -1274,15 +1354,19 @@
       var now = Date.now();
       if (!lastCartFire || (now - Number(lastCartFire) > 10000)) { // once per 10s
         safeStorageSet(window.sessionStorage, '__adray_cart_page_fired', String(now));
-        sendEvent('add_to_cart', { cart_value: detectCartValue(null, 1) });
+        var cartValue = detectCartValue(null, 1);
+        adrayLog('→ firing add_to_cart, cart_value =', cartValue);
+        sendEvent('add_to_cart', { cart_value: cartValue });
+      } else {
+        adrayLog('→ skipping add_to_cart (recent fire)');
       }
     }
 
     // 1.3 Checkout page → fire begin_checkout immediately (platform-agnostic)
     if (pageType === 'checkout' && !isOrderReceivedUrl(window.location.pathname)) {
-      trackBeginCheckout({
-        checkout_token: getCookie('woocommerce_cart_hash') || getCookie('cart') || getCookie('cart_sig') || null
-      }, window.location.href);
+      var token = getCookie('woocommerce_cart_hash') || getCookie('cart') || getCookie('cart_sig') || null;
+      adrayLog('→ firing begin_checkout, token =', token);
+      trackBeginCheckout({ checkout_token: token }, window.location.href);
     }
   }
 
