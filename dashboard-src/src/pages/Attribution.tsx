@@ -86,9 +86,9 @@ export default function Attribution() {
           isRefreshing={isFetching}
         />
 
-        <div className="flex-1 space-y-5 p-4 sm:p-6">
+        <div className="flex-1 space-y-3 p-3 sm:space-y-5 sm:p-4 md:p-6">
           {analyticsData?.degraded && (
-            <div className="rounded-xl border border-yellow-500/30 bg-yellow-500/5 px-4 py-2.5 text-xs text-yellow-400">
+            <div className="rounded-xl border border-yellow-500/30 bg-yellow-500/5 px-3 py-2 text-xs text-yellow-400 sm:px-4 sm:py-2.5">
               Showing cached data — database temporarily unavailable.
             </div>
           )}
@@ -100,8 +100,8 @@ export default function Attribution() {
 
           {/* Live Feed (1/3) + Conversion Paths (2/3) */}
           {resolvedShop && (
-            <section className="flex flex-col gap-5 lg:h-[520px] lg:flex-row">
-              <div className="h-[420px] overflow-hidden lg:h-full lg:flex-[1]">
+            <section className="flex flex-col gap-3 sm:gap-5 lg:h-[520px] lg:flex-row">
+              <div className="h-[360px] overflow-hidden sm:h-[420px] lg:h-full lg:flex-[1]">
                 <LiveFeed shopId={resolvedShop} />
               </div>
               <div className="h-[520px] overflow-hidden lg:h-full lg:flex-[2]">
@@ -112,7 +112,7 @@ export default function Attribution() {
 
           {/* ROAS Comparison + Attributed Orders — 50/50 */}
           {!analyticsLoading && analyticsData && channels && (
-            <section className="grid grid-cols-1 gap-5 lg:grid-cols-2">
+            <section className="grid grid-cols-1 gap-3 sm:gap-5 lg:grid-cols-2">
               <div className="h-[300px]">
                 <RoasComparisonChart paidMedia={analyticsData.paidMedia} model={model} />
               </div>
@@ -126,7 +126,7 @@ export default function Attribution() {
           {analyticsLoading ? (
             <SupportGridSkeleton />
           ) : analyticsData ? (
-            <section className="grid grid-cols-1 gap-5 md:grid-cols-2">
+            <section className="grid grid-cols-1 gap-3 sm:gap-5 md:grid-cols-2">
               <PaidMediaPanel
                 paidMedia={analyticsData.paidMedia}
                 integrationHealth={analyticsData.integrationHealth}

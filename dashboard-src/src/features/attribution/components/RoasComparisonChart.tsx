@@ -83,7 +83,7 @@ export function RoasComparisonChart({ paidMedia: pm, model }: Props) {
   return (
     <div className="futuristic-surface flex h-full flex-col rounded-2xl p-4">
       {/* Header */}
-      <div className="mb-3 flex items-start justify-between">
+      <div className="mb-3 flex flex-col items-start gap-1 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <p className="text-[9px] font-semibold uppercase tracking-wider text-[var(--adray-purple)]/70">Commercial</p>
           <p className="text-xs font-semibold text-white/70">ROAS Comparison (AdNova vs Native)</p>
