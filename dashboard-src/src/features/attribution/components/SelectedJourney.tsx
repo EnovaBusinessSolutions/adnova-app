@@ -150,7 +150,7 @@ function EventRow({
 
       {/* Content */}
       <div className="min-w-0 flex-1 pb-2">
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
           <span
             className="text-[11px] font-semibold"
             style={{ color: isPurchase ? '#10B981' : 'rgba(255,255,255,0.80)' }}
@@ -160,7 +160,7 @@ function EventRow({
           {hasClickId && (
             <Badge
               variant="outline"
-              className="h-3.5 border-[var(--adray-purple)]/30 px-1 text-[8px] text-[#D8B8FF]"
+              className="h-3.5 shrink-0 border-[var(--adray-purple)]/30 px-1 text-[8px] text-[#D8B8FF]"
             >
               click ID
             </Badge>
@@ -168,7 +168,7 @@ function EventRow({
           {isPurchase && event.orderId && (
             <Badge
               variant="outline"
-              className="h-3.5 border-emerald-500/30 px-1 text-[8px] text-emerald-400"
+              className="h-3.5 shrink-0 border-emerald-500/30 px-1 text-[8px] text-emerald-400"
             >
               converted
             </Badge>
@@ -215,37 +215,49 @@ export function SelectedJourney({ purchase, onClose }: SelectedJourneyProps) {
   return (
     <div className="flex h-full flex-col overflow-hidden rounded-2xl border border-white/[0.08] bg-white/[0.02]">
       {/* Header */}
-      <div className="flex items-start justify-between border-b border-white/[0.06] px-3 py-3 sm:px-4">
-        <div className="min-w-0">
+      <div className="border-b border-white/[0.06] px-3 py-3 sm:flex sm:items-start sm:justify-between sm:px-4">
+        {/* Info (left on desktop, top on mobile) */}
+        <div className="min-w-0 sm:flex-1">
           <div className="flex items-center gap-2">
             <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: chColor }} />
-            <span className="text-sm font-semibold text-white/85">
+            <span className="min-w-0 truncate text-sm font-semibold text-white/85">
               {purchase.orderNumber ? `Order #${purchase.orderNumber}` : purchase.orderId.slice(0, 16)}
             </span>
+            {/* Mobile-only close button (top-right of row 1) */}
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={onClose}
+              aria-label="Close journey"
+              className="ml-auto h-7 w-7 shrink-0 p-0 text-white/40 hover:text-white sm:hidden"
+            >
+              <X size={14} />
+            </Button>
           </div>
-          <div className="mt-1 flex flex-wrap items-center gap-2">
+          <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1">
             <Badge
               variant="outline"
-              className="h-4 px-1.5 text-[9px] text-white/45"
+              className="h-4 shrink-0 px-1.5 text-[9px] text-white/45"
               style={{ borderColor: `${chColor}40` }}
             >
               {channelLabel(purchase.attributedChannel)}
             </Badge>
-            <span className="text-xs font-semibold text-white/70">
+            <span className="shrink-0 text-xs font-semibold text-white/70">
               {formatCurrency(purchase.revenue, purchase.currency)}
             </span>
-            <span className="text-[10px] text-white/30">
+            <span className="shrink-0 text-[10px] text-white/30">
               {purchase.events.length} events
             </span>
           </div>
         </div>
 
-        <div className="flex shrink-0 items-center gap-1">
+        {/* Actions: bottom-row on mobile, right-aligned inline on sm+ */}
+        <div className="mt-3 flex items-center gap-1 sm:mt-0 sm:shrink-0">
           <Button
             variant="ghost"
             size="sm"
             onClick={() => setCondensed((v) => !v)}
-            className="h-6 px-2 text-[10px] text-white/45 hover:text-white"
+            className="h-7 px-2 text-[10px] text-white/45 hover:text-white sm:h-6"
           >
             {condensed ? 'Full' : 'Condensed'}
           </Button>
@@ -253,16 +265,18 @@ export function SelectedJourney({ purchase, onClose }: SelectedJourneyProps) {
             variant="ghost"
             size="sm"
             onClick={handleDownload}
-            className="h-6 gap-1 px-2 text-[10px] text-white/45 hover:text-white"
+            className="h-7 gap-1 px-2 text-[10px] text-white/45 hover:text-white sm:h-6"
           >
             <Download size={10} />
             CSV
           </Button>
-<Button
+          {/* Desktop-only close button (inline with actions) */}
+          <Button
             variant="ghost"
             size="sm"
             onClick={onClose}
-            className="h-6 w-6 p-0 text-white/30 hover:text-white"
+            aria-label="Close journey"
+            className="hidden h-6 w-6 p-0 text-white/30 hover:text-white sm:inline-flex"
           >
             <X size={12} />
           </Button>
