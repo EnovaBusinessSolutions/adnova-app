@@ -275,6 +275,36 @@ export function SelectedJourney({ purchase, onClose }: SelectedJourneyProps) {
         onFilter={setEventFilter}
       />
 
+      {/* BRI Narrative */}
+      {purchase.briArchetype && (
+        <div className="border-b border-white/[0.04] px-4 py-2.5 space-y-1.5">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-[9px] font-semibold uppercase tracking-wider text-[#B55CFF]/60">BRI</span>
+            <span className="text-[10px] rounded-full border border-white/10 bg-white/5 px-2 py-0 text-white/50">
+              {purchase.briArchetype.replace(/_/g, ' ')}
+            </span>
+            {purchase.briCustomerTier && (
+              <span className="text-[10px] text-white/30">tier: {purchase.briCustomerTier}</span>
+            )}
+            {purchase.briConfidence != null && (
+              <span className="text-[10px] text-white/30">{Math.round(purchase.briConfidence * 100)}% confidence</span>
+            )}
+            {purchase.briOrganicConverter && (
+              <span className="text-[10px] rounded-full border border-emerald-500/25 bg-emerald-500/8 px-2 py-0 text-emerald-400">organic</span>
+            )}
+            {purchase.briExcludeFromRetargeting && (
+              <span className="text-[10px] rounded-full border border-orange-500/25 bg-orange-500/8 px-2 py-0 text-orange-400">suppress retargeting</span>
+            )}
+          </div>
+          {purchase.briNextBestAction && (
+            <p className="text-[10px] text-[#B55CFF]/70 leading-relaxed">
+              <span className="text-white/20 mr-1">→</span>
+              {purchase.briNextBestAction.content}
+            </p>
+          )}
+        </div>
+      )}
+
       {/* Timeline */}
       <div className="min-h-0 flex-1 overflow-y-auto [&::-webkit-scrollbar]:w-[3px] [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-white/20 [&::-webkit-scrollbar-track]:bg-transparent">
         {visibleEvents.length === 0 ? (

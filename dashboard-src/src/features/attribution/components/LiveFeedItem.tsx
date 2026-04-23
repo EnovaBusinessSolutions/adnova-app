@@ -55,9 +55,9 @@ export function LiveFeedItem({ event }: LiveFeedItemProps) {
         {displayUrl && (
           <p className="mt-0.5 truncate text-[10px] text-white/35">{displayUrl}</p>
         )}
-        {event.sessionId && (
-          <p className="mt-0.5 truncate font-mono text-[9px] text-white/20">
-            {event.sessionId.slice(0, 16)}…
+        {event.userKey && (
+          <p className="mt-0.5 text-[10px] text-white/30">
+            visitor <span className="font-mono text-white/40">…{event.userKey.slice(-6)}</span>
           </p>
         )}
       </div>
