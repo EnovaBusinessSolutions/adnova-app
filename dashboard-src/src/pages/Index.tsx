@@ -1169,7 +1169,7 @@ export default function Index() {
                               <Pill label="Meta Ads" done={metaReady} />
                               <Pill label="Google Ads" done={adsReady} />
                               <Pill label="Google Analytics" done={gaReady} />
-                              <Pill label="Pixel" done={pixelConnected} />
+                              <Pill label="Adray Core Pixel" done={pixelConnected} />
                             </div>
                           </div>
                         </div>
@@ -1186,7 +1186,7 @@ export default function Index() {
                         </div>
 
                         <h2 className="mt-3 text-[1.1rem] font-semibold tracking-[-0.03em] text-white sm:text-[1.28rem]">
-                          {pixelConnected ? "Pixel connected" : "Connect your website pixel"}
+                          {pixelConnected ? "Adray Core Pixel connected" : "Connect your Adray Core Pixel"}
                         </h2>
                         <p className="mt-2 max-w-2xl text-sm leading-6 text-white/56">
                           {pixelConnected && pixelShop
