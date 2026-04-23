@@ -34,7 +34,7 @@ function PlatformRow({ name, color, connected, spend, revenue, roas, currency }:
         </span>
       </div>
       {connected && spend != null ? (
-        <div className="grid grid-cols-3 gap-1">
+        <div className="grid grid-cols-3 gap-1.5 sm:gap-1">
           <div className="flex flex-col">
             <span className="text-[9px] text-white/30">Spend</span>
             <span className="text-[11px] font-semibold text-white/65">{formatCurrency(spend, currency)}</span>
@@ -71,7 +71,7 @@ export function PaidMediaPanel({ paidMedia: pm, integrationHealth: ih, currency 
 
   return (
     <div className="futuristic-surface flex flex-col rounded-2xl p-4">
-      <div className="mb-3 flex items-center gap-2">
+      <div className="mb-3 flex flex-wrap items-center gap-2">
         <TrendingUp size={13} className="text-[var(--adray-purple)]" />
         <span className="text-xs font-semibold text-white/70">Paid Media</span>
         {pm.blended.roas != null && pm.blended.roas > 0 && (

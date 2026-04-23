@@ -42,9 +42,9 @@ export function AttributionHeader({
 }: AttributionHeaderProps) {
   return (
     <div className="sticky top-0 z-[30] border-b border-[var(--adray-line)] bg-[rgba(5,5,8,0.82)] backdrop-blur-xl supports-[backdrop-filter]:bg-[rgba(5,5,8,0.72)]">
-      <div className="flex flex-wrap items-center gap-2 px-4 py-2.5 sm:px-6">
+      <div className="flex flex-wrap items-center gap-1.5 px-3 py-2 sm:gap-2 sm:px-4 sm:py-2.5 md:px-6">
         {/* Badge */}
-        <div className="inline-flex items-center gap-1.5 rounded-full border border-[var(--adray-purple)]/30 bg-[var(--adray-purple)]/10 px-2.5 py-1 text-[10px] font-semibold tracking-wider text-[#D8B8FF]">
+        <div className="inline-flex items-center gap-1.5 rounded-full border border-[var(--adray-purple)]/30 bg-[var(--adray-purple)]/10 px-2 py-1 text-[10px] font-semibold tracking-wider text-[#D8B8FF] sm:px-2.5">
           <span className="relative flex h-1.5 w-1.5">
             <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[var(--adray-purple)]/50" />
             <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-[#D8B8FF]" />
@@ -85,7 +85,7 @@ export function AttributionHeader({
             className="h-8 gap-1.5 border border-white/[0.08] bg-white/[0.03] px-3 text-xs text-white/60 hover:bg-white/[0.08] hover:text-white"
           >
             <RefreshCw size={12} className={isRefreshing ? 'animate-spin' : ''} />
-            Refresh
+            <span className="hidden sm:inline">Refresh</span>
           </Button>
 
           <Button
@@ -95,7 +95,7 @@ export function AttributionHeader({
             className="h-8 gap-1.5 border border-white/[0.08] bg-white/[0.03] px-3 text-xs text-white/60 hover:bg-white/[0.08] hover:text-white"
           >
             <Download size={12} />
-            Export
+            <span className="hidden sm:inline">Export</span>
           </Button>
         </div>
       </div>
