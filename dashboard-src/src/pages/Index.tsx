@@ -1026,18 +1026,6 @@ export default function Index() {
           window.location.assign(connectGoogleGa4Url);
         },
       },
-      {
-        key: "merchant",
-        title: "Merchant Center",
-        desc: "Connect Merchant Center to unlock catalog and product feed insights.",
-        icon: <ShoppingBag className="h-4 w-4 text-[#B55CFF]" />,
-        state: "locked" as StepState,
-        lockedLabel: "Coming Soon",
-        lockedTooltip: "Under development — available soon",
-        ctaLabel: "Coming Soon",
-        ctaDisabled: true,
-        onCta: () => {},
-      },
     ];
   }, [
     metaConnected,
