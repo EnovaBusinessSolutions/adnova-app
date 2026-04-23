@@ -176,10 +176,14 @@ model Event {
   collectedAt       DateTime? @map("collected_at")
   browserReceivedAt DateTime? @map("browser_received_at")
   serverReceivedAt  DateTime? @map("server_received_at")
+  capturedAt        DateTime? @map("captured_at")         // client clock at event-fire moment (ordering source of truth)
+  seq               Int?                                  // monotonic per-session sequence for tie-breaking
+  postPurchase      Boolean   @default(false) @map("post_purchase")
   createdAt         DateTime  @default(now()) @map("created_at")
 
   account Account @relation(fields: [accountId], references: [accountId], onDelete: Cascade)
 
+  @@index([accountId, sessionId, capturedAt])
   @@map("events")
 }
 

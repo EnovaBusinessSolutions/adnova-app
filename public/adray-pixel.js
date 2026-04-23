@@ -606,6 +606,25 @@
     };
   }
 
+  // Monotonic sequence per sessionStorage + post-purchase state persisted there.
+  function _adrayNextSeq() {
+    try {
+      const raw = sessionStorage.getItem('_adray_event_seq');
+      const next = (parseInt(raw, 10) || 0) + 1;
+      sessionStorage.setItem('_adray_event_seq', String(next));
+      return next;
+    } catch (_) { return 0; }
+  }
+
+  function _adrayIsPostPurchase() {
+    try { return sessionStorage.getItem('_adray_post_purchase') === '1'; }
+    catch (_) { return false; }
+  }
+
+  function _adrayMarkPostPurchase() {
+    try { sessionStorage.setItem('_adray_post_purchase', '1'); } catch (_) {}
+  }
+
   function sendEvent(eventName, eventData = {}) {
     const now = Date.now();
     const dedupKey = `${eventName}:${eventData.page_url || window.location.href}`;
@@ -622,8 +641,15 @@
     var fbp = getCookie('_fbp');
     var fbc = getAttributionParam('fbc') || getCookie('_fbc');
 
+    const capturedAt = new Date(now).toISOString();
+    const seq = _adrayNextSeq();
+    const postPurchase = _adrayIsPostPurchase();
+
     const payload = {
-      timestamp: new Date().toISOString(),
+      timestamp: capturedAt,          // when the event actually happened (client clock)
+      captured_at: capturedAt,        // explicit alias for ordering
+      seq,                            // monotonic per-session sequence for tie-breaking
+      post_purchase: postPurchase,    // true if purchase already fired in this session
       account_id: getAccountId(),
       session_id: getOrCreateSessionId(),
       browser_id: getOrCreateBrowserId(),
@@ -669,27 +695,94 @@
 
     const body = JSON.stringify(payload);
 
-    if (navigator.sendBeacon && eventName === 'begin_checkout') {
+    // sendBeacon first for all critical events (including purchase/begin_checkout/add_to_cart)
+    // — survives page unload. sendBeacon does not send credentials, so we enqueue a
+    // fetch-with-keepalive retry only if beacon fails.
+    const critical = eventName === 'begin_checkout'
+      || eventName === 'purchase'
+      || eventName === 'add_to_cart';
+
+    let beaconOk = false;
+    if (navigator.sendBeacon && critical) {
       try {
-        const ok = navigator.sendBeacon(
+        beaconOk = navigator.sendBeacon(
           ADRAY_ENDPOINT,
           new Blob([body], { type: 'application/json' })
         );
-        if (ok) return;
-      } catch (_) {}
+      } catch (_) { beaconOk = false; }
     }
 
-    fetch(ADRAY_ENDPOINT, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json"
-      },
-      body,
-      mode: "cors",
-      credentials: "include", // Changed to include for cross-site cookie support
-      keepalive: eventName === 'begin_checkout'
-    }).catch(err => console.error("AdRay Pixel Error:", err));
+    if (!beaconOk) {
+      fetch(ADRAY_ENDPOINT, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body,
+        mode: "cors",
+        credentials: "include",
+        keepalive: true, // survive pagehide for every event, not just begin_checkout
+      }).catch(err => {
+        console.error("AdRay Pixel Error:", err);
+        _adrayEnqueueOffline(body);
+      });
+    }
+
+    // After purchase ships, flip session flag so subsequent events are marked.
+    if (eventName === 'purchase') {
+      _adrayMarkPostPurchase();
+    }
   }
+
+  // Offline queue — if a send fails, persist to localStorage. Flushed on page
+  // load and on the browser's `online` event. Bounded to ~50 entries to cap size.
+  const _ADRAY_OFFLINE_KEY = '_adray_offline_queue_v1';
+  const _ADRAY_OFFLINE_MAX = 50;
+  const _ADRAY_OFFLINE_TTL_MS = 24 * 60 * 60 * 1000;
+
+  function _adrayReadOfflineQueue() {
+    try {
+      const raw = localStorage.getItem(_ADRAY_OFFLINE_KEY);
+      if (!raw) return [];
+      const arr = JSON.parse(raw);
+      return Array.isArray(arr) ? arr : [];
+    } catch (_) { return []; }
+  }
+
+  function _adrayWriteOfflineQueue(arr) {
+    try { localStorage.setItem(_ADRAY_OFFLINE_KEY, JSON.stringify(arr.slice(-_ADRAY_OFFLINE_MAX))); } catch (_) {}
+  }
+
+  function _adrayEnqueueOffline(body) {
+    const arr = _adrayReadOfflineQueue();
+    arr.push({ body, at: Date.now() });
+    _adrayWriteOfflineQueue(arr);
+  }
+
+  function _adrayFlushOfflineQueue() {
+    const arr = _adrayReadOfflineQueue();
+    if (!arr.length) return;
+    const now = Date.now();
+    const kept = [];
+    for (const entry of arr) {
+      if (!entry || !entry.body) continue;
+      if (now - (entry.at || 0) > _ADRAY_OFFLINE_TTL_MS) continue; // drop stale
+      try {
+        fetch(ADRAY_ENDPOINT, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: entry.body,
+          mode: "cors",
+          credentials: "include",
+          keepalive: true,
+        }).catch(() => { kept.push(entry); });
+      } catch (_) { kept.push(entry); }
+    }
+    _adrayWriteOfflineQueue(kept);
+  }
+
+  try {
+    _adrayFlushOfflineQueue();
+    window.addEventListener('online', _adrayFlushOfflineQueue);
+  } catch (_) {}
 
   function isShopifyCartAddUrl(url) {
     return typeof url === 'string' && /\/cart\/add(\.js)?(\?|$)/i.test(url);
@@ -1509,6 +1602,78 @@
       revenue: domData.revenue,
       currency: domData.currency,
       items: domData.items
+    });
+  })();
+
+  // 5b. Shopify: Purchase event on thank-you / order-status page.
+  // Shopify checkout URLs follow these patterns:
+  //   /checkouts/:token/thank_you            (standard)
+  //   /checkouts/c/:token/thank_you          (checkout extensibility)
+  //   /:shop/orders/:order_id                (order status page, logged-in customer)
+  // Shopify also exposes `Shopify.checkout` on the thank-you page with
+  //   { order_id, subtotal_price, total_price, currency, token, email, line_items }
+  (function detectShopifyPurchase() {
+    function looksLikeShopifyThankYou() {
+      var path = window.location.pathname || '';
+      if (/\/thank[-_]?you(\b|\/|$)/i.test(path)) return true;
+      if (/\/checkouts\/(c\/)?[^\/]+\/thank[-_]?you/i.test(path)) return true;
+      if (/\/orders\/\d+/i.test(path) && (window.Shopify || document.querySelector('meta[name="shopify-checkout-api-token"]'))) return true;
+      return false;
+    }
+
+    function shopifyRevenue(co) {
+      // Shopify price fields are strings or numbers — normalize.
+      var candidates = [co.total_price, co.totalPrice, co.subtotal_price];
+      for (var i = 0; i < candidates.length; i++) {
+        var n = Number(candidates[i]);
+        if (Number.isFinite(n) && n > 0) return n;
+      }
+      return null;
+    }
+
+    function shopifyLineItems(co) {
+      var items = co.line_items || co.lineItems || [];
+      if (!Array.isArray(items)) return null;
+      return items.map(function(li) {
+        return {
+          id:       li.id || li.product_id || li.variant_id || null,
+          sku:      li.sku || null,
+          name:     li.title || li.name || li.product_title || null,
+          quantity: Number(li.quantity || 1),
+          price:    Number(li.price || li.final_price || 0),
+        };
+      });
+    }
+
+    if (!looksLikeShopifyThankYou()) return;
+
+    // Primary: Shopify.checkout global on thank-you page.
+    var co = (window.Shopify && window.Shopify.checkout) || window.__SHOPIFY_CHECKOUT__ || null;
+
+    if (co) {
+      var orderId = String(co.order_id || co.orderId || '') || null;
+      var revenue = shopifyRevenue(co);
+      var currency = String(co.currency || co.presentment_currency || 'USD').toUpperCase();
+
+      sendEvent('purchase', {
+        event_id: orderId ? 'brw_sh_' + orderId : undefined,
+        order_id: orderId,
+        revenue:  revenue,
+        currency: currency,
+        items:    shopifyLineItems(co),
+        checkout_token: co.token || co.checkout_token || null,
+        customer_email: co.email || null,
+      });
+      return;
+    }
+
+    // Fallback: scrape from URL + meta tags.
+    var fromUrl = window.location.pathname.match(/\/orders\/(\d+)/) ||
+                  window.location.pathname.match(/\/checkouts\/(?:c\/)?([^\/]+)\/thank/i);
+    sendEvent('purchase', {
+      event_id: fromUrl ? 'brw_sh_' + fromUrl[1] : undefined,
+      order_id: fromUrl ? fromUrl[1] : null,
+      currency: (document.querySelector('meta[property="og:price:currency"]')||{}).content || null,
     });
   })();
 

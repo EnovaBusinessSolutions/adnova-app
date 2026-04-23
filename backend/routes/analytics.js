@@ -2893,6 +2893,10 @@ router.get('/:account_id', async (req, res) => {
           eventName: true,
           createdAt: true,
           collectedAt: true,
+          capturedAt: true,
+          seq: true,
+          postPurchase: true,
+          browserReceivedAt: true,
           pageUrl: true,
           productId: true,
           orderId: true,
@@ -2914,9 +2918,13 @@ router.get('/:account_id', async (req, res) => {
     const eventsByCustomerId = new Map();
     
     for (const ev of stitchedCandidateEvents) {
-      const evTs = new Date(ev.createdAt).getTime();
+      // Prefer client-captured timestamp (capturedAt) for ordering — survives
+      // retry delays. Fall back to browserReceivedAt, then server createdAt.
+      const tsSource = ev.capturedAt || ev.browserReceivedAt || ev.createdAt;
+      const evTs = new Date(tsSource).getTime();
       if (!Number.isFinite(evTs)) continue;
       ev._evTs = evTs;
+      ev._evSeq = Number.isFinite(Number(ev.seq)) ? Number(ev.seq) : 0;
       if (ev.orderId) { const k = String(ev.orderId); if (!eventsByOrderId.has(k)) eventsByOrderId.set(k, []); eventsByOrderId.get(k).push(ev); }
       if (ev.checkoutToken) { const k = String(ev.checkoutToken); if (!eventsByCheckoutToken.has(k)) eventsByCheckoutToken.set(k, []); eventsByCheckoutToken.get(k).push(ev); }
       if (ev.sessionId) { const k = String(ev.sessionId); if (!eventsBySessionId.has(k)) eventsBySessionId.set(k, []); eventsBySessionId.get(k).push(ev); }
@@ -2965,7 +2973,7 @@ router.get('/:account_id', async (req, res) => {
       }
 
       let stitchedEvents = Array.from(uniqueEventsMap.values())
-        .sort((a, b) => a._evTs - b._evTs);
+        .sort((a, b) => (a._evTs - b._evTs) || ((a._evSeq || 0) - (b._evSeq || 0)));
 
       // Fallback: if stitching only found sparse purchase signals, try customer-id linkage.
       if (stitchedEvents.length <= 2 && conv.customerId) {
@@ -3021,6 +3029,9 @@ router.get('/:account_id', async (req, res) => {
           eventId: ev.eventId,
           eventName: ev.eventName,
           createdAt: ev.createdAt,
+          capturedAt: ev.capturedAt || ev.browserReceivedAt || null,
+          seq: Number.isFinite(Number(ev.seq)) ? Number(ev.seq) : null,
+          postPurchase: Boolean(ev.postPurchase) === true,
           collectedAt: ev.collectedAt || null,
           pageUrl: ev.pageUrl || null,
           productId: ev.productId || null,
