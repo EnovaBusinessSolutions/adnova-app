@@ -341,6 +341,18 @@ router.post('/orders-create', async (req, res) => {
     const customerLastName  = payload.customer?.last_name  || payload.billing_address?.last_name  || null;
     const customerName = [customerFirstName, customerLastName].filter(Boolean).join(' ') || null;
 
+    // Cache name so subsequent live events from this visitor can be labeled.
+    if (customerName) {
+      try {
+        const identityCache = require('../utils/liveFeedIdentityCache');
+        identityCache.cacheIdentity({
+          userKey: checkoutMap?.userKey,
+          sessionId: checkoutMap?.sessionId,
+          customerName,
+        });
+      } catch (_) { /* non-fatal */ }
+    }
+
     eventBus.emit('event', {
       type: 'WEBHOOK',
       accountId,

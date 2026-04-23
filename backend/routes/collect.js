@@ -202,6 +202,11 @@ router.post('/', async (req, res) => {
     const sessionId = payload.session_id || randomUUID();
     console.log(`[AdRay Collect] Session ID: ${sessionId}`);
 
+    // Enrich with customer name: from payload if present, otherwise from cache.
+    const identityCache = require('../utils/liveFeedIdentityCache');
+    const inlineName = identityCache.cacheFromPayload({ userKey, sessionId, payload });
+    const customerName = inlineName || identityCache.lookupCustomerName({ userKey, sessionId });
+
     // Emit live event for Dashboard Feed after identity + session are resolved.
     eventBus.emit('event', {
       type: 'COLLECT',
@@ -209,6 +214,7 @@ router.post('/', async (req, res) => {
       sessionId,
       userKey,
       eventId,
+      customerName,
       payload: {
         eventName: normalizedEventName,
         timestamp: new Date().toISOString(),
@@ -222,6 +228,7 @@ router.post('/', async (req, res) => {
         cartValue: payload.cart_value ? parseFloat(payload.cart_value) : null,
         checkoutToken: payload.checkout_token || null,
         orderId: payload.order_id || null,
+        customerName,
       }
     });
 
