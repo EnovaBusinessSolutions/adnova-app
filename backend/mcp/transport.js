@@ -74,9 +74,60 @@ function mountMcpRoutes(app) {
     }
   });
 
-  mcpRouter.post('/', handler);
-  mcpRouter.get('/', handler);
-  mcpRouter.delete('/', handler);
+  // Workaround for @hono/node-server bridge (used by MCP SDK's
+  // StreamableHTTPServerTransport): when the SDK builds a native Response with
+  // Content-Type: text/event-stream for SSE, the bridge drops that header and
+  // falls back to its default "text/plain; charset=UTF-8". Claude.ai's MCP
+  // client validates content-type and surfaces the mismatch as
+  // "The MCP server returned a 502 status code error", even though the server
+  // returned 200 with a well-formed SSE body.
+  //
+  // Fix: intercept res.writeHead and res.setHeader on the outgoing response and
+  // rewrite text/plain -> text/event-stream when the client negotiated SSE.
+  //
+  // Scope is intentionally narrow: only activates when the request's Accept
+  // header includes text/event-stream, so non-SSE responses (including the
+  // 401 JSON errors above) are untouched.
+  const sseContentTypeFix = (req, res, next) => {
+    const accept = String(req.headers?.accept || '');
+    if (!accept.includes('text/event-stream')) return next();
+
+    const patchCt = (value) => {
+      const v = String(value || '').toLowerCase();
+      if (v.startsWith('text/plain')) return 'text/event-stream';
+      return value;
+    };
+
+    const origSetHeader = res.setHeader.bind(res);
+    res.setHeader = function patchedSetHeader(name, value) {
+      if (typeof name === 'string' && name.toLowerCase() === 'content-type') {
+        return origSetHeader(name, patchCt(value));
+      }
+      return origSetHeader(name, value);
+    };
+
+    const origWriteHead = res.writeHead.bind(res);
+    res.writeHead = function patchedWriteHead(statusCode, ...rest) {
+      let headers = null;
+      if (rest.length && typeof rest[rest.length - 1] === 'object' && rest[rest.length - 1] !== null) {
+        headers = rest[rest.length - 1];
+      }
+      if (headers) {
+        for (const key of Object.keys(headers)) {
+          if (key.toLowerCase() === 'content-type') {
+            headers[key] = patchCt(headers[key]);
+          }
+        }
+      }
+      return origWriteHead(statusCode, ...rest);
+    };
+
+    next();
+  };
+
+  mcpRouter.post('/', sseContentTypeFix, handler);
+  mcpRouter.get('/', sseContentTypeFix, handler);
+  mcpRouter.delete('/', sseContentTypeFix, handler);
 
   app.use('/mcp', mcpRouter);
 
