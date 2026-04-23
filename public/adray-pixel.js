@@ -336,6 +336,25 @@
     persistTrackedUtmHistory();
   }
 
+  // Ensure fbclid/gclid from entry URL are captured even if current page lost them
+  function captureClickIdFromEntryUrl() {
+    try {
+      var entryUrl = getLandingPageUrl();
+      if (!entryUrl) return;
+      var parsed = parseTrackedUrl(entryUrl);
+      if (!parsed) return;
+
+      var clicks = ['fbclid', 'gclid', 'ttclid', 'wbraid', 'gbraid', 'msclkid'];
+      clicks.forEach(function(key) {
+        if (safeStorageGet(window.localStorage, '__adray_attr_' + key)) return; // already have it
+        var val = parsed.searchParams.get(key);
+        if (val) {
+          safeStorageSet(window.localStorage, '__adray_attr_' + key, val);
+        }
+      });
+    } catch (_) {}
+  }
+
   function getAttributionParam(key) {
     var fromQuery = getQueryParam(key);
     if (fromQuery) return fromQuery;
@@ -1207,6 +1226,7 @@
 
   // 1. Send Page View immediately
   persistAttributionParams();
+  captureClickIdFromEntryUrl();  // Ensure fbclid/gclid captured from entry URL
   sendEvent("page_view");
 
   // 1.1 Product page view for funnel completeness (view_item)
@@ -1216,6 +1236,23 @@
       product_id: ctx.product_id || null,
       variant_id: ctx.variant_id || null
     });
+  }
+
+  // 1.2 Cart page → fire add_to_cart if not recent (simple page-based detection)
+  if (detectPageType() === 'cart' && !isOrderReceivedUrl(window.location.pathname)) {
+    var lastCartFire = safeStorageGet(window.sessionStorage, '__adray_cart_page_fired');
+    var now = Date.now();
+    if (!lastCartFire || (now - Number(lastCartFire) > 10000)) { // once per 10s
+      safeStorageSet(window.sessionStorage, '__adray_cart_page_fired', String(now));
+      sendEvent('add_to_cart', { cart_value: detectCartValue(null, 1) });
+    }
+  }
+
+  // 1.3 Checkout page → fire begin_checkout immediately (platform-agnostic)
+  if (detectPageType() === 'checkout' && !isOrderReceivedUrl(window.location.pathname)) {
+    trackBeginCheckout({
+      checkout_token: getCookie('woocommerce_cart_hash') || getCookie('cart') || getCookie('cart_sig') || null
+    }, window.location.href);
   }
 
   // 2. Intercept Add to Cart (multi-platform)
@@ -1398,13 +1435,6 @@
       }
     } catch (_) {}
   }, true);
-
-  // 4. Checkout page hit detection (platform-agnostic fallback).
-  if (detectPageType() === 'checkout' && !isOrderReceivedUrl(window.location.pathname)) {
-    trackBeginCheckout({
-      checkout_token: getCookie('woocommerce_cart_hash') || getCookie('cart') || getCookie('cart_sig') || null
-    }, window.location.href);
-  }
 
   setupCheckoutIdentityBlurTracking();
 
