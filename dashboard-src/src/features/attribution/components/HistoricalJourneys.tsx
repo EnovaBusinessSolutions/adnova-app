@@ -93,41 +93,51 @@ export function HistoricalJourneys({
                     : 'border-transparent hover:border-white/[0.06] hover:bg-white/[0.03]',
                 )}
               >
+                {/* Row 1: dot + order# (left, truncate) + monto (right, shrink-0) */}
                 <div className="flex items-center justify-between gap-2">
-                  <div className="flex items-center gap-1.5">
+                  <div className="flex min-w-0 items-center gap-1.5">
                     <span
                       className="h-2 w-2 shrink-0 rounded-full"
                       style={{ background: channelColor(p.attributedChannel) }}
                     />
-                    <span className="text-[11px] font-medium text-white/75">
+                    <span className="truncate text-[11px] font-medium text-white/75">
                       {p.orderNumber ? `#${p.orderNumber}` : p.orderId.slice(0, 12)}
                     </span>
                   </div>
-                  <span className="text-[11px] font-semibold text-white/80">
+                  <span className="shrink-0 text-[11px] font-semibold text-white/80">
                     {formatCurrency(p.revenue, p.currency)}
                   </span>
                 </div>
-                {/* Customer name + email */}
+                {/* Row 2 + 3: name and email on separate lines, each truncated */}
                 {(() => {
                   const name  = p.customerName ?? null;
                   const email = p.events.find((e) => e.customerEmail)?.customerEmail ?? null;
-                  return (name || email) ? (
-                    <div className="mt-0.5 truncate text-[10px] text-white/35">
-                      {name && <span>{name}</span>}
-                      {name && email && <span className="mx-1 text-white/20">·</span>}
-                      {email && <span>{email}</span>}
-                    </div>
-                  ) : null;
+                  if (!name && !email) return null;
+                  return (
+                    <>
+                      {name && (
+                        <p className="mt-1 truncate text-[10px] text-white/50">
+                          {name}
+                        </p>
+                      )}
+                      {email && (
+                        <p className="truncate text-[10px] text-white/30">
+                          {email}
+                        </p>
+                      )}
+                    </>
+                  );
                 })()}
-                <div className="mt-1 flex items-center justify-between gap-2">
+                {/* Row 4: badge (left, shrink-0) + date (right, shrink-0) */}
+                <div className="mt-1.5 flex items-center justify-between gap-2">
                   <Badge
                     variant="outline"
-                    className="h-4 border-white/[0.08] px-1.5 text-[9px] font-normal text-white/40"
+                    className="h-4 shrink-0 border-white/[0.08] px-1.5 text-[9px] font-normal text-white/40"
                     style={{ borderColor: `${channelColor(p.attributedChannel)}40` }}
                   >
                     {channelLabel(p.attributedChannel)}
                   </Badge>
-                  <span className="text-[10px] text-white/30">{formatDate(p.createdAt)}</span>
+                  <span className="shrink-0 text-[10px] text-white/30">{formatDate(p.createdAt)}</span>
                 </div>
               </button>
             ))}
