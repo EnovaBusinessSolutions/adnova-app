@@ -4,22 +4,64 @@
   // Endpoint path: /m/s (non-obvious) bypasses most ad-blocker /collect rules.
   // Legacy /collect still served by backend for backward compat.
   var ADRAY_ENDPOINT_PATH = '/m/s';
-  const ADRAY_ENDPOINT = (function () {
+
+  // Backend origin — always the real Adray backend, derived from this script's
+  // own src. Used for rrweb uploads (which are never proxied through the
+  // merchant's WP server) and as the default collect target when no first-party
+  // proxy is configured.
+  const ADRAY_BACKEND_ORIGIN = (function () {
     try {
       var s = document.currentScript;
-      if (s) {
-        var ep = s.getAttribute('data-endpoint');
-        if (ep) return ep.replace(/\/+$/, '');
-        if (s.src) return new URL(s.src).origin + ADRAY_ENDPOINT_PATH;
-      }
+      if (s && s.src) return new URL(s.src).origin;
       var tags = document.querySelectorAll('script[src*="adray-pixel"], script[src*="site-analytics"], script[src*="pixel.js"]');
       for (var i = 0; i < tags.length; i++) {
-        ep = tags[i].getAttribute('data-endpoint');
-        if (ep) return ep.replace(/\/+$/, '');
-        if (tags[i].src) return new URL(tags[i].src).origin + ADRAY_ENDPOINT_PATH;
+        if (tags[i].src) return new URL(tags[i].src).origin;
       }
     } catch (_) {}
-    return 'https://adray.ai' + ADRAY_ENDPOINT_PATH;
+    return 'https://adray.ai';
+  }());
+
+  // Collect endpoint — prefer a first-party proxy when configured (via the
+  // `data-proxy-endpoint` script attribute or `window.adrayPixelConfig.proxyEndpoint`).
+  // A same-origin proxy keeps the /collect wire invisible to ad-blockers:
+  // Brave Shields, uBlock Origin, AdBlock Plus, etc. can't block requests to
+  // the merchant's own domain without also breaking the storefront. Falls back
+  // to `data-endpoint` (legacy) and finally to `{ADRAY_BACKEND_ORIGIN}/m/s`.
+  const ADRAY_ENDPOINT = (function () {
+    function resolve(raw) {
+      if (!raw) return null;
+      raw = String(raw).trim();
+      if (!raw) return null;
+      try {
+        return new URL(raw, window.location.href).toString().replace(/\/+$/, '');
+      } catch (_) {
+        return raw.replace(/\/+$/, '');
+      }
+    }
+
+    try {
+      var s = document.currentScript;
+      var explicit = null;
+
+      if (s) {
+        explicit = s.getAttribute('data-proxy-endpoint') || s.getAttribute('data-endpoint');
+      }
+      if (!explicit) {
+        var tags = document.querySelectorAll('script[src*="adray-pixel"], script[src*="site-analytics"], script[src*="pixel.js"]');
+        for (var i = 0; i < tags.length; i++) {
+          var attr = tags[i].getAttribute('data-proxy-endpoint') || tags[i].getAttribute('data-endpoint');
+          if (attr) { explicit = attr; break; }
+        }
+      }
+      if (!explicit && window.adrayPixelConfig && typeof window.adrayPixelConfig.proxyEndpoint === 'string') {
+        explicit = window.adrayPixelConfig.proxyEndpoint;
+      }
+
+      var resolved = resolve(explicit);
+      if (resolved) return resolved;
+    } catch (_) {}
+
+    return ADRAY_BACKEND_ORIGIN + ADRAY_ENDPOINT_PATH;
   }());
   const EVENT_TTL_MS = 2000;
   const ADRAY_LAST_CART_VALUE_KEY = '__adray_last_cart_value_v1';
@@ -1994,7 +2036,11 @@
   var _adrayFlushTimer = null;
   var _ADRAY_FLUSH_MS = 4000;
   var _ADRAY_CHUNK_MAX_BYTES = 200000;
-  var _ADRAY_REC_BASE = ADRAY_ENDPOINT.replace(/\/(m\/s|collect)$/, '');
+  // rrweb uploads are large (chunked DOM mutations, hundreds of KB) and WP's
+  // HTTP API would be a poor proxy for them. Always hit the real backend
+  // origin, regardless of whether /collect is proxied through a first-party
+  // endpoint. rrweb isn't on typical ad-blocker blocklists.
+  var _ADRAY_REC_BASE = ADRAY_BACKEND_ORIGIN;
   var _ADRAY_RRWEB_CDN = _ADRAY_REC_BASE + '/static/dom-observer.min.js';
 
   // ── Blocked pages: Shopify prohibits DOM recording on checkout/payment pages
