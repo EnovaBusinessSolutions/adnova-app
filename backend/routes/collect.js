@@ -7,6 +7,7 @@ const { resolveUserKey } = require('../services/identityResolution');
 const eventBus = require('../utils/eventBus');
 const { hashPII } = require('../utils/encryption');
 const { forwardToStaging } = require('../utils/stagingForward');
+const { classifyChannel, normalizeChannel } = require('../utils/channelClassifier');
 
 function isSchemaDriftError(error) {
   if (!error) return false;
@@ -207,6 +208,18 @@ router.post('/', async (req, res) => {
     const inlineName = identityCache.cacheFromPayload({ userKey, sessionId, payload });
     const customerName = inlineName || identityCache.lookupCustomerName({ userKey, sessionId });
 
+    // Classify the traffic channel at event time so the Live Feed can show
+    // "Meta / Google / TikTok / Organic / Direct / Other" next to each row.
+    const classified = classifyChannel({
+      gclid:       payload.gclid,
+      fbclid:      payload.fbclid || payload.fbc,
+      ttclid:      payload.ttclid,
+      utm_source:  payload.utm_source,
+      utm_medium:  payload.utm_medium,
+      referrer:    payload.referrer || payload.document_referrer,
+    });
+    const normalizedChannel = normalizeChannel(classified.channel);
+
     // Emit live event for Dashboard Feed after identity + session are resolved.
     eventBus.emit('event', {
       type: 'COLLECT',
@@ -229,6 +242,13 @@ router.post('/', async (req, res) => {
         checkoutToken: payload.checkout_token || null,
         orderId: payload.order_id || null,
         customerName,
+        // Attribution surface for the Live Feed:
+        channel:         normalizedChannel,   // meta / google / tiktok / organic / other / direct
+        channelRaw:      classified.channel,
+        channelPlatform: classified.platform,
+        channelSource:   classified.source,   // click_id / utm / referrer / none
+        clickIdProvider: classified.clickIdProvider,
+        utmCampaign:     payload.utm_campaign || null,
       }
     });
 
