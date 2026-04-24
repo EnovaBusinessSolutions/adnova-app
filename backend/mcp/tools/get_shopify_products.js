@@ -1,6 +1,7 @@
 'use strict';
 
 const { validateDateRange, resolveDateRangeDefaults, getShopifyProductsInput } = require('../schemas/tool-schemas');
+const { getShopifyProductsOutput } = require('../schemas/output-schemas');
 const shopifyAdapter = require('../adapters/shopify');
 const { createToolErrorResponse } = require('../schemas/errors');
 const { runSnapshotFirstTool } = require('../snapshot/runSnapshotFirst');
@@ -13,10 +14,17 @@ function register(server, mcpUserId) {
   server.registerTool(
     TOOL_NAME,
     {
+      title: 'Get top Shopify products',
       description:
-        'Retrieves top products by units sold or revenue from the connected Shopify store for a given date range.',
+        'Retrieves the top-selling products from the connected Shopify store, ranked by revenue or units sold, for a given date range. Use limit (1–50) to cap the number of products returned.',
       inputSchema: getShopifyProductsInput,
-      annotations: { readOnlyHint: true },
+      outputSchema: getShopifyProductsOutput,
+      annotations: {
+        readOnlyHint: true,
+        idempotentHint: true,
+        destructiveHint: false,
+        openWorldHint: true,
+      },
     },
     async (params, extra) => {
       try {

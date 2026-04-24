@@ -1,6 +1,7 @@
 'use strict';
 
 const { validateDateRange, resolveDateRangeDefaults, getChannelSummaryInput } = require('../schemas/tool-schemas');
+const { getChannelSummaryOutput } = require('../schemas/output-schemas');
 const { createToolResponse, createToolErrorResponse } = require('../schemas/errors');
 const { resolveChannelSummaryPayload } = require('../services/adsPerformanceResolve');
 const { resolveToolUserId } = require('../mcpContext');
@@ -12,10 +13,17 @@ function register(server, mcpUserId) {
   server.registerTool(
     TOOL_NAME,
     {
+      title: 'Get channel summary',
       description:
-        'Returns a side-by-side summary of performance across all connected ad channels for a given date range.',
+        'Returns a side-by-side summary of performance across all connected ad channels (and Shopify revenue when connected) for a given date range. Useful as a first-pass "how did everything do" overview.',
       inputSchema: getChannelSummaryInput,
-      annotations: { readOnlyHint: true },
+      outputSchema: getChannelSummaryOutput,
+      annotations: {
+        readOnlyHint: true,
+        idempotentHint: true,
+        destructiveHint: false,
+        openWorldHint: true,
+      },
     },
     async (params, extra) => {
       try {

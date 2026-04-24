@@ -1,6 +1,7 @@
 'use strict';
 
 const { validateDateRange, resolveDateRangeDefaults, getCampaignPerformanceInput } = require('../schemas/tool-schemas');
+const { getCampaignPerformanceOutput } = require('../schemas/output-schemas');
 const { createToolResponse, createToolErrorResponse } = require('../schemas/errors');
 const { runSnapshotFirstTool } = require('../snapshot/runSnapshotFirst');
 const { campaignPerformanceSnapshotOpts } = require('../services/adsPerformanceResolve');
@@ -13,10 +14,17 @@ function register(server, mcpUserId) {
   server.registerTool(
     TOOL_NAME,
     {
+      title: 'Get campaign performance',
       description:
-        'Retrieves performance metrics broken down by campaign for a given ad channel and date range.',
+        'Retrieves performance metrics broken down by campaign for a given ad channel and date range. Results are ordered by spend desc. Use the returned campaign_id with get_adset_performance to drill down.',
       inputSchema: getCampaignPerformanceInput,
-      annotations: { readOnlyHint: true },
+      outputSchema: getCampaignPerformanceOutput,
+      annotations: {
+        readOnlyHint: true,
+        idempotentHint: true,
+        destructiveHint: false,
+        openWorldHint: true,
+      },
     },
     async (params, extra) => {
       try {

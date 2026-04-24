@@ -13,10 +13,19 @@ function register(server, mcpUserId) {
   server.registerTool(
     TOOL_NAME,
     {
+      title: 'Get ad performance',
       description:
-        'Retrieves ad performance metrics (spend, impressions, clicks, CTR, CPC, CPM) for a given channel and date range.',
+        'Retrieves ad performance metrics (spend, impressions, clicks, CTR, CPC, CPM) for a given channel and date range. Use channel="all" to fetch meta and google in parallel — the response is an array of per-channel objects. For a single channel, the response is a single object.',
       inputSchema: getAdPerformanceInput,
-      annotations: { readOnlyHint: true },
+      // No outputSchema: channel="all" returns an array, single channel
+      // returns an object. structuredContent is still emitted via
+      // createToolResponse (arrays wrap to { items: [...] }).
+      annotations: {
+        readOnlyHint: true,
+        idempotentHint: true,
+        destructiveHint: false,
+        openWorldHint: true,
+      },
     },
     async (params, extra) => {
       try {

@@ -1,6 +1,7 @@
 'use strict';
 
 const { validateDateRange, resolveDateRangeDefaults, getShopifyRevenueInput } = require('../schemas/tool-schemas');
+const { getShopifyRevenueOutput } = require('../schemas/output-schemas');
 const shopifyAdapter = require('../adapters/shopify');
 const { createToolErrorResponse } = require('../schemas/errors');
 const { runSnapshotFirstTool } = require('../snapshot/runSnapshotFirst');
@@ -14,10 +15,17 @@ function register(server, mcpUserId) {
   server.registerTool(
     TOOL_NAME,
     {
+      title: 'Get Shopify revenue',
       description:
-        'Retrieves order and revenue data from the connected Shopify store for a given date range.',
+        'Retrieves order and revenue data from the connected Shopify store for a given date range. Returns totals, AOV, and new vs returning customer breakdown, plus optional time-series rows when granularity is set.',
       inputSchema: getShopifyRevenueInput,
-      annotations: { readOnlyHint: true },
+      outputSchema: getShopifyRevenueOutput,
+      annotations: {
+        readOnlyHint: true,
+        idempotentHint: true,
+        destructiveHint: false,
+        openWorldHint: true,
+      },
     },
     async (params, extra) => {
       try {
