@@ -2066,7 +2066,8 @@ app.listen(PORT, () => {
       const r = await fetch(sweepUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-adray-internal': secret },
-        body: JSON.stringify({}),
+        // Large limit so a backlog of stuck recordings drains in one pass
+        body: JSON.stringify({ limit: 1000 }),
       });
       const data = await r.json().catch(() => ({}));
       if (data.swept > 0) console.log(`[recordingSweep] Swept ${data.swept} stuck recordings`);
@@ -2077,6 +2078,33 @@ app.listen(PORT, () => {
 
   // First sweep after 2 minutes (let server fully boot), then every 10 min
   setTimeout(() => { runSweep(); setInterval(runSweep, SWEEP_INTERVAL_MS); }, 2 * 60 * 1000);
+})();
+
+// ── SessionPacket backfill: build packets for READY recordings that pre-date ──
+// ── the build-packet pipeline, so /bri shows Sessions for every recording. ──
+// Runs 3 min after boot (letting the sweep start first) then every 15 min.
+(function startPacketBackfill() {
+  const BACKFILL_INTERVAL_MS = 15 * 60 * 1000;
+  const backfillUrl = `http://localhost:${PORT}/collect/x/backfill-packets`;
+  const secret = process.env.INTERNAL_CRON_SECRET || 'adray-internal';
+
+  async function runBackfill() {
+    try {
+      const r = await fetch(backfillUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-adray-internal': secret },
+        body: JSON.stringify({ limit: 1000 }),
+      });
+      const data = await r.json().catch(() => ({}));
+      if (data.enqueued > 0) {
+        console.log(`[packetBackfill] enqueued=${data.enqueued} candidates=${data.candidates} alreadyHavePacket=${data.alreadyHavePacket}`);
+      }
+    } catch (e) {
+      console.warn('[packetBackfill] Backfill failed:', e.message);
+    }
+  }
+
+  setTimeout(() => { runBackfill(); setInterval(runBackfill, BACKFILL_INTERVAL_MS); }, 3 * 60 * 1000);
 })();
 
 // ── Inline Recording Worker ────────────────────────────────────────
