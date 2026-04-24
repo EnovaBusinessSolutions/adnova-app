@@ -1395,6 +1395,98 @@ router.post('/build-packets-now', async (req, res) => {
 });
 
 /* ─────────────────────────────────────────────────────────────────────────────
+ * POST /collect/x/analyze-pending  (internal)
+ * Runs sessionAnalyst INLINE on every SessionPacket without aiAnalysis, in
+ * batches. Bypasses the BullMQ queue so /bri fills in archetypes even when
+ * the worker is jammed or when analyze-session jobs were cleaned before
+ * running. sessionAnalyst has a deterministic path + fallback, so this
+ * works even if OPENROUTER_API_KEY is missing.
+ * ───────────────────────────────────────────────────────────────────────────── */
+router.post('/analyze-pending', async (req, res) => {
+  const secret = req.headers['x-adray-internal'] || req.body?.secret;
+  if (secret !== (process.env.INTERNAL_CRON_SECRET || 'adray-internal')) {
+    return res.status(403).json({ ok: false });
+  }
+
+  try {
+    const { analyzeSession } = require('../services/sessionAnalyst');
+    const { buildCustomerHistory } = require('../services/recordingNarrativeService');
+
+    const requestedLimit = Number(req.body?.limit) || Number(req.query?.limit) || 20;
+    const take = Math.max(1, Math.min(requestedLimit, 50));
+
+    const pending = await prisma.sessionPacket.findMany({
+      where: { aiAnalyzedAt: null },
+      orderBy: { createdAt: 'desc' },
+      take,
+    });
+
+    if (pending.length === 0) {
+      return res.json({ ok: true, candidates: 0, analyzed: 0, failed: 0 });
+    }
+
+    let analyzed = 0;
+    let failed = 0;
+    const failures = [];
+
+    for (const packet of pending) {
+      try {
+        // Build customer history for this visitor so analyst has tier context
+        let customerHistory = { orderCount: 0, totalSpent: 0, avgOrderValue: 0 };
+        try {
+          const priorOrders = await prisma.order.findMany({
+            where: {
+              accountId: packet.accountId,
+              userKey: packet.visitorId || undefined,
+              ...(packet.orderId ? { NOT: { orderId: packet.orderId } } : {}),
+            },
+            select: { revenue: true, platformCreatedAt: true, createdAt: true },
+            orderBy: { platformCreatedAt: 'asc' },
+          });
+          customerHistory = buildCustomerHistory(priorOrders);
+        } catch (_) {}
+
+        // 25s budget per packet — deterministic path is instant, LLM hits this
+        const timeout = new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('analyze timeout 25s')), 25_000)
+        );
+        const analysis = await Promise.race([
+          analyzeSession(packet, { customerHistory }),
+          timeout,
+        ]);
+
+        if (!analysis) {
+          failed++;
+          failures.push({ sessionId: packet.sessionId, reason: 'analyst returned null' });
+          continue;
+        }
+
+        await prisma.sessionPacket.update({
+          where: { sessionId: packet.sessionId },
+          data: { aiAnalysis: analysis, aiAnalyzedAt: new Date() },
+        });
+        analyzed++;
+      } catch (err) {
+        failed++;
+        failures.push({ sessionId: packet.sessionId, reason: String(err.message || err).slice(0, 160) });
+      }
+    }
+
+    console.log(`[recording/analyze-pending] candidates=${pending.length} analyzed=${analyzed} failed=${failed}`);
+    return res.json({
+      ok: true,
+      candidates: pending.length,
+      analyzed,
+      failed,
+      failures: failures.slice(0, 10),
+    });
+  } catch (err) {
+    console.error('[recording/analyze-pending] Error:', err.message);
+    return res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+/* ─────────────────────────────────────────────────────────────────────────────
  * POST /collect/x/queue-clean  (internal)
  * Removes failed / completed jobs from BullMQ so they stop being counted.
  * Useful after a wave of orphaned recordings burned through retries and left
