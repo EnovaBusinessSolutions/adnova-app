@@ -1440,8 +1440,33 @@ function stitchSnapshotAttribution(snapshot = {}) {
   }
 
   if (snapshot.utm_source) {
+    // Classify by utm_source + utm_medium combined. Without this, rows
+    // where the advertiser set utm_source=fb, utm_medium=paid end up as
+    // channel="paid" → "other", even though they are clearly Meta.
+    const src = String(snapshot.utm_source || '').toLowerCase();
+    const med = String(snapshot.utm_medium || '').toLowerCase();
+    const isPaidMedium = ['paid', 'paid_social', 'paid_search', 'cpc', 'ppc', 'display', 'social'].includes(med);
+
+    let channel;
+    if (['fb', 'facebook', 'ig', 'instagram', 'meta'].some((p) => src.includes(p))) {
+      // Any Meta-family source — if organic is explicitly set, respect it.
+      channel = med === 'organic' ? 'organic_social' : 'meta';
+    } else if (src.includes('tiktok') || src === 'tt') {
+      channel = med === 'organic' ? 'organic_social' : 'tiktok';
+    } else if (src.includes('google') || src === 'googleads' || src === 'adwords') {
+      channel = med === 'organic' ? 'organic_search' : 'google';
+    } else if (isPaidMedium) {
+      // Unknown paid source (e.g. utm_source=newsletter, utm_medium=cpc) —
+      // keep the source as platform and tag the channel per medium semantics.
+      channel = med === 'cpc' || med === 'paid_search' ? 'google' : 'other';
+    } else {
+      // Fall back to utm_medium verbatim; normalizeChannelForStats will
+      // collapse anything unknown to "other".
+      channel = med || 'referral';
+    }
+
     return {
-      channel: snapshot.utm_medium || 'referral',
+      channel,
       platform: snapshot.utm_source,
       campaign: snapshot.utm_campaign || null,
       adset: snapshot.utm_content || null,
