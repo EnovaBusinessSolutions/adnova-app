@@ -914,6 +914,9 @@ router.post('/sweep', async (req, res) => {
     // ERROR recordings get 1 retry chance (in case failure was transient)
     const errorCutoff = new Date(Date.now() - 30 * 60 * 1000); // 30 min ago for ERROR
 
+    const requestedLimit = Number(req.body?.limit) || Number(req.query?.limit) || 500;
+    const take = Math.max(1, Math.min(requestedLimit, 2000));
+
     const stuck = await prisma.sessionRecording.findMany({
       where: {
         OR: [
@@ -925,7 +928,7 @@ router.post('/sweep', async (req, res) => {
         ],
       },
       select: { recordingId: true, accountId: true, sessionId: true, status: true },
-      take: 50,
+      take,
     });
 
     let enqueued = 0;
@@ -966,6 +969,91 @@ router.post('/sweep', async (req, res) => {
     return res.json({ ok: true, swept: enqueued, recordingIds: stuck.map(r => r.recordingId) });
   } catch (err) {
     console.error('[recording/sweep] Error:', err.message);
+    return res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * POST /collect/x/backfill-packets  (internal)
+ * For every READY recording that doesn't yet have a SessionPacket, enqueue
+ * recording:build-packet. Idempotent via upsert on sessionId.
+ * Runs periodically from the server boot loop so /bri stays populated as the
+ * sweep drains the RECORDING backlog.
+ * ───────────────────────────────────────────────────────────────────────────── */
+router.post('/backfill-packets', async (req, res) => {
+  const secret = req.headers['x-adray-internal'] || req.body?.secret;
+  if (secret !== (process.env.INTERNAL_CRON_SECRET || 'adray-internal')) {
+    return res.status(403).json({ ok: false });
+  }
+
+  try {
+    const requestedLimit = Number(req.body?.limit) || Number(req.query?.limit) || 500;
+    const take = Math.max(1, Math.min(requestedLimit, 2000));
+
+    // 1. Candidate recordings: READY, still have raw (r2Key set), with a real sessionId.
+    const ready = await prisma.sessionRecording.findMany({
+      where: {
+        status: 'READY',
+        rawErasedAt: null,
+        r2Key: { not: null },
+        sessionId: { not: 'unknown' },
+      },
+      select: { recordingId: true, accountId: true, sessionId: true },
+      orderBy: { createdAt: 'desc' },
+      take,
+    });
+
+    if (ready.length === 0) {
+      return res.json({ ok: true, candidates: 0, alreadyHavePacket: 0, enqueued: 0 });
+    }
+
+    // 2. Which of those sessionIds already have a SessionPacket? Skip them.
+    const existing = await prisma.sessionPacket.findMany({
+      where: { sessionId: { in: ready.map((r) => r.sessionId) } },
+      select: { sessionId: true },
+    });
+    const hasPacket = new Set(existing.map((p) => p.sessionId));
+
+    const pending = ready.filter((r) => !hasPacket.has(r.sessionId));
+
+    // 3. Enqueue build-packet for each pending recording. Idempotent via upsert
+    //    in the worker — safe to run repeatedly without creating duplicates.
+    let enqueued = 0;
+    if (recordingQueue && pending.length > 0) {
+      for (const rec of pending) {
+        try {
+          await recordingQueue.add(
+            'recording:build-packet',
+            { recordingId: rec.recordingId, accountId: rec.accountId, sessionId: rec.sessionId },
+            {
+              // Dedupe so repeated loops don't pile up identical jobs in Redis
+              jobId: `backfill-packet:${rec.recordingId}`,
+              attempts: 3,
+              backoff: { type: 'exponential', delay: 5000 },
+              removeOnComplete: true,
+              removeOnFail: 50,
+            }
+          );
+          enqueued++;
+        } catch (e) {
+          // BullMQ throws on duplicate jobId — that means the job is already queued/active.
+          // Not an error; it's exactly the dedupe we want.
+          if (!String(e?.message || '').includes('already exists')) {
+            console.warn(`[recording/backfill-packets] enqueue failed for ${rec.recordingId}:`, e.message);
+          }
+        }
+      }
+    }
+
+    console.log(`[recording/backfill-packets] candidates=${ready.length} alreadyHavePacket=${hasPacket.size} enqueued=${enqueued}`);
+    return res.json({
+      ok: true,
+      candidates: ready.length,
+      alreadyHavePacket: hasPacket.size,
+      enqueued,
+    });
+  } catch (err) {
+    console.error('[recording/backfill-packets] Error:', err.message);
     return res.status(500).json({ ok: false, error: err.message });
   }
 });
