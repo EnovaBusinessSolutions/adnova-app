@@ -169,6 +169,13 @@ function EventRow({
   const cfg = getEventConfig(event.eventName);
   const isPurchase = event.eventName.toLowerCase() === 'purchase';
   const hasClickId = event.gclid || event.fbc || event.fbclid || event.ttclid || event.clickId;
+  const clickIdTooltip = event.gclid
+    ? `Google Ads click (gclid: ${String(event.gclid).slice(0, 14)}…)`
+    : (event.fbclid || event.fbc)
+      ? `Meta Ads click (${event.fbclid ? 'fbclid' : '_fbc'}: ${String(event.fbclid || event.fbc).slice(0, 14)}…)`
+      : event.ttclid
+        ? `TikTok Ads click (ttclid: ${String(event.ttclid).slice(0, 14)}…)`
+        : 'Click ID capturado';
   const path = shortPath(event.pageUrl);
 
   return (
@@ -198,7 +205,8 @@ function EventRow({
           {hasClickId && (
             <Badge
               variant="outline"
-              className="h-3.5 shrink-0 border-[var(--adray-purple)]/30 px-1 text-[8px] text-[#D8B8FF]"
+              title={clickIdTooltip}
+              className="h-3.5 shrink-0 cursor-help border-[var(--adray-purple)]/30 px-1 text-[8px] text-[#D8B8FF]"
             >
               click ID
             </Badge>
@@ -465,15 +473,29 @@ export function SelectedJourney({ purchase, onClose }: SelectedJourneyProps) {
     ? purchase.attributedClickId.slice(0, 18) + (purchase.attributedClickId.length > 18 ? '…' : '')
     : null;
 
-  const attributionSourceBadge =
-    purchase.attributionSource
-      ? purchase.attributionSource
-          .replace('orders_sync', 'order sync')
-          .replace('click_id', 'click ID')
-          .replace('woo_fallback', 'woo')
-          .replace('utm', 'UTM')
-          .replace('click_view', 'Google Ads lookup')
-      : null;
+  // Human-readable labels for the attributionSource tag. Backend uses short
+  // internal codes; we expand them here so the UI never shows cryptic
+  // strings like "woo_fallback" or "orders_sync".
+  const SOURCE_LABELS: Record<string, string> = {
+    click_id:     'Click ID',
+    utm:          'UTM parameters',
+    referrer:     'Referrer',
+    orders_sync:  'Platform sync (Shopify)',
+    woo_fallback: 'WooCommerce attribution',
+    click_view:   'Google Ads API lookup',
+    none:         'Unattributed',
+  };
+  function formatAttributionSource(raw: string | null | undefined): string | null {
+    if (!raw) return null;
+    // source can be composed (e.g. "click_id+click_view") — format each piece.
+    return raw
+      .split(/[+,]/)
+      .map((part) => SOURCE_LABELS[part.trim()] ?? part.trim())
+      .join(' + ');
+  }
+  const attributionSourceBadge = formatAttributionSource(purchase.attributionSource);
+  const attributionSourceTooltip =
+    'Cómo calculamos la atribución de este pedido: Click ID (más alta confianza) > UTM > Platform sync > WooCommerce > Referrer';
 
   return (
     <div className="flex h-full min-w-0 flex-col overflow-hidden rounded-2xl border border-white/[0.08] bg-white/[0.02]">
@@ -528,9 +550,12 @@ export function SelectedJourney({ purchase, onClose }: SelectedJourneyProps) {
             </div>
           )}
           {attributionSourceBadge && (
-            <div className="mt-1 flex items-center gap-1 text-[9px] text-white/25">
+            <div
+              className="mt-1 flex cursor-help items-center gap-1 text-[9px] text-white/25"
+              title={attributionSourceTooltip}
+            >
               <span>attribution source:</span>
-              <span className="rounded border border-white/[0.06] bg-white/[0.02] px-1 py-[1px] text-white/40">
+              <span className="rounded border border-white/[0.06] bg-white/[0.02] px-1 py-[1px] text-white/45">
                 {attributionSourceBadge}
               </span>
             </div>
