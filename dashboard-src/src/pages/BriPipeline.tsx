@@ -1,9 +1,7 @@
 // dashboard-src/src/pages/BriPipeline.tsx
 import React, { useEffect, useState, useCallback } from "react";
 import { DashboardLayout } from "@/components/DashboardLayout";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import {
   RefreshCw, Brain, Users, Activity, CheckCircle2, XCircle,
   Clock, ChevronDown, ChevronRight, Loader2,
@@ -109,24 +107,86 @@ function fmtOffset(ms: number) {
   return `${Math.floor(ms / 60000)}m${Math.floor((ms % 60000) / 1000)}s`;
 }
 
-function outcomeColor(outcome: string) {
-  if (outcome === "PURCHASED") return "bg-emerald-500/15 text-emerald-400 border-emerald-500/30";
-  if (outcome === "ABANDONED") return "bg-red-500/15 text-red-400 border-red-500/30";
-  if (outcome === "BOUNCED") return "bg-orange-500/15 text-orange-400 border-orange-500/30";
-  return "bg-white/10 text-white/50 border-white/10";
+/* ── Adray palette aligned with attribution panel ────────────────────────── */
+
+const OUTCOME_STYLES: Record<string, string> = {
+  PURCHASED: "border-emerald-500/30 bg-emerald-500/10 text-emerald-400",
+  ABANDONED: "border-red-500/30 bg-red-500/10 text-red-400",
+  BOUNCED:   "border-orange-500/30 bg-orange-500/10 text-orange-400",
+};
+
+function outcomeStyle(outcome: string) {
+  return OUTCOME_STYLES[outcome] || "border-white/[0.08] bg-white/[0.04] text-white/50";
 }
 
-function archetypeColor(archetype: string | null | undefined) {
-  if (!archetype) return "bg-white/5 text-white/30 border-white/10";
-  const map: Record<string, string> = {
-    high_intent: "bg-purple-500/15 text-purple-400 border-purple-500/30",
-    new_visitor: "bg-blue-500/15 text-blue-400 border-blue-500/30",
-    loyal_buyer: "bg-emerald-500/15 text-emerald-400 border-emerald-500/30",
-    abandonment_risk: "bg-red-500/15 text-red-400 border-red-500/30",
-    price_sensitive: "bg-amber-500/15 text-amber-400 border-amber-500/30",
-    researcher: "bg-cyan-500/15 text-cyan-400 border-cyan-500/30",
-  };
-  return map[archetype] || "bg-white/10 text-white/50 border-white/10";
+const ARCHETYPE_STYLES: Record<string, string> = {
+  high_intent:       "border-purple-500/30 bg-purple-500/10 text-purple-400",
+  new_visitor:       "border-blue-500/30 bg-blue-500/10 text-blue-400",
+  loyal_buyer:       "border-emerald-500/30 bg-emerald-500/10 text-emerald-400",
+  abandonment_risk:  "border-red-500/30 bg-red-500/10 text-red-400",
+  price_sensitive:   "border-amber-500/30 bg-amber-500/10 text-amber-400",
+  researcher:        "border-cyan-500/30 bg-cyan-500/10 text-cyan-400",
+};
+
+function archetypeStyle(archetype: string | null | undefined) {
+  if (!archetype) return "border-white/[0.08] bg-white/[0.04] text-white/40";
+  return ARCHETYPE_STYLES[archetype] || "border-white/[0.08] bg-white/[0.04] text-white/50";
+}
+
+const STATUS_STYLES: Record<string, string> = {
+  RECORDING:  "border-blue-500/30 bg-blue-500/10 text-blue-400",
+  FINALIZING: "border-amber-500/30 bg-amber-500/10 text-amber-400",
+  READY:      "border-emerald-500/30 bg-emerald-500/10 text-emerald-400",
+  ERROR:      "border-red-500/30 bg-red-500/10 text-red-400",
+};
+
+const PRIORITY_STYLES: Record<string, string> = {
+  high:   "border-red-500/30 bg-red-500/10 text-red-400",
+  medium: "border-amber-500/30 bg-amber-500/10 text-amber-400",
+  low:    "border-white/[0.08] bg-white/[0.04] text-white/50",
+};
+
+const TIER_STYLES: Record<string, string> = {
+  vip:       "border-yellow-500/30 bg-yellow-500/10 text-yellow-400",
+  returning: "border-emerald-500/30 bg-emerald-500/10 text-emerald-400",
+  new:       "border-blue-500/30 bg-blue-500/10 text-blue-400",
+  at_risk:   "border-red-500/30 bg-red-500/10 text-red-400",
+};
+
+/* ── Shared atoms (attribution-panel vocabulary) ─────────────────────────── */
+
+function Pill({
+  tone = "neutral",
+  className = "",
+  children,
+}: {
+  tone?: string;
+  className?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <span
+      className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium ${tone} ${className}`}
+    >
+      {children}
+    </span>
+  );
+}
+
+function SectionLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <p className="text-[9px] font-semibold uppercase tracking-wider text-[var(--adray-purple)]/70">
+      {children}
+    </p>
+  );
+}
+
+function FieldLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <p className="text-[10px] font-semibold uppercase tracking-wider text-white/30 mb-1">
+      {children}
+    </p>
+  );
 }
 
 /* ── Keyframe config ────────────────────────────────────────────────────────── */
@@ -148,25 +208,36 @@ function getKeyframeConfig(type: string) {
   return KEYFRAME_CONFIG[type] || { icon: Activity, color: "text-white/30", label: type.replace(/_/g, " ") };
 }
 
-/* ── Stat Card ──────────────────────────────────────────────────────────────── */
+/* ── Stat Card (KpiCard-aligned) ───────────────────────────────────────────── */
 
-function StatCard({ label, value, sub, icon: Icon, color = "text-white" }: {
-  label: string; value: number | string; sub?: string;
-  icon: React.ElementType; color?: string;
+function StatCard({
+  label, value, sub, icon: Icon, accentClass,
+}: {
+  label: string;
+  value: number | string;
+  sub?: string;
+  icon: React.ElementType;
+  accentClass?: string;
 }) {
   return (
-    <Card className="bg-white/[0.03] border-white/[0.06]">
-      <CardContent className="p-4 flex items-start gap-3">
-        <div className="mt-0.5 rounded-md bg-white/5 p-2">
-          <Icon className={`h-4 w-4 ${color}`} />
+    <div
+      className={`relative overflow-hidden rounded-2xl border border-[var(--adray-line)] bg-[var(--adray-surface-2)] backdrop-blur-md transition-all duration-200 hover:bg-[rgba(255,255,255,0.035)] hover:shadow-[var(--adray-shadow-lg)] ${accentClass || ""}`}
+    >
+      <div className="p-3 sm:p-4">
+        <div className="flex items-start justify-between gap-2">
+          <p className="text-[11px] font-medium leading-tight text-white/45">{label}</p>
+          <span className="mt-0.5 shrink-0 text-white/25">
+            <Icon size={13} />
+          </span>
         </div>
-        <div>
-          <div className={`text-2xl font-semibold tabular-nums ${color}`}>{value}</div>
-          <div className="text-xs text-white/40 mt-0.5">{label}</div>
-          {sub && <div className="text-xs text-white/25 mt-0.5">{sub}</div>}
-        </div>
-      </CardContent>
-    </Card>
+        <p className="mt-2 text-[1rem] font-semibold leading-tight tracking-tight text-white sm:text-[1.15rem] tabular-nums">
+          {value}
+        </p>
+        {sub != null && (
+          <p className="mt-1 text-[11px] leading-tight text-white/35">{sub}</p>
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -174,7 +245,7 @@ function StatCard({ label, value, sub, icon: Icon, color = "text-white" }: {
 
 function KeyframesTimeline({ keyframes, durationMs }: { keyframes: Keyframe[]; durationMs: number }) {
   if (!keyframes.length) return (
-    <p className="text-xs text-white/20 italic">No keyframes captured</p>
+    <p className="text-[11px] text-white/25 italic">No keyframes captured</p>
   );
 
   return (
@@ -194,7 +265,7 @@ function KeyframesTimeline({ keyframes, durationMs }: { keyframes: Keyframe[]; d
           <div key={i} className="flex items-start gap-2">
             {/* Timeline dot + line */}
             <div className="flex flex-col items-center shrink-0">
-              <div className={`h-5 w-5 rounded-full flex items-center justify-center bg-white/5 border border-white/10`}>
+              <div className="h-5 w-5 rounded-full flex items-center justify-center border border-white/[0.08] bg-white/[0.04]">
                 <Icon className={`h-2.5 w-2.5 ${cfg.color}`} />
               </div>
               {i < keyframes.length - 1 && (
@@ -204,10 +275,10 @@ function KeyframesTimeline({ keyframes, durationMs }: { keyframes: Keyframe[]; d
             {/* Content */}
             <div className="pb-2 min-w-0">
               <div className="flex items-center gap-2">
-                <span className={`text-xs font-medium ${cfg.color}`}>{cfg.label}</span>
+                <span className={`text-[11px] font-medium ${cfg.color}`}>{cfg.label}</span>
                 <span className="text-[10px] text-white/25">{fmtOffset(kf.ts)}</span>
                 <div className="h-px flex-1 bg-white/[0.04]" />
-                <span className="text-[10px] text-white/15">{Math.round(pct)}%</span>
+                <span className="text-[10px] text-white/20">{Math.round(pct)}%</span>
               </div>
               {extra && (
                 <p className="text-[10px] text-white/30 mt-0.5 truncate">{extra}</p>
@@ -233,41 +304,44 @@ function AiInsightsCard({ ai }: { ai: AiAnalysis }) {
       {/* Archetype + confidence */}
       <div className="flex items-center gap-2 flex-wrap">
         {ai.archetype && (
-          <Badge variant="outline" className={`text-xs px-2.5 py-0.5 ${archetypeColor(ai.archetype)}`}>
+          <Pill tone={archetypeStyle(ai.archetype)}>
+            <span className="h-1.5 w-1.5 rounded-full bg-current opacity-70" />
             {ai.archetype.replace(/_/g, " ")}
-          </Badge>
+            {ai.confidence_score != null && (
+              <span className="opacity-60 ml-0.5">{Math.round(ai.confidence_score * 100)}%</span>
+            )}
+          </Pill>
         )}
         {ai.customer_tier && (
-          <span className="text-xs text-white/40">tier: <span className="text-white/60">{ai.customer_tier}</span></span>
-        )}
-        {ai.confidence_score != null && (
-          <span className="text-xs text-white/40">confidence: <span className="text-white/60">{Math.round(ai.confidence_score * 100)}%</span></span>
+          <span className="text-[11px] text-white/35">
+            tier <span className="text-white/60 font-medium">{ai.customer_tier}</span>
+          </span>
         )}
         {ai.organic_converter && (
-          <Badge variant="outline" className="text-xs px-2 py-0.5 bg-emerald-500/10 text-emerald-400 border-emerald-500/20">organic</Badge>
+          <Pill tone="border-emerald-500/30 bg-emerald-500/10 text-emerald-400">organic</Pill>
         )}
         {ai.exclude_from_retargeting && (
-          <Badge variant="outline" className="text-xs px-2 py-0.5 bg-orange-500/10 text-orange-400 border-orange-500/20">suppress retargeting</Badge>
+          <Pill tone="border-orange-500/30 bg-orange-500/10 text-orange-400">suppress retargeting</Pill>
         )}
       </div>
 
       {/* Narrative */}
       {ai.narrative && (
-        <div className="rounded-lg bg-white/[0.03] border border-white/[0.05] p-3">
-          <p className="text-[10px] font-semibold uppercase tracking-wider text-white/30 mb-1">Narrative</p>
-          <p className="text-xs text-white/60 leading-relaxed">{ai.narrative}</p>
+        <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-3">
+          <FieldLabel>Narrative</FieldLabel>
+          <p className="text-[12px] text-white/65 leading-relaxed">{ai.narrative}</p>
         </div>
       )}
 
       {/* Friction signals */}
       {frictionSignals.length > 0 && (
         <div>
-          <p className="text-[10px] font-semibold uppercase tracking-wider text-white/30 mb-1.5">Friction signals</p>
+          <FieldLabel>Friction signals</FieldLabel>
           <div className="flex flex-wrap gap-1.5">
             {frictionSignals.map((s, i) => (
-              <span key={i} className="text-[11px] rounded-md border border-amber-500/20 bg-amber-500/10 px-2 py-0.5 text-amber-400">
+              <Pill key={i} tone="border-amber-500/30 bg-amber-500/10 text-amber-400">
                 {s}
-              </span>
+              </Pill>
             ))}
           </div>
         </div>
@@ -275,39 +349,36 @@ function AiInsightsCard({ ai }: { ai: AiAnalysis }) {
 
       {/* Next best action */}
       {nba && (
-        <div className="rounded-lg bg-purple-500/5 border border-purple-500/15 p-3">
-          <div className="flex items-center justify-between mb-1">
-            <p className="text-[10px] font-semibold uppercase tracking-wider text-purple-400/60">Next best action</p>
-            <div className="flex items-center gap-2">
-              <span className="text-[10px] text-white/30">{nba.type}</span>
-              <span className={`text-[10px] rounded-full px-1.5 py-0 border ${
-                nba.priority === "high"
-                  ? "border-red-500/30 text-red-400 bg-red-500/10"
-                  : nba.priority === "medium"
-                  ? "border-amber-500/30 text-amber-400 bg-amber-500/10"
-                  : "border-white/10 text-white/30 bg-white/5"
-              }`}>{nba.priority}</span>
+        <div className="rounded-xl border border-[var(--adray-purple)]/25 bg-[var(--adray-purple)]/[0.06] p-3">
+          <div className="flex items-center justify-between gap-2 mb-1.5 flex-wrap">
+            <p className="text-[10px] font-semibold uppercase tracking-wider text-[var(--adray-purple)]/70">
+              Next best action
+            </p>
+            <div className="flex items-center gap-1.5">
+              <Pill tone="border-white/[0.08] bg-white/[0.04] text-white/50">{nba.type}</Pill>
+              <Pill tone={PRIORITY_STYLES[nba.priority] || PRIORITY_STYLES.low}>{nba.priority}</Pill>
               {nba.timing_days != null && (
-                <span className="text-[10px] text-white/25">in {nba.timing_days}d</span>
+                <span className="text-[10px] text-white/30">in {nba.timing_days}d</span>
               )}
             </div>
           </div>
-          <p className="text-xs text-white/60 leading-relaxed">{nba.content}</p>
+          <p className="text-[12px] text-white/65 leading-relaxed">{nba.content}</p>
         </div>
       )}
 
       {/* Retention insight */}
       {ai.retention_insight && (
         <div>
-          <p className="text-[10px] font-semibold uppercase tracking-wider text-white/30 mb-1">Retention insight</p>
-          <p className="text-xs text-white/50 leading-relaxed">{ai.retention_insight}</p>
+          <FieldLabel>Retention insight</FieldLabel>
+          <p className="text-[11px] text-white/50 leading-relaxed">{ai.retention_insight}</p>
         </div>
       )}
 
       {/* LTV */}
       {ai.predicted_ltv_multiplier != null && (
-        <p className="text-xs text-white/30">
-          Predicted LTV multiplier: <span className="text-white/60 font-medium">{ai.predicted_ltv_multiplier}×</span>
+        <p className="text-[11px] text-white/35">
+          Predicted LTV multiplier{" "}
+          <span className="text-white/70 font-semibold">{ai.predicted_ltv_multiplier}×</span>
         </p>
       )}
     </div>
@@ -323,62 +394,66 @@ function PacketRow({ packet }: { packet: SessionPacketRow }) {
   const keyframes = Array.isArray(packet.keyframes) ? packet.keyframes : [];
 
   return (
-    <div className="border-b border-white/[0.05] last:border-0">
+    <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] transition-colors hover:bg-white/[0.03]">
       <button
-        className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-white/[0.02] transition-colors"
+        className="w-full flex items-center gap-2.5 px-3.5 py-3 text-left"
         onClick={() => setOpen(!open)}
       >
         {open
           ? <ChevronDown className="h-3.5 w-3.5 text-white/30 shrink-0" />
           : <ChevronRight className="h-3.5 w-3.5 text-white/30 shrink-0" />}
 
-        <span className="font-mono text-xs text-white/40 w-[120px] shrink-0 truncate">
+        <span className="font-mono text-[11px] text-white/45 w-[108px] shrink-0 truncate">
           {packet.sessionId.slice(0, 12)}…
         </span>
 
-        <Badge variant="outline" className={`text-[10px] px-1.5 py-0 shrink-0 ${outcomeColor(packet.outcome)}`}>
+        <Pill tone={outcomeStyle(packet.outcome)} className="shrink-0">
           {packet.outcome}
-        </Badge>
+        </Pill>
 
         {ai ? (
-          <Badge variant="outline" className={`text-[10px] px-1.5 py-0 shrink-0 ${archetypeColor(ai.archetype)}`}>
+          <Pill tone={archetypeStyle(ai.archetype)} className="shrink-0">
             {ai.archetype?.replace(/_/g, " ") || "analyzed"}
-          </Badge>
+          </Pill>
         ) : (
-          <Badge variant="outline" className="text-[10px] px-1.5 py-0 shrink-0 bg-white/5 text-white/20 border-white/10">
-            no AI
-          </Badge>
+          <Pill tone="border-white/[0.08] bg-white/[0.04] text-white/35" className="shrink-0">
+            pending AI
+          </Pill>
         )}
 
         {packet.personId && (
-          <Badge variant="outline" className="text-[10px] px-1.5 py-0 shrink-0 bg-blue-500/10 text-blue-400 border-blue-500/20">
+          <Pill tone="border-blue-500/30 bg-blue-500/10 text-blue-400" className="shrink-0">
             person
-          </Badge>
+          </Pill>
         )}
 
         {keyframes.length > 0 && (
-          <span className="text-[10px] text-white/20 shrink-0">{keyframes.length} kf</span>
+          <span className="text-[10px] text-white/25 shrink-0">{keyframes.length} kf</span>
         )}
 
-        <span className="ml-auto text-xs text-white/30 shrink-0">{fmtDuration(packet.durationMs)}</span>
+        <span className="ml-auto text-[11px] text-white/40 shrink-0 tabular-nums">
+          {fmtDuration(packet.durationMs)}
+        </span>
 
         {ai?.confidence_score != null && (
-          <span className="text-xs text-white/30 shrink-0 w-10 text-right">
+          <span className="text-[11px] text-white/45 shrink-0 w-10 text-right tabular-nums">
             {Math.round(ai.confidence_score * 100)}%
           </span>
         )}
       </button>
 
       {open && (
-        <div className="px-4 pb-5">
+        <div className="px-3.5 pb-4">
           {/* Tab bar */}
-          <div className="flex gap-1 mb-4 border-b border-white/[0.05] pb-2">
+          <div className="flex gap-1 mb-3 border-b border-white/[0.05] pb-2">
             {(["insights", "keyframes", "identifiers"] as const).map(t => (
               <button
                 key={t}
                 onClick={() => setTab(t)}
-                className={`text-xs px-3 py-1 rounded-md transition-colors ${
-                  tab === t ? "bg-white/10 text-white" : "text-white/30 hover:text-white/60"
+                className={`text-[11px] px-2.5 py-1 rounded-md transition-colors font-medium ${
+                  tab === t
+                    ? "bg-white/[0.08] text-white"
+                    : "text-white/35 hover:text-white/65 hover:bg-white/[0.04]"
                 }`}
               >
                 {t === "keyframes" ? `keyframes (${keyframes.length})` : t}
@@ -389,7 +464,7 @@ function PacketRow({ packet }: { packet: SessionPacketRow }) {
           {tab === "insights" && (
             ai
               ? <AiInsightsCard ai={ai} />
-              : <p className="text-xs text-white/20 italic">No AI analysis yet — packet pending processing.</p>
+              : <p className="text-[11px] text-white/25 italic">No AI analysis yet — packet pending processing.</p>
           )}
 
           {tab === "keyframes" && (
@@ -397,7 +472,7 @@ function PacketRow({ packet }: { packet: SessionPacketRow }) {
           )}
 
           {tab === "identifiers" && (
-            <div className="space-y-1.5 text-xs">
+            <div className="space-y-1.5 text-[11px]">
               {[
                 ["sessionId",  packet.sessionId,                    true],
                 ["accountId",  packet.accountId,                    true],
@@ -411,8 +486,10 @@ function PacketRow({ packet }: { packet: SessionPacketRow }) {
                 ["analyzed",   packet.aiAnalyzedAt ? new Date(packet.aiAnalyzedAt).toLocaleString() : "—", false],
               ].filter(([, v]) => v != null).map(([label, value, mono]) => (
                 <div key={String(label)} className="flex gap-2 items-baseline">
-                  <span className="text-white/30 shrink-0 w-28">{label}</span>
-                  <span className={`truncate ${mono ? "font-mono text-white/50" : "text-white/60"}`}>{String(value)}</span>
+                  <span className="text-white/30 shrink-0 w-24">{label}</span>
+                  <span className={`truncate ${mono ? "font-mono text-white/55" : "text-white/65"}`}>
+                    {String(value)}
+                  </span>
                 </div>
               ))}
             </div>
@@ -425,126 +502,133 @@ function PacketRow({ packet }: { packet: SessionPacketRow }) {
 
 /* ── Person Row ─────────────────────────────────────────────────────────────── */
 
-const TIER_STYLES: Record<string, string> = {
-  vip:       "bg-yellow-500/15 text-yellow-400 border-yellow-500/30",
-  returning: "bg-emerald-500/15 text-emerald-400 border-emerald-500/30",
-  new:       "bg-blue-500/15 text-blue-400 border-blue-500/30",
-  at_risk:   "bg-red-500/15 text-red-400 border-red-500/30",
-};
-
 function PersonRow({ person }: { person: PersonRow }) {
   const [open, setOpen] = useState(false);
   const a = person.analysis;
 
   return (
-    <div className="border-b border-white/[0.05] last:border-0">
+    <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] transition-colors hover:bg-white/[0.03]">
       <button
-        className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-white/[0.02] transition-colors"
+        className="w-full flex items-center gap-2.5 px-3.5 py-3 text-left"
         onClick={() => setOpen(!open)}
       >
-        {open ? <ChevronDown className="h-3.5 w-3.5 text-white/30 shrink-0" /> : <ChevronRight className="h-3.5 w-3.5 text-white/30 shrink-0" />}
+        {open
+          ? <ChevronDown className="h-3.5 w-3.5 text-white/30 shrink-0" />
+          : <ChevronRight className="h-3.5 w-3.5 text-white/30 shrink-0" />}
 
-        <span className="font-mono text-xs text-white/40 w-[100px] shrink-0 truncate">
+        <span className="font-mono text-[11px] text-white/45 w-[96px] shrink-0 truncate">
           {person.id.slice(0, 8)}…
         </span>
 
         {a?.tier ? (
-          <Badge variant="outline" className={`text-[10px] px-1.5 py-0 shrink-0 ${TIER_STYLES[a.tier] || "bg-white/5 text-white/30 border-white/10"}`}>
+          <Pill tone={TIER_STYLES[a.tier] || "border-white/[0.08] bg-white/[0.04] text-white/50"} className="shrink-0">
             {a.tier}
-          </Badge>
+          </Pill>
         ) : (
-          <Badge variant="outline" className="text-[10px] px-1.5 py-0 shrink-0 bg-white/5 text-white/20 border-white/10">
+          <Pill tone="border-white/[0.08] bg-white/[0.04] text-white/35" className="shrink-0">
             no profile
-          </Badge>
+          </Pill>
         )}
 
-        <span className="text-xs text-white/30 shrink-0">{person.sessionCount} sessions</span>
-        <span className="text-xs text-white/30 shrink-0">{person.orderCount} orders</span>
+        <span className="text-[11px] text-white/45 shrink-0 tabular-nums">
+          {person.sessionCount} sessions
+        </span>
+        <span className="text-[11px] text-white/45 shrink-0 tabular-nums">
+          {person.orderCount} orders
+        </span>
 
-        <span className="ml-auto text-xs text-white/50 shrink-0 font-medium">
+        <span className="ml-auto text-[11px] text-white/70 font-semibold shrink-0 tabular-nums">
           ${person.totalSpent.toFixed(0)}
         </span>
 
         {a?.conversionProb != null && (
-          <span className="text-xs text-white/30 shrink-0 w-10 text-right">
+          <span className="text-[11px] text-white/45 shrink-0 w-10 text-right tabular-nums">
             {Math.round(a.conversionProb * 100)}%
           </span>
         )}
       </button>
 
       {open && (
-        <div className="px-4 pb-5 space-y-3 text-xs">
+        <div className="px-3.5 pb-4 space-y-3 text-[11px]">
           {/* Identifiers */}
-          <div className="flex flex-wrap gap-x-6 gap-y-1 text-[10px] text-white/30">
-            <span>first seen: <span className="text-white/50">{new Date(person.firstSeenAt).toLocaleDateString()}</span></span>
-            <span>last seen: <span className="text-white/50">{new Date(person.lastSeenAt).toLocaleDateString()}</span></span>
-            {person.visitorIds.length > 0 && <span>visitors: <span className="font-mono text-white/40">{person.visitorIds.length}</span></span>}
-            {person.emailHashes.length > 0 && <span>emails: <span className="font-mono text-white/40">{person.emailHashes.length}</span></span>}
-            {person.customerIds.length > 0 && <span>customerIds: <span className="font-mono text-white/40">{person.customerIds.length}</span></span>}
+          <div className="flex flex-wrap gap-x-5 gap-y-1 text-[10px] text-white/30">
+            <span>first seen <span className="text-white/55">{new Date(person.firstSeenAt).toLocaleDateString()}</span></span>
+            <span>last seen <span className="text-white/55">{new Date(person.lastSeenAt).toLocaleDateString()}</span></span>
+            {person.visitorIds.length > 0 && <span>visitors <span className="font-mono text-white/45">{person.visitorIds.length}</span></span>}
+            {person.emailHashes.length > 0 && <span>emails <span className="font-mono text-white/45">{person.emailHashes.length}</span></span>}
+            {person.customerIds.length > 0 && <span>customer ids <span className="font-mono text-white/45">{person.customerIds.length}</span></span>}
           </div>
 
-          {!a && <p className="text-white/20 italic">No cross-session analysis yet — will generate after next session.</p>}
+          {!a && <p className="text-white/25 italic">No cross-session analysis yet — will generate after next session.</p>}
 
           {a && (
             <>
               {/* Behavior summary */}
               {a.behaviorSummary && (
-                <div className="rounded-lg bg-white/[0.03] border border-white/[0.05] p-3">
-                  <p className="text-[10px] font-semibold uppercase tracking-wider text-white/30 mb-1">Behavior summary</p>
-                  <p className="text-xs text-white/60 leading-relaxed">{a.behaviorSummary}</p>
+                <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-3">
+                  <FieldLabel>Behavior summary</FieldLabel>
+                  <p className="text-[12px] text-white/65 leading-relaxed">{a.behaviorSummary}</p>
                 </div>
               )}
 
               {/* Key metrics */}
-              <div className="flex flex-wrap gap-4">
+              <div className="flex flex-wrap gap-5">
                 {a.conversionProb != null && (
                   <div>
-                    <p className="text-[10px] text-white/30">Conversion prob.</p>
-                    <p className="text-sm font-semibold text-white/70">{Math.round(a.conversionProb * 100)}%</p>
+                    <p className="text-[10px] uppercase tracking-wider text-white/30">Conversion prob.</p>
+                    <p className="mt-0.5 text-[13px] font-semibold text-white/80 tabular-nums">
+                      {Math.round(a.conversionProb * 100)}%
+                    </p>
                   </div>
                 )}
                 {a.ltvEstimate != null && (
                   <div>
-                    <p className="text-[10px] text-white/30">LTV estimate</p>
-                    <p className="text-sm font-semibold text-white/70">${a.ltvEstimate.toFixed(0)}</p>
+                    <p className="text-[10px] uppercase tracking-wider text-white/30">LTV estimate</p>
+                    <p className="mt-0.5 text-[13px] font-semibold text-white/80 tabular-nums">
+                      ${a.ltvEstimate.toFixed(0)}
+                    </p>
                   </div>
                 )}
                 {a.preferredChannel && (
                   <div>
-                    <p className="text-[10px] text-white/30">Preferred channel</p>
-                    <p className="text-sm font-semibold text-white/70">{a.preferredChannel}</p>
+                    <p className="text-[10px] uppercase tracking-wider text-white/30">Preferred channel</p>
+                    <p className="mt-0.5 text-[13px] font-semibold text-white/80">{a.preferredChannel}</p>
                   </div>
                 )}
                 {a.confidence != null && (
                   <div>
-                    <p className="text-[10px] text-white/30">Confidence</p>
-                    <p className="text-sm font-semibold text-white/70">{Math.round(a.confidence * 100)}%</p>
+                    <p className="text-[10px] uppercase tracking-wider text-white/30">Confidence</p>
+                    <p className="mt-0.5 text-[13px] font-semibold text-white/80 tabular-nums">
+                      {Math.round(a.confidence * 100)}%
+                    </p>
                   </div>
                 )}
               </div>
 
               {/* Next best action */}
               {a.nextBestAction && (
-                <div className="rounded-lg bg-purple-500/5 border border-purple-500/15 p-3">
-                  <div className="flex items-center gap-2 mb-1">
-                    <p className="text-[10px] font-semibold uppercase tracking-wider text-purple-400/60">Next best action</p>
-                    <span className="text-[10px] text-white/30">{a.nextBestAction.type}</span>
-                    <span className={`text-[10px] rounded-full px-1.5 border ${
-                      a.nextBestAction.priority === "high" ? "border-red-500/30 text-red-400 bg-red-500/10"
-                      : a.nextBestAction.priority === "medium" ? "border-amber-500/30 text-amber-400 bg-amber-500/10"
-                      : "border-white/10 text-white/30 bg-white/5"
-                    }`}>{a.nextBestAction.priority}</span>
-                    {a.nextBestAction.timing_days != null && (
-                      <span className="text-[10px] text-white/25">in {a.nextBestAction.timing_days}d</span>
-                    )}
+                <div className="rounded-xl border border-[var(--adray-purple)]/25 bg-[var(--adray-purple)]/[0.06] p-3">
+                  <div className="flex items-center justify-between gap-2 mb-1.5 flex-wrap">
+                    <p className="text-[10px] font-semibold uppercase tracking-wider text-[var(--adray-purple)]/70">
+                      Next best action
+                    </p>
+                    <div className="flex items-center gap-1.5">
+                      <Pill tone="border-white/[0.08] bg-white/[0.04] text-white/50">{a.nextBestAction.type}</Pill>
+                      <Pill tone={PRIORITY_STYLES[a.nextBestAction.priority] || PRIORITY_STYLES.low}>
+                        {a.nextBestAction.priority}
+                      </Pill>
+                      {a.nextBestAction.timing_days != null && (
+                        <span className="text-[10px] text-white/30">in {a.nextBestAction.timing_days}d</span>
+                      )}
+                    </div>
                   </div>
-                  <p className="text-xs text-white/60 leading-relaxed">{a.nextBestAction.content}</p>
+                  <p className="text-[12px] text-white/65 leading-relaxed">{a.nextBestAction.content}</p>
                 </div>
               )}
 
               {/* Retention insight */}
               {a.retentionInsight && (
-                <p className="text-xs text-white/40 italic">{a.retentionInsight}</p>
+                <p className="text-[11px] text-white/45 italic leading-relaxed">{a.retentionInsight}</p>
               )}
             </>
           )}
@@ -590,79 +674,111 @@ export default function BriPipeline() {
 
   return (
     <DashboardLayout>
-      <div className="p-6 max-w-4xl mx-auto space-y-6">
-        {/* Header */}
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-xl font-semibold text-white">BRI Pipeline</h1>
-            <p className="text-sm text-white/40 mt-0.5">Behavioral Revenue Intelligence — keyframes, AI insights & identity</p>
+      {/* ── Sticky header in AttributionHeader style ── */}
+      <div className="border-b border-[var(--adray-line)] bg-[rgba(5,5,8,0.82)] backdrop-blur-xl supports-[backdrop-filter]:bg-[rgba(5,5,8,0.72)] sm:sticky sm:top-0 sm:z-[30]">
+        <div className="flex flex-wrap items-center gap-2 px-4 py-2.5 md:px-6">
+          <div className="inline-flex items-center gap-1.5 rounded-full border border-[var(--adray-purple)]/30 bg-[var(--adray-purple)]/10 px-2.5 py-1 text-[10px] font-semibold tracking-wider text-[#D8B8FF]">
+            <span className="relative flex h-1.5 w-1.5">
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[var(--adray-purple)]/50" />
+              <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-[#D8B8FF]" />
+            </span>
+            BRI PIPELINE
           </div>
+
+          <div className="mx-1 h-4 w-px bg-[var(--adray-line)]" />
+
+          <div className="flex-1 min-w-0">
+            <p className="text-[11px] text-white/35 leading-tight">
+              Behavioral Revenue Intelligence — keyframes, AI insights & identity resolution
+            </p>
+          </div>
+
           <Button
-            variant="outline"
+            variant="ghost"
             size="sm"
             onClick={load}
             disabled={loading}
-            className="border-white/10 text-white/60 hover:text-white hover:border-white/20"
+            className="h-8 gap-1.5 border border-white/[0.08] bg-white/[0.03] px-3 text-xs text-white/60 hover:bg-white/[0.08] hover:text-white"
           >
-            {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-            <span className="ml-2">Refresh</span>
+            {loading ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
+            <span>Refresh</span>
           </Button>
         </div>
+      </div>
 
+      <div className="p-4 md:p-6 max-w-6xl mx-auto space-y-4">
         {error && (
-          <div className="flex items-center gap-2 text-sm text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-4 py-3">
+          <div className="flex items-center gap-2 rounded-xl border border-red-500/25 bg-red-500/10 px-3.5 py-2.5 text-[12px] text-red-400">
             <XCircle className="h-4 w-4 shrink-0" />
             {error}
           </div>
         )}
 
-        {/* Stats */}
+        {/* Stats grid */}
         {stats && (
           <>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-              <StatCard label="Recordings READY" value={stats.recordings.READY}
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 sm:gap-3">
+              <StatCard
+                label="Recordings READY"
+                value={stats.recordings.READY}
                 sub={`${stats.recordings.RECORDING} recording · ${stats.recordings.ERROR} error`}
-                icon={Activity} color="text-emerald-400" />
-              <StatCard label="Session Packets" value={stats.sessionPackets.total}
+                icon={Activity}
+              />
+              <StatCard
+                label="Session Packets"
+                value={stats.sessionPackets.total}
                 sub={`${stats.sessionPackets.pending} pending analysis`}
-                icon={Clock} color="text-blue-400" />
-              <StatCard label="AI Analyzed" value={stats.sessionPackets.analyzed}
+                icon={Clock}
+              />
+              <StatCard
+                label="AI Analyzed"
+                value={stats.sessionPackets.analyzed}
                 sub={`of ${stats.sessionPackets.total} packets`}
-                icon={Brain} color="text-purple-400" />
-              <StatCard label="Persons Resolved" value={stats.persons}
+                icon={Brain}
+              />
+              <StatCard
+                label="Persons Resolved"
+                value={stats.persons}
                 sub={`${stats.briEnriched} CAPI enriched`}
-                icon={Users} color="text-amber-400" />
+                icon={Users}
+              />
             </div>
 
-            <Card className="bg-white/[0.03] border-white/[0.06]">
-              <CardContent className="px-4 py-3 flex flex-wrap gap-3">
-                {(["RECORDING", "FINALIZING", "READY", "ERROR"] as const).map(status => {
-                  const colors: Record<string, string> = {
-                    RECORDING: "bg-blue-500/10 text-blue-400 border-blue-500/20",
-                    FINALIZING: "bg-amber-500/10 text-amber-400 border-amber-500/20",
-                    READY: "bg-emerald-500/10 text-emerald-400 border-emerald-500/20",
-                    ERROR: "bg-red-500/10 text-red-400 border-red-500/20",
-                  };
-                  return (
-                    <Badge key={status} variant="outline" className={`px-3 py-1 text-sm ${colors[status]}`}>
-                      {status} <span className="ml-2 font-semibold">{stats.recordings[status]}</span>
-                    </Badge>
-                  );
-                })}
-              </CardContent>
-            </Card>
+            {/* Pipeline status strip */}
+            <div className="futuristic-surface rounded-2xl p-3 sm:p-4">
+              <div className="mb-2 flex items-center justify-between gap-2 flex-wrap">
+                <SectionLabel>Pipeline</SectionLabel>
+                <p className="text-[10px] text-white/25">
+                  auto-sweep every 10m · packet backfill every 15m
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {(["RECORDING", "FINALIZING", "READY", "ERROR"] as const).map(status => (
+                  <Pill key={status} tone={STATUS_STYLES[status]} className="px-2.5 py-1 text-[11px]">
+                    <span className="h-1.5 w-1.5 rounded-full bg-current opacity-70" />
+                    {status}
+                    <span className="ml-1 font-semibold tabular-nums">{stats.recordings[status]}</span>
+                  </Pill>
+                ))}
+              </div>
+            </div>
           </>
         )}
 
-        {/* Main tabs: Sessions / Persons */}
-        <Card className="bg-white/[0.03] border-white/[0.06]">
-          <CardHeader className="py-3 px-4 flex flex-row items-center justify-between border-b border-white/[0.05]">
+        {/* Main panel: Sessions / Persons */}
+        <div className="futuristic-surface rounded-2xl">
+          <div className="flex flex-row items-center justify-between gap-2 border-b border-white/[0.05] px-3.5 py-3 flex-wrap">
             <div className="flex gap-1">
               {(["sessions", "persons"] as const).map(t => (
-                <button key={t} onClick={() => setMainTab(t)}
-                  className={`text-sm px-3 py-1 rounded-md transition-colors font-medium ${
-                    mainTab === t ? "bg-white/10 text-white" : "text-white/30 hover:text-white/60"
-                  }`}>
+                <button
+                  key={t}
+                  onClick={() => setMainTab(t)}
+                  className={`text-[12px] px-3 py-1.5 rounded-md transition-colors font-medium ${
+                    mainTab === t
+                      ? "bg-white/[0.08] text-white"
+                      : "text-white/35 hover:text-white/65 hover:bg-white/[0.04]"
+                  }`}
+                >
                   {t === "sessions" ? `Sessions (${packets.length})` : `Persons (${persons.length})`}
                 </button>
               ))}
@@ -671,46 +787,58 @@ export default function BriPipeline() {
             {mainTab === "sessions" && (
               <div className="flex gap-1">
                 {(["all", "analyzed", "pending"] as const).map(f => (
-                  <button key={f} onClick={() => setFilter(f)}
-                    className={`text-xs px-2.5 py-1 rounded-md transition-colors ${
-                      filter === f ? "bg-white/10 text-white" : "text-white/30 hover:text-white/60"
-                    }`}>
+                  <button
+                    key={f}
+                    onClick={() => setFilter(f)}
+                    className={`text-[11px] px-2.5 py-1 rounded-md transition-colors ${
+                      filter === f
+                        ? "bg-white/[0.08] text-white"
+                        : "text-white/35 hover:text-white/65 hover:bg-white/[0.04]"
+                    }`}
+                  >
                     {f}
                   </button>
                 ))}
               </div>
             )}
-          </CardHeader>
-          <CardContent className="p-0">
+          </div>
+
+          <div className="p-3 sm:p-3.5">
             {loading && packets.length === 0 && (
-              <div className="flex items-center justify-center py-12 text-white/20">
-                <Loader2 className="h-5 w-5 animate-spin mr-2" />Loading…
+              <div className="flex items-center justify-center py-12 text-white/25 text-[12px]">
+                <Loader2 className="h-4 w-4 animate-spin mr-2" />Loading…
               </div>
             )}
 
             {mainTab === "sessions" && (
               <>
                 {!loading && filteredPackets.length === 0 && (
-                  <div className="flex flex-col items-center justify-center py-12 text-white/20 text-sm gap-2">
-                    <CheckCircle2 className="h-8 w-8" />No session packets yet
+                  <div className="flex flex-col items-center justify-center py-12 text-white/25 text-[12px] gap-2">
+                    <CheckCircle2 className="h-7 w-7" />
+                    No session packets yet
                   </div>
                 )}
-                {filteredPackets.map(p => <PacketRow key={p.sessionId} packet={p} />)}
+                <div className="space-y-2">
+                  {filteredPackets.map(p => <PacketRow key={p.sessionId} packet={p} />)}
+                </div>
               </>
             )}
 
             {mainTab === "persons" && (
               <>
                 {!loading && persons.length === 0 && (
-                  <div className="flex flex-col items-center justify-center py-12 text-white/20 text-sm gap-2">
-                    <Users className="h-8 w-8" />No persons resolved yet
+                  <div className="flex flex-col items-center justify-center py-12 text-white/25 text-[12px] gap-2">
+                    <Users className="h-7 w-7" />
+                    No persons resolved yet
                   </div>
                 )}
-                {persons.map(p => <PersonRow key={p.id} person={p} />)}
+                <div className="space-y-2">
+                  {persons.map(p => <PersonRow key={p.id} person={p} />)}
+                </div>
               </>
             )}
-          </CardContent>
-        </Card>
+          </div>
+        </div>
       </div>
     </DashboardLayout>
   );
