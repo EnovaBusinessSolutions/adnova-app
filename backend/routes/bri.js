@@ -108,4 +108,19 @@ router.get('/session-packets', async (req, res) => {
   }
 });
 
+/**
+ * GET /api/bri/loops-status
+ * Dashboard-facing view of the auto-loop health — same payload as
+ * /collect/x/loops-status but reachable under /api/bri without a secret.
+ */
+router.get('/loops-status', async (_req, res) => {
+  try {
+    const loopsStatus = require('../utils/loopsStatus');
+    return res.json({ ok: true, loops: loopsStatus.snapshot(), now: new Date() });
+  } catch (err) {
+    console.error('[BRI] loops-status error:', err.message);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;

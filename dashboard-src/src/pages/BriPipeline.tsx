@@ -88,6 +88,26 @@ interface SessionPacketRow {
 
 interface ApiResponse<T> { ok: boolean; data?: T; error?: string }
 
+interface LoopStatus {
+  name: string;
+  intervalMs: number;
+  firstDelayMs: number;
+  registeredAt: string;
+  lastRunAt: string | null;
+  lastRunDurationMs: number | null;
+  lastResult: Record<string, unknown> | null;
+  lastError: { message: string; at: string } | null;
+  runCount: number;
+  errorCount: number;
+  nextRunAt: string | null;
+}
+
+interface LoopsStatusResponse {
+  ok: boolean;
+  loops: LoopStatus[];
+  now: string;
+}
+
 /* ── Helpers ────────────────────────────────────────────────────────────────── */
 
 async function apiFetch<T>(url: string): Promise<ApiResponse<T>> {
@@ -701,10 +721,58 @@ function PersonRow({ person }: { person: PersonRow }) {
 
 /* ── Main Page ──────────────────────────────────────────────────────────────── */
 
+function fmtRelative(iso: string | null, now: number): string {
+  if (!iso) return "—";
+  const ms = now - new Date(iso).getTime();
+  if (!Number.isFinite(ms)) return "—";
+  const abs = Math.abs(ms);
+  if (abs < 10_000) return ms >= 0 ? "just now" : "in a moment";
+  const suffix = ms >= 0 ? "ago" : "from now";
+  if (abs < 60_000) return `${Math.round(abs / 1000)}s ${suffix}`;
+  if (abs < 60 * 60_000) return `${Math.round(abs / 60_000)}m ${suffix}`;
+  return `${Math.floor(abs / (60 * 60_000))}h ${suffix}`;
+}
+
+function LoopsStrip({ loopsData }: { loopsData: LoopsStatusResponse | null }) {
+  if (!loopsData || loopsData.loops.length === 0) {
+    return (
+      <span className="text-[10px] text-white/25">
+        auto-loops status unavailable
+      </span>
+    );
+  }
+  const now = new Date(loopsData.now).getTime();
+  return (
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-white/35">
+      {loopsData.loops.map((l) => {
+        const alive = l.runCount > 0 && !l.lastError;
+        const stale = l.runCount === 0;
+        const dot = stale
+          ? "bg-white/30"
+          : alive
+          ? "bg-emerald-400"
+          : "bg-amber-400";
+        return (
+          <span key={l.name} className="inline-flex items-center gap-1.5">
+            <span className={`h-1.5 w-1.5 rounded-full ${dot}`} />
+            <span className="text-white/55 font-medium">{l.name}</span>
+            <span className="text-white/25">
+              {l.runCount === 0
+                ? `first run ${fmtRelative(l.nextRunAt, now)}`
+                : `ran ${fmtRelative(l.lastRunAt, now)} · next ${fmtRelative(l.nextRunAt, now)}`}
+            </span>
+          </span>
+        );
+      })}
+    </div>
+  );
+}
+
 export default function BriPipeline() {
   const [stats, setStats] = useState<PipelineStats | null>(null);
   const [packets, setPackets] = useState<SessionPacketRow[]>([]);
   const [persons, setPersons] = useState<PersonRow[]>([]);
+  const [loopsData, setLoopsData] = useState<LoopsStatusResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<"all" | "analyzed" | "pending">("all");
@@ -713,19 +781,31 @@ export default function BriPipeline() {
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
-    const [statsRes, packetsRes, personsRes] = await Promise.all([
+    const [statsRes, packetsRes, personsRes, loopsRes] = await Promise.all([
       apiFetch<PipelineStats>("/api/bri/pipeline-stats"),
       apiFetch<SessionPacketRow[]>("/api/bri/session-packets?limit=50"),
       apiFetch<PersonRow[]>("/api/bri/persons?limit=30"),
+      apiFetch<LoopsStatusResponse>("/api/bri/loops-status"),
     ]);
     if (!statsRes.ok) setError(statsRes.error || "Failed to load stats");
     if (statsRes.data) setStats(statsRes.data);
     if (packetsRes.data) setPackets(packetsRes.data);
     if (personsRes.data) setPersons(personsRes.data);
+    if (loopsRes.data) setLoopsData(loopsRes.data);
     setLoading(false);
   }, []);
 
   useEffect(() => { load(); }, [load]);
+
+  // Auto-refresh the loops strip every 20s without touching the stats/sessions
+  // queries — cheaper, and lets the user watch the next-run countdown.
+  useEffect(() => {
+    const id = setInterval(async () => {
+      const r = await apiFetch<LoopsStatusResponse>("/api/bri/loops-status");
+      if (r.data) setLoopsData(r.data);
+    }, 20_000);
+    return () => clearInterval(id);
+  }, []);
 
   const filteredPackets = packets.filter(p => {
     if (filter === "analyzed") return !!p.aiAnalysis;
@@ -806,12 +886,10 @@ export default function BriPipeline() {
             </div>
 
             {/* Pipeline status strip */}
-            <div className="futuristic-surface rounded-2xl p-3 sm:p-4">
-              <div className="mb-2 flex items-center justify-between gap-2 flex-wrap">
+            <div className="futuristic-surface rounded-2xl p-3 sm:p-4 space-y-3">
+              <div className="flex items-center justify-between gap-2 flex-wrap">
                 <SectionLabel>Pipeline</SectionLabel>
-                <p className="text-[10px] text-white/25">
-                  auto-sweep every 10m · packet backfill every 15m
-                </p>
+                <LoopsStrip loopsData={loopsData} />
               </div>
               <div className="flex flex-wrap gap-1.5">
                 {(["RECORDING", "FINALIZING", "READY", "ERROR"] as const).map(status => (
