@@ -14,7 +14,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { ArrowLeft, ArrowUpRight } from "lucide-react";
 import { ParticleField } from "@/components/ParticleField";
-import chatgptLogo from "@/assets/logos/chatgpt.png";
+import chatgptLogo from "@/assets/chatgpt.png";
 
 const ADRAY_GPT_URL =
   "https://chatgpt.com/g/g-69cb161b48f081918b69b14d8e1d9407-adray-analytics";
@@ -143,7 +143,7 @@ export default function ChatGptMcp() {
                 <img
                   src={chatgptLogo}
                   alt="ChatGPT"
-                  className="h-7 w-7 object-contain"
+                  className="h-10 w-10 object-contain"
                   draggable={false}
                 />
               </span>

@@ -22,7 +22,7 @@ import {
   PlayCircle,
 } from "lucide-react";
 import { ParticleField } from "@/components/ParticleField";
-import claudeLogo from "@/assets/logos/claude.png";
+import claudeLogo from "@/assets/claude.png";
 
 const ADRAY_MCP_URL = "https://adray.ai/mcp";
 const CLAUDE_CONNECTORS_URL = "https://claude.ai/customize/connectors";
@@ -208,7 +208,7 @@ export default function ClaudeMcp() {
                 <img
                   src={claudeLogo}
                   alt="Claude"
-                  className="h-7 w-7 object-contain"
+                  className="h-10 w-10 object-contain"
                   draggable={false}
                 />
               </span>
