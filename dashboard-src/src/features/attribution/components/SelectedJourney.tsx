@@ -428,6 +428,32 @@ export function SelectedJourney({ purchase, onClose }: SelectedJourneyProps) {
 
   const platformFriendly = friendlyPlatformLabel(purchase.attributedPlatform);
 
+  // Click-ID fallback: when we have a click id but no campaign name, tell
+  // the user which ad platform the click came from so attribution is never
+  // "just empty". The resolver job may fill campaign asynchronously on a
+  // later request.
+  const clickProviderLabel: Record<string, string> = {
+    meta:   'Meta Ads',
+    google: 'Google Ads',
+    tiktok: 'TikTok Ads',
+  };
+  const hasCampaign = campaignLine.length > 0;
+  const showClickIdFallback =
+    !hasCampaign && purchase.attributedClickId && purchase.attributedClickIdProvider;
+  const clickIdShort = purchase.attributedClickId
+    ? purchase.attributedClickId.slice(0, 18) + (purchase.attributedClickId.length > 18 ? '…' : '')
+    : null;
+
+  const attributionSourceBadge =
+    purchase.attributionSource
+      ? purchase.attributionSource
+          .replace('orders_sync', 'order sync')
+          .replace('click_id', 'click ID')
+          .replace('woo_fallback', 'woo')
+          .replace('utm', 'UTM')
+          .replace('click_view', 'Google Ads lookup')
+      : null;
+
   return (
     <div className="flex h-full min-w-0 flex-col overflow-hidden rounded-2xl border border-white/[0.08] bg-white/[0.02]">
       {/* Header */}
@@ -466,15 +492,25 @@ export function SelectedJourney({ purchase, onClose }: SelectedJourneyProps) {
               {purchase.events.length} events · {sessionGroups.length} session{sessionGroups.length === 1 ? '' : 's'}
             </span>
           </div>
-          {(campaignLine.length > 0 || (platformFriendly && purchase.attributedChannel?.toLowerCase() !== 'other')) && (
+          {(hasCampaign || showClickIdFallback || (platformFriendly && purchase.attributedChannel?.toLowerCase() !== 'other')) && (
             <div className="mt-1.5 flex items-start gap-1 text-[10px]">
               <Target size={10} className="mt-0.5 shrink-0 text-white/35" />
               <span className="min-w-0 flex-1 truncate text-white/55">
-                {campaignLine.length > 0
+                {hasCampaign
                   ? campaignLine.join(' · ')
-                  : platformFriendly
-                    ? `source: ${platformFriendly}`
-                    : null}
+                  : showClickIdFallback
+                    ? `${clickProviderLabel[purchase.attributedClickIdProvider!] ?? 'Ads'} · click ID: ${clickIdShort}`
+                    : platformFriendly
+                      ? `source: ${platformFriendly}`
+                      : null}
+              </span>
+            </div>
+          )}
+          {attributionSourceBadge && (
+            <div className="mt-1 flex items-center gap-1 text-[9px] text-white/25">
+              <span>attribution source:</span>
+              <span className="rounded border border-white/[0.06] bg-white/[0.02] px-1 py-[1px] text-white/40">
+                {attributionSourceBadge}
               </span>
             </div>
           )}

@@ -184,9 +184,81 @@ Estos dos cortes son complementarios: (1) es la defensa primaria para page_views
 - No afecta a clientes nuevos: `boundaryTs === null` → se mantiene el comportamiento actual.
 
 ### Checklist
-- [ ] Construir índice `priorPurchaseTsByUserKey/ByCustomerId` sobre `modeledConversions` (sorted desc).
-- [ ] Helper `priorBoundaryTs(userKey, customerId, convTs): number | null`.
-- [ ] Aplicar `effectiveEarliestTs = Math.max(earliestTs, boundary + 1)`.
-- [ ] Filtrar `ev.orderId !== conv.orderId` en el loop de `rawStitched`.
-- [ ] Probar en staging con #66917 (FISCAL FISCAL): debe bajar de 75 sesiones a algo razonable (~1-3) y mostrar sólo 1 Purchase.
-- [ ] Regresión: verificar que pedidos de clientes nuevos (1 sola compra) mantienen su journey completo.
+- [x] Construir índice `priorPurchaseTsByUserKey/ByCustomerId` sobre `modeledConversions` (sorted asc).
+- [x] Helper `priorBoundaryTs(userKey, customerId, convTs): number | null`.
+- [x] Aplicar `effectiveEarliestTs = Math.max(earliestTs, boundary + 1)`.
+- [x] Filtrar `ev.orderId !== conv.orderId` en el loop de `rawStitched` y en el fallback customer-id query.
+- [ ] **PRUEBA PENDIENTE** en staging con #66917 (FISCAL FISCAL): debe bajar de 75 sesiones a algo razonable (~1-3) y mostrar sólo 1 Purchase.
+- [ ] **PRUEBA PENDIENTE** Regresión: verificar que pedidos de clientes nuevos (1 sola compra) mantienen su journey completo.
+
+---
+
+## 6) Atribución extremadamente robusta — enrichment + click-ID resolution ⬜
+
+### Contexto
+Al validar Fix #3 en staging, detectamos que:
+- Pedido #66924 ("Other · Fb"): muestra campaign/adset/ad completos (IDs de Meta) porque el landing URL traía `utm_campaign/content/term`.
+- Pedido #66933 ("Meta"): sólo muestra `adset: /` basura. El cliente llegó con `fbclid` pero sin UTMs, y el `orderStoredAttribution` no resolvió campaña.
+
+El dashboard debe **siempre** decir de dónde vino el cliente. Si no hay UTMs pero hay `fbclid`/`gclid`, al menos mostrar "Meta Ads · click ID: xxx…" y (para Google Ads) **resolver el nombre de campaña consultando Google Ads API directamente** con el refresh token OAuth del usuario.
+
+### Hallazgo
+Código relevante: [analytics.js:2768-2782](backend/routes/analytics.js#L2768-L2782) y la construcción de `orderStoredAttribution`. Toma campaign/adset/ad de **un solo** snapshot (`orderAttributionSnapshot`) aunque haya 4 fuentes disponibles.
+
+Valores basura: `utm_content='/'` se pega literal como "adset: /". No hay sanitización.
+
+Google Ads API: tiene un reporte `click_view` que permite query por gclid + fecha. Ya tenemos OAuth conectado + `googleAdsService.searchGAQLStream`. Meta NO expone fbclid→campaign públicamente — es una decisión de privacidad de Meta.
+
+### Plan implementado
+
+1. **Sanitización** (`sanitizeAttrValue`, `firstAttrValue` en analytics.js): tira `/`, `null`, `undefined`, `(none)`, `-`, paths cortos (`/producto/...`), strings vacíos.
+2. **Enriquecimiento multi-fuente**: después de elegir el `primary`, rellenar null de `campaign/adset/ad/clickId/platform` con la primera fuente disponible entre `orderSnapshot`, `checkoutSnapshot`, `purchasePayload`, sessions ordenadas. Así si un pedido trae `fbclid` pero una sesión previa del mismo usuario traía UTMs completos, la campaña aparece.
+3. **Click-ID provider**: `attributedClickIdProvider: 'meta'|'google'|'tiktok'|null` en el response. Frontend lo usa para renderizar `"Meta Ads · click ID: CjwK…"` en lugar de atribución vacía.
+4. **Attribution source badge**: el SelectedJourney muestra la fuente ("click ID", "UTM", "order sync", "woo", "Google Ads lookup") como debug visible.
+5. **Click-ID resolver** (`backend/services/clickIdResolver.js`):
+   - **gclid → campaign/adGroup/ad name**: query `click_view` en Google Ads API usando el refresh token OAuth del usuario dueño de la shop. Cache in-memory 12h (positivos) / 30m (negativos).
+   - **fbclid**: stub documentado — Meta no expone este mapeo. La solución es configurar UTMs en Ads Manager (ver "Pasos manuales" abajo).
+   - **ttclid**: stub — agregar cuando se integre OAuth de TikTok.
+   - Resolución en bulk, concurrency 4, timeout 6s por request → nunca bloquea el dashboard.
+6. **Integración en analytics.js**: tras construir `recentPurchases`, recoger hasta 20 órdenes con clickId pero sin campaign y resolver en paralelo. Cache mantiene las resoluciones entre requests.
+
+### Checklist
+- [x] `sanitizeAttrValue` + `firstAttrValue` helpers en analytics.js.
+- [x] Multi-source enrichment de campaign/adset/ad/clickId/platform tras `finalAttribution.primary`.
+- [x] `attributedClickIdProvider` derivado y expuesto en response.
+- [x] `RecentPurchase.attributedClickIdProvider` en el tipo TS.
+- [x] `backend/services/clickIdResolver.js` nuevo: `resolveClickId` + `resolveMany` con cache + timeouts.
+- [x] Integración en analytics.js (`await clickIdResolver.resolveMany(...)` después de `recentPurchases`).
+- [x] UI: SelectedJourney muestra "Meta Ads · click ID: …" como fallback cuando no hay campaña.
+- [x] UI: badge "attribution source: click ID / UTM / order sync / …".
+- [x] `node -c` + `tsc --noEmit` limpios.
+- [ ] **PRUEBA PENDIENTE**: en staging, buscar órdenes de Meta como #66933 → debería mostrar "Meta Ads · click ID: ..." en header.
+- [ ] **PRUEBA PENDIENTE**: órdenes con gclid → después de ~10s el nombre de campaña de Google Ads debería aparecer (primera request resuelve + cachea; recarga muestra cached).
+- [ ] **PRUEBA PENDIENTE**: confirmar que ya no aparece "adset: /" ni valores basura.
+
+### Pasos manuales del usuario (dejar listo)
+
+**Para Google Ads (resolución automática de gclid)**:
+1. Confirmar que hay conexión OAuth activa (en Integrations → Google Ads aparece "Connected").
+2. Confirmar que la env var `GOOGLE_ADS_DEVELOPER_TOKEN` está seteada en Render.com (staging + prod). Sin este token, `searchGAQLStream` falla con 401 y el resolver devuelve null silenciosamente.
+3. Primera vez que abres el dashboard tras el deploy: órdenes con `gclid` sin campaign verán "Google Ads · click ID: …" por ~10s, luego recarga y deberían mostrar el nombre de la campaña. Es normal (tiempo de consulta a Google + cache fill).
+4. El resolver reintenta cada 30 min los negativos y cada 12h los positivos. Si un gclid no resuelve nunca, probablemente es porque el click ocurrió hace >90 días (límite de `click_view`) o no era de una campaña propia del customer conectado.
+
+**Para Meta Ads (fbclid no resoluble por API)**:
+Meta **no expone** fbclid → campaña. La única solución robusta es forzar que el pixel reciba UTMs reales. Configurar en Ads Manager para **todos los anuncios activos**:
+1. Ir a Ads Manager → seleccionar Ad → scroll a "Tracking" → "URL parameters".
+2. Pegar esta plantilla:
+   ```
+   utm_source=facebook&utm_medium=paid_social&utm_campaign={{campaign.name}}&utm_content={{adset.name}}&utm_term={{ad.name}}
+   ```
+3. Guardar y publicar. Meta sustituye `{{campaign.name}}` etc. automáticamente al momento del click. El pixel capturará esos UTMs y el dashboard mostrará el nombre humano.
+4. Efecto: nuevos clicks traen campaña correctamente en ~5 min (propagación Meta). Clicks ya existentes no cambian — esos seguirán mostrando "Meta Ads · click ID: …" que ya es mucho mejor que el vacío.
+5. Documentar esto en el onboarding de nuevas cuentas (tarea follow-up fuera del scope de esta iteración).
+
+**Para TikTok Ads**: pendiente — integración OAuth aún no conectada. Mismo patrón de UTMs manuales aplica como workaround.
+
+### Fases futuras (no en este PR)
+- Mover cache del resolver a Mongo (`ClickIdCache` collection) para sobrevivir restarts de Render.
+- Correr resolver en BullMQ worker async (no in-line) para no añadir latencia al dashboard.
+- Para fbclid: evaluar si Meta Marketing API agrega algún endpoint de resolución (seguimiento; hoy no hay).
+- Badge/tooltip en el UI que explique al usuario el origen del click ID provider cuando el campaign name tarda en aparecer.
