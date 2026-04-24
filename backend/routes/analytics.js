@@ -2877,6 +2877,11 @@ router.get('/:account_id', async (req, res) => {
         ttclid: enrichSources.find((s) => s?.ttclid)?.ttclid,
       });
 
+      // Phase B: expose how attribution was captured — "server_side" means the
+      // WP plugin wrote UTMs/click IDs on first request (ad-blocker proof).
+      const orderSnapshotSource = conv?.orderAttributionSnapshot?.source;
+      const attributionCaptureSource = orderSnapshotSource === 'server_side' ? 'server_side' : 'pixel';
+
       return {
         ...conv,
         userKey: resolvedUserKey,
@@ -2890,6 +2895,7 @@ router.get('/:account_id', async (req, res) => {
         attributedClickIdProvider: clickIdProvider,
         attributionConfidence: finalAttribution.primary.confidence,
         attributionSource: finalAttribution.primary.source,
+        attributionCaptureSource,
         attributionModel,
         attributionSplits: finalAttribution.splits,
         isAttributed: finalAttribution.isAttributed,
@@ -4604,6 +4610,139 @@ router.get('/:account_id/session-explorer', async (req, res) => {
       });
     }
     res.status(500).json({ error: 'Internal Server Error' });
+  }
+});
+
+/**
+ * GET /api/analytics/:account_id/pixel-health
+ *
+ * Reports how well the browser pixel is reaching the backend. Used by the
+ * Pixel Health panel (Phase D of the bulletproof plan) to surface:
+ *   - pixelCoverageRate     : % of orders that had ≥1 browser event before the webhook
+ *   - attributionCoverageRate: % of orders whose attributedChannel ≠ 'unattributed'
+ *   - serverSideCoverageRate: % of orders with a server_attribution_snapshot
+ *   - blockedOrders         : orders whose webhook landed with no prior browser event
+ *
+ * Each metric also surfaces absolute counts so the UI can show "12 / 130".
+ * The window is `days` (default 30, max 90).
+ */
+router.get('/:account_id/pixel-health', async (req, res) => {
+  try {
+    const { account_id } = req.params;
+    const days = Math.max(1, Math.min(90, Number.parseInt(String(req.query.days || '30'), 10) || 30));
+    const since = subDays(new Date(), days);
+
+    // Pull every order in-window plus any event for its session/checkoutToken.
+    // At merchant scale this stays bounded: even a busy store is rarely more
+    // than a few thousand orders/month.
+    const orders = await prisma.order.findMany({
+      where: {
+        accountId: account_id,
+        OR: [
+          { createdAt: { gte: since } },
+          { platformCreatedAt: { gte: since } },
+        ],
+      },
+      select: {
+        orderId: true,
+        sessionId: true,
+        checkoutToken: true,
+        attributedChannel: true,
+        attributionModel: true,
+        attributionSnapshot: true,
+        createdAt: true,
+        platformCreatedAt: true,
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 5000,
+    }).catch(() => []);
+
+    const totalOrders = orders.length;
+
+    if (totalOrders === 0) {
+      return res.json({
+        accountId: account_id,
+        windowDays: days,
+        totalOrders: 0,
+        pixelCoverage:       { covered: 0, total: 0, rate: 0 },
+        attributionCoverage: { attributed: 0, total: 0, rate: 0 },
+        serverSideCoverage:  { covered: 0, total: 0, rate: 0 },
+        blockedOrders:       { count: 0, total: 0, rate: 0 },
+        generatedAt: new Date().toISOString(),
+      });
+    }
+
+    // Batch lookup of browser events keyed by session/checkout_token. An
+    // order is considered "pixel-covered" if we can find any non-purchase
+    // browser event tied to the same session before the order time.
+    const sessionIds = Array.from(new Set(orders.map(o => o.sessionId).filter(Boolean)));
+    const checkoutTokens = Array.from(new Set(orders.map(o => o.checkoutToken).filter(Boolean)));
+
+    const [sessionEvents, tokenEvents] = await Promise.all([
+      sessionIds.length
+        ? prisma.event.findMany({
+            where: {
+              accountId: account_id,
+              sessionId: { in: sessionIds },
+              rawSource: { not: 'plugin_server' },
+              eventName: { not: 'purchase' },
+            },
+            select: { sessionId: true },
+          }).catch(() => [])
+        : Promise.resolve([]),
+      checkoutTokens.length
+        ? prisma.event.findMany({
+            where: {
+              accountId: account_id,
+              checkoutToken: { in: checkoutTokens },
+              rawSource: { not: 'plugin_server' },
+            },
+            select: { checkoutToken: true },
+          }).catch(() => [])
+        : Promise.resolve([]),
+    ]);
+
+    const sessionsWithEvents = new Set(sessionEvents.map(e => e.sessionId).filter(Boolean));
+    const tokensWithEvents = new Set(tokenEvents.map(e => e.checkoutToken).filter(Boolean));
+
+    let pixelCovered = 0;
+    let attributed = 0;
+    let serverSideCovered = 0;
+    let blocked = 0;
+
+    for (const order of orders) {
+      const hasBrowserEvent = (order.sessionId && sessionsWithEvents.has(order.sessionId))
+        || (order.checkoutToken && tokensWithEvents.has(order.checkoutToken));
+      if (hasBrowserEvent) pixelCovered += 1;
+      else blocked += 1;
+
+      if (order.attributedChannel && order.attributedChannel !== 'unattributed') {
+        attributed += 1;
+      }
+
+      const snap = order.attributionSnapshot;
+      const hasServerSide = snap && typeof snap === 'object' && (
+        snap.source === 'server_side'
+        || (snap.server_attribution && typeof snap.server_attribution === 'object')
+      );
+      if (hasServerSide) serverSideCovered += 1;
+    }
+
+    const rate = (n) => totalOrders > 0 ? Math.round((n / totalOrders) * 10000) / 10000 : 0;
+
+    return res.json({
+      accountId: account_id,
+      windowDays: days,
+      totalOrders,
+      pixelCoverage:       { covered: pixelCovered,       total: totalOrders, rate: rate(pixelCovered) },
+      attributionCoverage: { attributed,                  total: totalOrders, rate: rate(attributed) },
+      serverSideCoverage:  { covered: serverSideCovered,  total: totalOrders, rate: rate(serverSideCovered) },
+      blockedOrders:       { count: blocked,              total: totalOrders, rate: rate(blocked) },
+      generatedAt: new Date().toISOString(),
+    });
+  } catch (error) {
+    console.error('[pixel-health] error:', error?.message || error);
+    return res.status(500).json({ error: 'pixel_health_failed', message: String(error?.message || error) });
   }
 });
 

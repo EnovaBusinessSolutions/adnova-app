@@ -44,6 +44,76 @@ function isAccountAllowed(accountId) {
   return normalized ? allowed.has(normalized) : false;
 }
 
+// Phase B helpers — server-side attribution snapshot.
+const SERVER_ATTRIBUTION_KEYS = [
+  'utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term',
+  'fbclid', 'gclid', 'ttclid', 'wbraid', 'gbraid', 'msclkid',
+  'referrer', 'landing_url', 'captured_at',
+];
+
+function sanitizeTouchObject(touch) {
+  if (!touch || typeof touch !== 'object' || Array.isArray(touch)) return null;
+  const out = {};
+  let any = false;
+  for (const key of SERVER_ATTRIBUTION_KEYS) {
+    if (touch[key] != null && String(touch[key]).trim() !== '') {
+      out[key] = String(touch[key]).slice(0, 500);
+      any = true;
+    }
+  }
+  return any ? out : null;
+}
+
+function sanitizeServerAttributionSnapshot(snapshot) {
+  if (!snapshot || typeof snapshot !== 'object') return null;
+  const first = sanitizeTouchObject(snapshot.first_touch);
+  const last = sanitizeTouchObject(snapshot.last_touch);
+  if (!first && !last) return null;
+  return {
+    source: 'server_side',
+    captured_by: typeof snapshot.captured_by === 'string' ? snapshot.captured_by.slice(0, 120) : null,
+    first_touch: first,
+    last_touch: last,
+  };
+}
+
+// Build an "effective attribution" view that prefers server-side last_touch
+// values over the top-level payload fields (which may be empty if the pixel
+// was blocked). first_touch is available but not used for current attribution
+// — last_touch is what aligns with Woo's own last-touch model.
+function mergeServerAttribution(payload, server) {
+  const base = {
+    utm_source: payload.utm_source || null,
+    utm_medium: payload.utm_medium || null,
+    utm_campaign: payload.utm_campaign || null,
+    utm_content: payload.utm_content || null,
+    utm_term: payload.utm_term || null,
+    gclid: payload.gclid || null,
+    fbclid: payload.fbclid || null,
+    ttclid: payload.ttclid || null,
+    referrer: payload.referrer || null,
+  };
+  if (!server || !server.last_touch) return base;
+  const lt = server.last_touch;
+  for (const key of Object.keys(base)) {
+    if (!base[key] && lt[key]) base[key] = lt[key];
+  }
+  return base;
+}
+
+function resolveAttributionModel(channel, server) {
+  if (server) return 'woo_server_side';
+  return channel === 'unattributed' ? 'woo_direct' : 'woo_fallback';
+}
+
+function resolveConfidenceScore(channel, server) {
+  if (server) {
+    // Server-captured click IDs / UTMs: ad-blocker proof, highest confidence.
+    return 0.9;
+  }
+  return channel === 'unattributed' ? 0.4 : 0.75;
+}
+
 function normalizeWooChannel(payload = {}) {
   const utmSource = String(payload.utm_source || '').trim().toLowerCase();
   const utmMedium = String(payload.utm_medium || '').trim().toLowerCase();
@@ -232,7 +302,16 @@ router.post('/woo/orders-sync', async (req, res) => {
       ? await prisma.checkoutSessionMap.findUnique({ where: { checkoutToken } })
       : null;
 
-    const attributedChannel = normalizeWooChannel(payload);
+    // Phase B: merge server-side attribution snapshot (captured by the WP
+    // plugin's `init` hook before any JS runs, so ad-blockers can't touch it).
+    // When present, its last_touch values take precedence over the top-level
+    // payload fields — which were originally derived from pixel/cookies and
+    // are the values most likely to be missing or stale when the pixel was
+    // blocked in the browser.
+    const serverAttribution = sanitizeServerAttributionSnapshot(payload.server_attribution_snapshot);
+    const effective = mergeServerAttribution(payload, serverAttribution);
+
+    const attributedChannel = normalizeWooChannel(effective);
     const customerDisplayName = normalizeCustomerDisplayName(
       payload.customer_name,
       [payload.customer_first_name, payload.customer_last_name].filter(Boolean).join(' '),
@@ -243,15 +322,15 @@ router.post('/woo/orders-sync', async (req, res) => {
     const phoneHash = typeof hashPII === 'function' ? hashPII(payload.customer_phone) : null;
 
     const attributionSnapshot = {
-      utm_source: payload.utm_source || null,
-      utm_medium: payload.utm_medium || null,
-      utm_campaign: payload.utm_campaign || null,
-      utm_content: payload.utm_content || null,
-      utm_term: payload.utm_term || null,
-      referrer: payload.referrer || null,
-      gclid: payload.gclid || null,
-      fbclid: payload.fbclid || null,
-      ttclid: payload.ttclid || null,
+      utm_source: effective.utm_source || null,
+      utm_medium: effective.utm_medium || null,
+      utm_campaign: effective.utm_campaign || null,
+      utm_content: effective.utm_content || null,
+      utm_term: effective.utm_term || null,
+      referrer: effective.referrer || null,
+      gclid: effective.gclid || null,
+      fbclid: effective.fbclid || null,
+      ttclid: effective.ttclid || null,
       woo_source_label: payload.woo_source_label || null,
       woo_source_type: payload.woo_source_type || null,
       woo_session_source: payload.woo_session_source || null,
@@ -261,6 +340,10 @@ router.post('/woo/orders-sync', async (req, res) => {
       customer_first_name: payload.customer_first_name || null,
       customer_last_name: payload.customer_last_name || null,
       billing_company: payload.billing_company || null,
+      // Phase B: server-side attribution snapshot for audit + downstream
+      // differentiation (shown in the Journey panel as "Server-side" badge).
+      server_attribution: serverAttribution,
+      source: serverAttribution ? 'server_side' : 'pixel',
     };
 
     const customerId = payload.customer_id ? String(payload.customer_id) : null;
@@ -292,13 +375,13 @@ router.post('/woo/orders-sync', async (req, res) => {
       currency: String(payload.currency || 'MXN'),
       lineItems: Array.isArray(payload.items) ? payload.items : [],
       attributedChannel,
-      attributedCampaign: payload.utm_campaign || null,
-      attributedAdset: payload.utm_content || null,
-      attributedAd: payload.utm_term || null,
-      attributedClickId: payload.gclid || payload.fbclid || payload.ttclid || null,
-      attributionModel: attributedChannel === 'unattributed' ? 'woo_direct' : 'woo_fallback',
+      attributedCampaign: effective.utm_campaign || null,
+      attributedAdset: effective.utm_content || null,
+      attributedAd: effective.utm_term || null,
+      attributedClickId: effective.gclid || effective.fbclid || effective.ttclid || null,
+      attributionModel: resolveAttributionModel(attributedChannel, serverAttribution),
       attributionSnapshot,
-      confidenceScore: attributedChannel === 'unattributed' ? 0.4 : 0.75,
+      confidenceScore: resolveConfidenceScore(attributedChannel, serverAttribution),
       eventId: checkoutMap ? checkoutMap.eventId : randomUUID(),
       platformCreatedAt: parseWooOrderCreatedAt(payload),
     };
