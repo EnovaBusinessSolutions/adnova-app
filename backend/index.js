@@ -817,6 +817,8 @@ app.use("/api/analytics", require("./routes/analytics"));
 app.use("/api/feed", require("./routes/feed"));
 // BRI: authenticated recording API (presigned URLs, metadata)
 app.use("/api/recording", recordingRoutes);
+// BRI: dashboard API for pipeline stats, session packets, persons
+app.use('/api/bri', require('./routes/bri'));
 app.use('/api', wooOrdersRoutes);
 app.use('/api/platform-connections', require('./routes/platformConnections'));
 app.use('/wp-plugin', wordpressPluginRoutes);
