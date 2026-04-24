@@ -2953,6 +2953,46 @@ router.get('/:account_id', async (req, res) => {
       }
     }
 
+    // Per-user purchase-history index: for repeat buyers (B2B, subscriptions),
+    // the journey of order N must not cross back over the purchase of order
+    // N-1 of the same userKey/customerId. Without this, stitching pulls the
+    // entire lifetime history of the customer into one journey.
+    const priorPurchaseTsByUserKey = new Map();
+    const priorPurchaseTsByCustomerId = new Map();
+    for (const c of modeledConversions) {
+      const t = new Date(c.createdAt).getTime();
+      if (!Number.isFinite(t)) continue;
+      if (c.userKey) {
+        const k = String(c.userKey);
+        const arr = priorPurchaseTsByUserKey.get(k) || [];
+        arr.push(t);
+        priorPurchaseTsByUserKey.set(k, arr);
+      }
+      if (c.customerId) {
+        const k = String(c.customerId);
+        const arr = priorPurchaseTsByCustomerId.get(k) || [];
+        arr.push(t);
+        priorPurchaseTsByCustomerId.set(k, arr);
+      }
+    }
+    for (const arr of priorPurchaseTsByUserKey.values()) arr.sort((a, b) => a - b);
+    for (const arr of priorPurchaseTsByCustomerId.values()) arr.sort((a, b) => a - b);
+
+    // Largest purchase ts strictly less than convTs across userKey + customerId.
+    function priorBoundaryTs(userKey, customerId, convTs) {
+      let boundary = -Infinity;
+      const scan = (arr) => {
+        if (!arr) return;
+        // arr is ascending — find last element < convTs
+        for (let i = arr.length - 1; i >= 0; i--) {
+          if (arr[i] < convTs) { if (arr[i] > boundary) boundary = arr[i]; break; }
+        }
+      };
+      if (userKey)    scan(priorPurchaseTsByUserKey.get(String(userKey)));
+      if (customerId) scan(priorPurchaseTsByCustomerId.get(String(customerId)));
+      return boundary === -Infinity ? null : boundary;
+    }
+
     const recentPurchases = await Promise.all(recentConversions.map(async (conv) => {
       const key = `${conv.orderId || ''}::${conv.checkoutToken || ''}::${new Date(conv.createdAt).toISOString()}`;
       const detailed = detailedByKey.get(key);
@@ -2968,9 +3008,16 @@ router.get('/:account_id', async (req, res) => {
         ...(conv.orderId ? (eventsByOrderId.get(String(conv.orderId)) || []) : []),
         ...(conv.checkoutToken ? (eventsByCheckoutToken.get(String(conv.checkoutToken)) || []) : [])
       ];
-      
+
       const inferredSessionId = conv.sessionId || purchaseEventCandidates.find(e => e.sessionId)?.sessionId;
       const inferredUserKey = conv.userKey || purchaseEventCandidates.find(e => e.userKey)?.userKey;
+
+      // Cut the lookback at the previous purchase of the same buyer so we
+      // don't pull in sessions/events that belong to their earlier order.
+      const boundaryTs = priorBoundaryTs(inferredUserKey, conv.customerId, convTs);
+      const effectiveEarliestTs = boundaryTs != null
+        ? Math.max(earliestTs, boundaryTs + 1)
+        : earliestTs;
 
       const rawStitched = [
           ...(conv.orderId ? (eventsByOrderId.get(String(conv.orderId)) || []) : []),
@@ -2982,9 +3029,12 @@ router.get('/:account_id', async (req, res) => {
 
       const uniqueEventsMap = new Map();
       for (const ev of rawStitched) {
-          if (!uniqueEventsMap.has(ev.eventId) && ev._evTs >= earliestTs && ev._evTs <= latestTs) {
-             uniqueEventsMap.set(ev.eventId, ev);
-          }
+          if (uniqueEventsMap.has(ev.eventId)) continue;
+          if (ev._evTs < effectiveEarliestTs || ev._evTs > latestTs) continue;
+          // Drop events that explicitly belong to a different order of the
+          // same buyer (belt-and-suspenders against wide time windows).
+          if (ev.orderId && conv.orderId && String(ev.orderId) !== String(conv.orderId)) continue;
+          uniqueEventsMap.set(ev.eventId, ev);
       }
 
       let stitchedEvents = Array.from(uniqueEventsMap.values())
@@ -2997,7 +3047,7 @@ router.get('/:account_id', async (req, res) => {
             where: {
               accountId: account_id,
               createdAt: {
-                gte: new Date(earliestTs),
+                gte: new Date(effectiveEarliestTs),
                 lte: new Date(latestTs),
               },
               OR: [
@@ -3023,7 +3073,11 @@ router.get('/:account_id', async (req, res) => {
           });
 
           if (customerLinkedEvents.length) {
-            stitchedEvents = [...stitchedEvents, ...customerLinkedEvents]
+            // Same order-scope filter as the primary path.
+            const scoped = customerLinkedEvents.filter((ev) =>
+              !(ev.orderId && conv.orderId && String(ev.orderId) !== String(conv.orderId))
+            );
+            stitchedEvents = [...stitchedEvents, ...scoped]
               .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
           }
         } catch (_) {

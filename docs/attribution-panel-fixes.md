@@ -35,10 +35,7 @@ El nav del panel tiene un `ModelSelector` con: Last Click, First Click, Linear, 
 - [x] Fix en `conversionsWithAttribution` (analytics.js L2746+): cuando el modelo es `first_touch` o `linear` y `attribution.isAttributed === true`, se usa el resultado del modelo y `orderStoredAttribution` queda como **fallback**. Para `last_touch` el comportamiento previo se respeta (orderStored gana) para no alterar conteos existentes.
 - [x] Cache key por ruta ya incluye `attribution_model` en query string → cada modelo tiene su propia entrada de cache.
 - [x] `node -c` syntax check OK.
-- [ ] **PRUEBA PENDIENTE**: en staging, alternar Last/First/Linear con la misma fecha y confirmar que:
-   - (a) el Pie Chart se mueve (`AttributionPieChart`).
-   - (b) KPI de attributedRevenue cambia.
-   - (c) En Conversion Paths los badges de canal cambian para órdenes con historial de varias sesiones.
+- [x] **VALIDADO EN STAGING** (2026-04-23).
 
 ---
 
@@ -62,7 +59,7 @@ El nav del panel tiene un `ModelSelector` con: Last Click, First Click, Linear, 
 - [x] Borrar entradas del `ModelSelector`.
 - [x] Actualizar `useAttributionFilters.VALID_MODELS` y `RoasComparisonChart.MODEL_LABELS`.
 - [x] `tsc --noEmit` limpio.
-- [ ] **PRUEBA PENDIENTE**: confirmar en UI que el selector sólo muestra 3 opciones (Last Click, First Click, Linear).
+- [x] **VALIDADO EN STAGING** (2026-04-23): selector muestra sólo Last Click / First Click / Linear.
 
 ---
 
@@ -106,7 +103,8 @@ Pedido:
 - [x] Flag `conversion` en la sesión que contiene el purchase.
 - [x] Stitching cross-session ya funcionaba a nivel datos: `collect.js` siempre setea `userKey` desde cookie `_adray_uid` con fallback a UUID; el backend ya unía eventos por userKey + identityGraph + customerId.
 - [x] `tsc --noEmit` limpio.
-- [ ] **PRUEBA PENDIENTE**: abrir un purchase con >1 sesión en staging y verificar: (a) aparece "Session 1 / N", (b) se ve gap entre sesiones, (c) el header muestra campaign/adset/ad cuando hay UTMs.
+- [x] **VALIDADO EN STAGING** (2026-04-23): Session N/total visible + source y conversion badge por sesión.
+- [ ] **BUG DETECTADO**: para clientes repetidos (B2B), el stitching trae eventos de pedidos anteriores del mismo usuario → ver Fix #5.
 
 ---
 
@@ -132,7 +130,7 @@ Pedido:
 - [x] Util `friendlyPlatformLabel()` + `channelDisplayLabel()` en `channelColors.ts`.
 - [x] Render en HistoricalJourneys (badge truncado + tooltip) + SelectedJourney (header badge).
 - [x] `tsc --noEmit` limpio.
-- [ ] **PRUEBA PENDIENTE**: en staging, validar que pedidos de hostinger/bing/yahoo muestren su sub-label (ej. "Other · Hostinger Referral").
+- [x] **VALIDADO EN STAGING** (2026-04-23): badge "Other · (direct)" visible para órdenes sin utm/referrer (ver #66919).
 
 ---
 
@@ -144,3 +142,51 @@ Pedido:
 4. Tarea #1 (backend, cuidadoso con override de orderStoredAttribution) — al final para no romper a mitad del resto.
 
 Cada tarea cierra con screenshot/validación del usuario antes de tachar.
+
+---
+
+## 5) Stitching filtra pedidos de otros órdenes del mismo cliente ⬜
+
+### Contexto
+Detectado al validar #3 en staging (2026-04-23). El pedido `#66917` (FISCAL FISCAL — B2B recurrente) aparece con **120 eventos · 75 sesiones** y múltiples `Purchase · converted` en fechas dispersas (26-27 mar). Esas sesiones y purchases **no pertenecen** al pedido #66917 sino a otros pedidos previos del mismo usuario.
+
+### Hallazgo
+En `backend/routes/analytics.js:2941-2976` (construcción de `recentPurchases`):
+
+```js
+const rawStitched = [
+    ...(conv.orderId ? (eventsByOrderId.get(String(conv.orderId)) || []) : []),
+    ...(conv.checkoutToken ? (eventsByCheckoutToken.get(String(conv.checkoutToken)) || []) : []),
+    ...(inferredSessionId ? (eventsBySessionId.get(String(inferredSessionId)) || []) : []),
+    ...(inferredUserKey ? (eventsByUserKey.get(String(inferredUserKey)) || []) : []),  // ← trae TODO el histórico
+    ...(conv.customerId ? (eventsByCustomerId.get(String(conv.customerId)) || []) : []) // ← idem
+];
+```
+
+La ventana temporal (`[earliestTs, latestTs]`) acota a `journeyStitchLookbackDays` que puede ser hasta 365 días (`L2279-2283`). Para un cliente que compró 50 veces en ese periodo, se traen las 50 sesiones + 50 purchases previos.
+
+### Plan
+Dos cortes combinados, ambos en `backend/routes/analytics.js` dentro del map de `recentPurchases`:
+
+1. **Cortar por purchase anterior del mismo usuario**:
+   - Construir fuera del map un índice `priorPurchaseTsByUserKey / ByCustomerId` a partir de `modeledConversions` (sorted desc por timestamp).
+   - Para cada conv, buscar el purchase inmediatamente anterior del mismo `userKey`/`customerId` y calcular `boundaryTs`. Usar `effectiveEarliestTs = Math.max(earliestTs, boundaryTs + 1)`.
+   - Efecto: el journey de #66917 empieza justo después del purchase #66919 (el anterior del mismo usuario), no 365 días atrás.
+
+2. **Excluir eventos con `orderId` perteneciente a otra orden**:
+   - En el `for (const ev of rawStitched)` antes del `uniqueEventsMap.set`, filtrar `ev.orderId && String(ev.orderId) !== String(conv.orderId)`.
+   - Efecto: purchase events de otros pedidos del mismo cliente no se cuelan aunque caigan en la ventana.
+
+Estos dos cortes son complementarios: (1) es la defensa primaria para page_views/add_to_carts históricos, (2) es defensa de belt-and-suspenders para purchase events concretos.
+
+### Riesgo
+- Si un cliente hace **dos pedidos el mismo día con minutos de diferencia**, el segundo pedido mostrará journey correcto (desde purchase del primero), pero el primero podría "prestar" add_to_carts realizados inmediatamente antes del segundo pedido. Aceptable — la alternativa (journey vacío) es peor.
+- No afecta a clientes nuevos: `boundaryTs === null` → se mantiene el comportamiento actual.
+
+### Checklist
+- [ ] Construir índice `priorPurchaseTsByUserKey/ByCustomerId` sobre `modeledConversions` (sorted desc).
+- [ ] Helper `priorBoundaryTs(userKey, customerId, convTs): number | null`.
+- [ ] Aplicar `effectiveEarliestTs = Math.max(earliestTs, boundary + 1)`.
+- [ ] Filtrar `ev.orderId !== conv.orderId` en el loop de `rawStitched`.
+- [ ] Probar en staging con #66917 (FISCAL FISCAL): debe bajar de 75 sesiones a algo razonable (~1-3) y mostrar sólo 1 Purchase.
+- [ ] Regresión: verificar que pedidos de clientes nuevos (1 sola compra) mantienen su journey completo.
