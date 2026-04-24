@@ -15,8 +15,6 @@ const MODEL_LABELS: Record<AttributionModel, string> = {
   last_touch:  'LastClick',
   first_touch: 'FirstClick',
   linear:      'Linear',
-  time_decay:  'Time Decay',
-  position:    'Position Based',
 };
 
 interface Props {

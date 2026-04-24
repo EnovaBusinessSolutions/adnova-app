@@ -4,7 +4,7 @@ import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 import { formatCurrency } from '../utils/formatters';
-import { channelColor, channelLabel } from '../utils/channelColors';
+import { channelColor, channelDisplayLabel } from '../utils/channelColors';
 import type { RecentPurchase } from '../types';
 
 interface HistoricalJourneysProps {
@@ -132,10 +132,11 @@ export function HistoricalJourneys({
                 <div className="mt-1.5 flex items-center justify-between gap-2">
                   <Badge
                     variant="outline"
-                    className="h-4 shrink-0 border-white/[0.08] px-1.5 text-[9px] font-normal text-white/40"
+                    className="h-4 shrink-0 max-w-[70%] truncate border-white/[0.08] px-1.5 text-[9px] font-normal text-white/40"
                     style={{ borderColor: `${channelColor(p.attributedChannel)}40` }}
+                    title={channelDisplayLabel(p.attributedChannel, p.attributedPlatform)}
                   >
-                    {channelLabel(p.attributedChannel)}
+                    {channelDisplayLabel(p.attributedChannel, p.attributedPlatform)}
                   </Badge>
                   <span className="shrink-0 text-[10px] text-white/30">{formatDate(p.createdAt)}</span>
                 </div>
