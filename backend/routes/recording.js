@@ -1144,10 +1144,13 @@ router.post('/finalize-now', async (req, res) => {
       ? { recordingId: targetId }
       : { status: { in: ['RECORDING', 'FINALIZING', 'ERROR'] }, createdAt: { lt: cutoff }, rawErasedAt: null };
 
+    const requestedLimit = Number(req.body?.limit) || Number(req.query?.limit) || 10;
+    const take = Math.max(1, Math.min(requestedLimit, 200));
+
     const recs = await prisma.sessionRecording.findMany({
       where,
       select: { recordingId: true, accountId: true, sessionId: true, r2ChunksPrefix: true, chunkCount: true },
-      take: 10,
+      take,
     });
 
     const results = [];
@@ -1226,6 +1229,184 @@ router.post('/finalize-now', async (req, res) => {
 
     return res.json({ ok: true, processed: results.length, results });
   } catch (err) {
+    return res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * POST /collect/x/build-packets-now  (internal)
+ * Builds SessionPackets INLINE (bypassing BullMQ) for every READY recording
+ * that doesn't yet have a packet. Use when the queue is backlogged and
+ * recording:build-packet jobs are stuck behind a wall of finalize jobs.
+ * Does NOT run analyze-session — the 15-min queue loop will pick those up
+ * (or you call it again separately).
+ * ───────────────────────────────────────────────────────────────────────────── */
+router.post('/build-packets-now', async (req, res) => {
+  const secret = req.headers['x-adray-internal'] || req.body?.secret;
+  if (secret !== (process.env.INTERNAL_CRON_SECRET || 'adray-internal')) {
+    return res.status(403).json({ ok: false });
+  }
+
+  try {
+    const { downloadChunk } = require('../utils/r2Client');
+    const { buildSessionPacket } = require('../services/sessionPacketBuilder');
+    const { extractSignals } = require('../services/recordingSignalExtractor');
+
+    const requestedLimit = Number(req.body?.limit) || Number(req.query?.limit) || 50;
+    const take = Math.max(1, Math.min(requestedLimit, 200));
+
+    // 1. READY recordings, still have raw, real sessionId
+    const ready = await prisma.sessionRecording.findMany({
+      where: {
+        status: 'READY',
+        rawErasedAt: null,
+        r2Key: { not: null },
+        sessionId: { not: 'unknown' },
+      },
+      select: {
+        recordingId: true, sessionId: true, accountId: true, userKey: true,
+        cartValue: true, attributionSnapshot: true, deviceType: true, orderId: true,
+        r2Key: true,
+      },
+      orderBy: { createdAt: 'desc' },
+      take,
+    });
+
+    // 2. Skip sessionIds that already have a packet
+    const existing = await prisma.sessionPacket.findMany({
+      where: { sessionId: { in: ready.map((r) => r.sessionId) } },
+      select: { sessionId: true },
+    });
+    const hasPacket = new Set(existing.map((p) => p.sessionId));
+    const pending = ready.filter((r) => !hasPacket.has(r.sessionId));
+
+    let built = 0;
+    let failed = 0;
+    const failures = [];
+
+    // 3. Process each synchronously: download R2 → extract → upsert
+    for (const rec of pending) {
+      try {
+        const events = await downloadChunk(rec.r2Key);
+        if (!Array.isArray(events) || events.length === 0) {
+          failed++;
+          failures.push({ recordingId: rec.recordingId, reason: 'no events in R2' });
+          continue;
+        }
+
+        let signals = {};
+        try {
+          signals = extractSignals(events, { cartValue: rec.cartValue });
+        } catch (sigErr) {
+          signals = { error: String(sigErr.message || sigErr) };
+        }
+
+        const packet = buildSessionPacket({ events, recording: rec, signals });
+
+        await prisma.sessionPacket.upsert({
+          where: { sessionId: packet.sessionId },
+          create: packet,
+          update: {
+            keyframes: packet.keyframes,
+            signals: packet.signals,
+            ecommerceEvents: packet.ecommerceEvents,
+            outcome: packet.outcome,
+            endTs: packet.endTs,
+            durationMs: packet.durationMs,
+            cartValueAtEnd: packet.cartValueAtEnd,
+            orderId: packet.orderId,
+            device: packet.device,
+            trafficSource: packet.trafficSource,
+            landingPage: packet.landingPage,
+          },
+          select: { id: true },
+        });
+
+        // Queue AI analysis so /bri eventually shows the archetype / narrative.
+        // Non-blocking: if the queue is jammed the packet still exists.
+        if (recordingQueue) {
+          await recordingQueue.add(
+            'recording:analyze-session',
+            { sessionId: packet.sessionId, accountId: packet.accountId },
+            {
+              jobId: `analyze:${packet.sessionId}`,
+              attempts: 3,
+              removeOnComplete: true,
+              removeOnFail: 50,
+            }
+          ).catch(() => {});
+        }
+
+        built++;
+      } catch (err) {
+        failed++;
+        failures.push({ recordingId: rec.recordingId, reason: String(err.message || err).slice(0, 160) });
+      }
+    }
+
+    console.log(`[recording/build-packets-now] candidates=${ready.length} alreadyHavePacket=${hasPacket.size} built=${built} failed=${failed}`);
+    return res.json({
+      ok: true,
+      candidates: ready.length,
+      alreadyHavePacket: hasPacket.size,
+      built,
+      failed,
+      failures: failures.slice(0, 10),
+    });
+  } catch (err) {
+    console.error('[recording/build-packets-now] Error:', err.message);
+    return res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * GET /collect/x/queue-stats  (internal)
+ * Returns BullMQ counts so we can diagnose a stuck worker without logs.
+ * ───────────────────────────────────────────────────────────────────────────── */
+router.get('/queue-stats', async (req, res) => {
+  const secret = req.headers['x-adray-internal'] || req.query?.secret;
+  if (secret !== (process.env.INTERNAL_CRON_SECRET || 'adray-internal')) {
+    return res.status(403).json({ ok: false });
+  }
+
+  try {
+    if (!recordingQueue) {
+      return res.json({ ok: false, error: 'Queue not initialized' });
+    }
+
+    const [waiting, active, delayed, completed, failed] = await Promise.all([
+      recordingQueue.getWaitingCount(),
+      recordingQueue.getActiveCount(),
+      recordingQueue.getDelayedCount(),
+      recordingQueue.getCompletedCount(),
+      recordingQueue.getFailedCount(),
+    ]);
+
+    // Peek at the top of each state to spot stuck job types
+    const [waitingSample, activeSample, failedSample] = await Promise.all([
+      recordingQueue.getJobs(['waiting'], 0, 5, true).catch(() => []),
+      recordingQueue.getJobs(['active'], 0, 5, true).catch(() => []),
+      recordingQueue.getJobs(['failed'], 0, 5, true).catch(() => []),
+    ]);
+
+    const summarize = (j) => ({
+      name: j.name,
+      id: j.id,
+      attemptsMade: j.attemptsMade,
+      failedReason: j.failedReason ? String(j.failedReason).slice(0, 160) : null,
+    });
+
+    return res.json({
+      ok: true,
+      counts: { waiting, active, delayed, completed, failed },
+      samples: {
+        waiting: waitingSample.map(summarize),
+        active: activeSample.map(summarize),
+        failed: failedSample.map(summarize),
+      },
+    });
+  } catch (err) {
+    console.error('[recording/queue-stats] Error:', err.message);
     return res.status(500).json({ ok: false, error: err.message });
   }
 });
