@@ -2111,6 +2111,35 @@ app.listen(PORT, () => {
   setTimeout(() => { runBackfill(); setInterval(runBackfill, BACKFILL_INTERVAL_MS); }, 3 * 60 * 1000);
 })();
 
+// ── AI analysis backfill: run sessionAnalyst INLINE on packets without   ──
+// ── aiAnalysis, so /bri eventually shows archetype/narrative on every    ──
+// ── row even when the BullMQ worker drops analyze-session jobs.          ──
+// Uses /analyze-pending which has a deterministic path + fallback, so it
+// works without OPENROUTER_API_KEY. First pass 5 min after boot, then 10 min.
+(function startAnalysisBackfill() {
+  const ANALYZE_INTERVAL_MS = 10 * 60 * 1000;
+  const analyzeUrl = `http://localhost:${PORT}/collect/x/analyze-pending`;
+  const secret = process.env.INTERNAL_CRON_SECRET || 'adray-internal';
+
+  async function runAnalyze() {
+    try {
+      const r = await fetch(analyzeUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-adray-internal': secret },
+        body: JSON.stringify({ limit: 20 }),
+      });
+      const data = await r.json().catch(() => ({}));
+      if (data.analyzed > 0 || data.failed > 0) {
+        console.log(`[analysisBackfill] analyzed=${data.analyzed} failed=${data.failed} candidates=${data.candidates}`);
+      }
+    } catch (e) {
+      console.warn('[analysisBackfill] Analyze failed:', e.message);
+    }
+  }
+
+  setTimeout(() => { runAnalyze(); setInterval(runAnalyze, ANALYZE_INTERVAL_MS); }, 5 * 60 * 1000);
+})();
+
 // ── Inline Recording Worker ────────────────────────────────────────
 // Runs the recording worker in the same process as the web server.
 // Set RECORDING_WORKER_INLINE=false to disable (e.g. when running a dedicated worker service).

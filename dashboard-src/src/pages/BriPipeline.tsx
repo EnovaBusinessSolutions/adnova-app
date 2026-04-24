@@ -6,7 +6,7 @@ import {
   RefreshCw, Brain, Users, Activity, CheckCircle2, XCircle,
   Clock, ChevronDown, ChevronRight, Loader2,
   MousePointer, ScrollText, Eye, ShoppingCart, AlertTriangle,
-  ArrowLeftRight, ZapOff, Star, Maximize2,
+  ArrowLeftRight, ZapOff, Star, Maximize2, Navigation, LogOut, CreditCard,
 } from "lucide-react";
 
 /* ── Types ──────────────────────────────────────────────────────────────────── */
@@ -20,8 +20,13 @@ interface PipelineStats {
 
 interface Keyframe {
   type: string;
-  ts: number;        // ms offset from session start
+  elapsed_seconds?: number;  // seconds from session start (primary)
+  timestamp?: number;        // absolute unix ms (fallback)
+  page_url?: string;
+  interaction?: Record<string, unknown>;
   data?: Record<string, unknown>;
+  // allow extra fields emitted by keyframeExtractor
+  [key: string]: unknown;
 }
 
 interface AiAnalysis {
@@ -102,9 +107,21 @@ function fmtDuration(ms: number) {
 }
 
 function fmtOffset(ms: number) {
-  if (ms < 1000) return `0s`;
+  if (!Number.isFinite(ms) || ms < 0) return "0s";
+  if (ms < 1000) return "0s";
   if (ms < 60000) return `${Math.round(ms / 1000)}s`;
   return `${Math.floor(ms / 60000)}m${Math.floor((ms % 60000) / 1000)}s`;
+}
+
+/** Resolve keyframe offset in ms from session start, tolerating missing fields. */
+function keyframeOffsetMs(kf: Keyframe, startTs?: number): number {
+  if (typeof kf.elapsed_seconds === "number" && Number.isFinite(kf.elapsed_seconds)) {
+    return kf.elapsed_seconds * 1000;
+  }
+  if (typeof kf.timestamp === "number" && typeof startTs === "number") {
+    return Math.max(0, kf.timestamp - startTs);
+  }
+  return 0;
 }
 
 /* ── Adray palette aligned with attribution panel ────────────────────────── */
@@ -192,12 +209,17 @@ function FieldLabel({ children }: { children: React.ReactNode }) {
 /* ── Keyframe config ────────────────────────────────────────────────────────── */
 
 const KEYFRAME_CONFIG: Record<string, { icon: React.ElementType; color: string; label: string }> = {
+  page_navigation:       { icon: Navigation,    color: "text-white/50",    label: "Page nav" },
+  session_end:           { icon: LogOut,        color: "text-white/40",    label: "Session end" },
   scroll_stop:           { icon: ScrollText,    color: "text-blue-400",    label: "Scroll stop" },
   product_hover:         { icon: Eye,           color: "text-cyan-400",    label: "Product hover" },
   product_view:          { icon: Maximize2,     color: "text-cyan-400",    label: "Product view" },
   rage_click:            { icon: MousePointer,  color: "text-red-400",     label: "Rage click" },
+  checkout_entry:        { icon: CreditCard,    color: "text-purple-400",  label: "Checkout entry" },
   checkout_hesitation:   { icon: AlertTriangle, color: "text-amber-400",   label: "Checkout hesitation" },
   add_to_cart:           { icon: ShoppingCart,  color: "text-emerald-400", label: "Add to cart" },
+  cart_modification:     { icon: ShoppingCart,  color: "text-emerald-400", label: "Cart modification" },
+  purchase:              { icon: ShoppingCart,  color: "text-emerald-400", label: "Purchase" },
   tab_switch:            { icon: ArrowLeftRight,color: "text-white/40",    label: "Tab switch" },
   form_abandon:          { icon: ZapOff,        color: "text-orange-400",  label: "Form abandon" },
   visibility_change:     { icon: Eye,           color: "text-white/30",    label: "Visibility change" },
@@ -243,23 +265,58 @@ function StatCard({
 
 /* ── Keyframes Timeline ─────────────────────────────────────────────────────── */
 
-function KeyframesTimeline({ keyframes, durationMs }: { keyframes: Keyframe[]; durationMs: number }) {
+function KeyframesTimeline({
+  keyframes,
+  durationMs,
+  startTs,
+}: {
+  keyframes: Keyframe[];
+  durationMs: number;
+  startTs?: number;
+}) {
   if (!keyframes.length) return (
     <p className="text-[11px] text-white/25 italic">No keyframes captured</p>
   );
+
+  // Skip-noise fields from the small text line under each keyframe.
+  const HIDDEN_EXTRA = new Set([
+    "type", "timestamp", "elapsed_seconds", "page_url", "interaction",
+    "ts", "session_id", "merchantId", "visitorId", "merchant_id", "visitor_id",
+  ]);
 
   return (
     <div className="space-y-1">
       {keyframes.map((kf, i) => {
         const cfg = getKeyframeConfig(kf.type);
         const Icon = cfg.icon;
-        const pct = durationMs > 0 ? Math.min((kf.ts / durationMs) * 100, 100) : 0;
-        const extra = kf.data && Object.keys(kf.data).length > 0
-          ? Object.entries(kf.data)
-              .filter(([k]) => !["ts", "type"].includes(k))
-              .map(([k, v]) => `${k}: ${typeof v === "object" ? JSON.stringify(v) : v}`)
-              .join(" · ")
-          : null;
+        const offsetMs = keyframeOffsetMs(kf, startTs);
+        const pct = durationMs > 0 ? Math.min((offsetMs / durationMs) * 100, 100) : 0;
+
+        // Collect humanly-useful extras: scroll_depth_percent, hover_duration,
+        // page_url for navigation, element_id for rage_clicks, etc. Anything
+        // scalar that isn't already represented by the label/offset.
+        const interactionExtras: string[] = [];
+        if (kf.interaction && typeof kf.interaction === "object") {
+          for (const [k, v] of Object.entries(kf.interaction)) {
+            if (v == null) continue;
+            if (typeof v === "object") continue;
+            interactionExtras.push(`${k}: ${v}`);
+          }
+        }
+        const topLevelExtras: string[] = [];
+        for (const [k, v] of Object.entries(kf)) {
+          if (HIDDEN_EXTRA.has(k)) continue;
+          if (v == null) continue;
+          if (typeof v === "object") continue;
+          topLevelExtras.push(`${k}: ${v}`);
+        }
+        const pageUrl = kf.type === "page_navigation" && kf.page_url ? kf.page_url : null;
+        const extraBits = [
+          pageUrl ? pageUrl : null,
+          ...topLevelExtras,
+          ...interactionExtras,
+        ].filter(Boolean) as string[];
+        const extra = extraBits.length ? extraBits.slice(0, 3).join(" · ") : null;
 
         return (
           <div key={i} className="flex items-start gap-2">
@@ -273,12 +330,12 @@ function KeyframesTimeline({ keyframes, durationMs }: { keyframes: Keyframe[]; d
               )}
             </div>
             {/* Content */}
-            <div className="pb-2 min-w-0">
+            <div className="pb-2 min-w-0 flex-1">
               <div className="flex items-center gap-2">
                 <span className={`text-[11px] font-medium ${cfg.color}`}>{cfg.label}</span>
-                <span className="text-[10px] text-white/25">{fmtOffset(kf.ts)}</span>
+                <span className="text-[10px] text-white/25 tabular-nums">{fmtOffset(offsetMs)}</span>
                 <div className="h-px flex-1 bg-white/[0.04]" />
-                <span className="text-[10px] text-white/20">{Math.round(pct)}%</span>
+                <span className="text-[10px] text-white/20 tabular-nums">{Math.round(pct)}%</span>
               </div>
               {extra && (
                 <p className="text-[10px] text-white/30 mt-0.5 truncate">{extra}</p>
@@ -468,7 +525,11 @@ function PacketRow({ packet }: { packet: SessionPacketRow }) {
           )}
 
           {tab === "keyframes" && (
-            <KeyframesTimeline keyframes={keyframes} durationMs={packet.durationMs} />
+            <KeyframesTimeline
+              keyframes={keyframes}
+              durationMs={packet.durationMs}
+              startTs={packet.startTs ? new Date(packet.startTs).getTime() : undefined}
+            />
           )}
 
           {tab === "identifiers" && (
