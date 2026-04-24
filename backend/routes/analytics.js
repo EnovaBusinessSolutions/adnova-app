@@ -3193,11 +3193,11 @@ router.get('/:account_id', async (req, res) => {
           productId: ev.productId || null,
           productName: ev?.rawPayload?.product_name || ev?.rawPayload?.item_name || ev?.rawPayload?.name || null,
           itemId: ev?.rawPayload?.item_id || ev?.rawPayload?.product_id || null,
-          utmSource: ev?.rawPayload?.utm_source || null,
-          utmMedium: ev?.rawPayload?.utm_medium || null,
-          utmCampaign: ev?.rawPayload?.utm_campaign || null,
-          utmContent: ev?.rawPayload?.utm_content || null,
-          utmTerm: ev?.rawPayload?.utm_term || null,
+          utmSource: sanitizeAttrValue(ev?.rawPayload?.utm_source),
+          utmMedium: sanitizeAttrValue(ev?.rawPayload?.utm_medium),
+          utmCampaign: sanitizeAttrValue(ev?.rawPayload?.utm_campaign),
+          utmContent: sanitizeAttrValue(ev?.rawPayload?.utm_content),
+          utmTerm: sanitizeAttrValue(ev?.rawPayload?.utm_term),
           referrer: ev?.rawPayload?.referrer || ev?.rawPayload?.document_referrer || null,
           sessionId: ev.sessionId || null,
           userKey: ev.userKey || null,
@@ -3220,6 +3220,30 @@ router.get('/:account_id', async (req, res) => {
         events: journeyEvents,
       };
     }));
+
+    // ─── Post-enrichment of click IDs from journey events ──
+    // If the order-level attribution didn't capture a click id (common when
+    // the webhook/platform snapshot doesn't carry fbclid), but a journey
+    // event does, copy it up. This lets the UI render "Meta Ads · click ID"
+    // and lets the resolver attempt a lookup on the next request.
+    for (const p of recentPurchases) {
+      if (p.attributedClickId && p.attributedClickIdProvider) continue;
+
+      // Prefer the earliest event — the click id is captured on landing.
+      let fb = null, gc = null, tt = null;
+      for (const ev of (p.events || [])) {
+        if (!fb) fb = ev.fbclid || null;
+        if (!gc) gc = ev.gclid || null;
+        if (!tt) tt = ev.ttclid || null;
+        if (fb || gc || tt) break;
+      }
+      if (!p.attributedClickId) {
+        p.attributedClickId = gc || fb || tt || null;
+      }
+      if (!p.attributedClickIdProvider) {
+        p.attributedClickIdProvider = gc ? 'google' : fb ? 'meta' : tt ? 'tiktok' : null;
+      }
+    }
 
     // ─── Click-ID → campaign name resolution (best effort) ──
     // For orders that have a click id (gclid/fbclid/ttclid) but no campaign
