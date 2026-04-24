@@ -537,7 +537,7 @@ const Settings = () => {
 
                   <div className="mt-6">
                     <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as SettingsTab)} className="space-y-6">
-                      <TabsList className="grid h-auto w-full grid-cols-3 rounded-[24px] border border-white/[0.08] bg-[linear-gradient(180deg,rgba(18,14,28,0.68)_0%,rgba(12,12,16,0.84)_100%)] p-1.5 backdrop-blur-md">
+                      <TabsList className="grid h-auto w-full grid-cols-1 rounded-[24px] border border-white/[0.08] bg-[linear-gradient(180deg,rgba(18,14,28,0.68)_0%,rgba(12,12,16,0.84)_100%)] p-1.5 backdrop-blur-md">
                         <TabsTrigger
                           value="integrations"
                           className="h-12 rounded-[18px] text-sm font-medium text-white/65 transition data-[state=active]:bg-[linear-gradient(135deg,rgba(181,92,255,0.20),rgba(255,255,255,0.07))] data-[state=active]:text-white data-[state=active]:shadow-[0_10px_30px_rgba(181,92,255,0.14)]"
@@ -546,6 +546,8 @@ const Settings = () => {
                           Integrations
                         </TabsTrigger>
 
+                        {/* Disabled for production — kept for future restoration.
+                            Staging (german/dev) retains these tabs live.
                         <TabsTrigger
                           value="security"
                           className="h-12 rounded-[18px] text-sm font-medium text-white/65 transition data-[state=active]:bg-[linear-gradient(135deg,rgba(181,92,255,0.20),rgba(255,255,255,0.07))] data-[state=active]:text-white data-[state=active]:shadow-[0_10px_30px_rgba(181,92,255,0.14)]"
@@ -561,6 +563,7 @@ const Settings = () => {
                           <Bell className="mr-2 h-4 w-4" />
                           Notifications
                         </TabsTrigger>
+                        */}
                       </TabsList>
 
                       <TabsContent value="integrations" className="space-y-6">
@@ -586,17 +589,6 @@ const Settings = () => {
                           }
                         >
                           <div className="grid gap-4">
-                            <IntegrationRow
-                              icon={ShoppingBag}
-                              iconClassName="text-emerald-200"
-                              name="Shopify"
-                              subLabel="Order & product data"
-                              connected={connections.shopify}
-                              comingSoon
-                              accent="from-emerald-500/10 via-emerald-400/6 to-transparent"
-                              onDisconnect={connections.shopify ? () => openDisconnect("shopify") : undefined}
-                            />
-
                             <IntegrationRow
                               icon={Facebook}
                               iconClassName="text-fuchsia-200"
@@ -627,35 +619,12 @@ const Settings = () => {
                               onDisconnect={connections.ga4 ? () => openDisconnect("ga4") : undefined}
                             />
 
-                            <IntegrationRow
-                              icon={ShoppingBag}
-                              name="Google Merchant Center"
-                              subLabel={
-                                merchantReady
-                                  ? "Merchant Center account connected and ready for product intelligence."
-                                  : "Connect Merchant Center to unlock catalog and product feed insights."
-                              }
-                              connected={connections.merchant}
-                              onDisconnect={connections.merchant ? () => openDisconnect("merchant") : undefined}
-                            />
-                            {!merchantReady && (
-                              <div className="mt-2 flex justify-end">
-                                <Button
-                                  size="sm"
-                                  onClick={() => {
-                                    if (merchantNeedsSelection) { setMerchantSelectorOpen(true); return; }
-                                    if (!connections.merchant) { window.location.assign(merchantConnectUrl); }
-                                  }}
-                                  className="rounded-xl border border-white/10 bg-white/[0.05] px-4 text-white hover:bg-white/[0.08]"
-                                >
-                                  {merchantActionLabel} →
-                                </Button>
-                              </div>
-                            )}
                           </div>
                         </SectionShell>
                       </TabsContent>
 
+                      {/* Disabled for production — kept for future restoration.
+                          Staging (german/dev) retains these tabs live.
                       <TabsContent value="security" className="space-y-6">
                         <SectionShell title="Security" icon={Shield}>
                           <div className="grid gap-4">
@@ -726,6 +695,7 @@ const Settings = () => {
                           </div>
                         </SectionShell>
                       </TabsContent>
+                      */}
                     </Tabs>
                   </div>
 
