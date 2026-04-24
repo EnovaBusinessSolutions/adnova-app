@@ -1,9 +1,9 @@
-import { useState, useCallback } from 'react';
-import { Download, X, ShoppingCart, CreditCard, Eye, Package, Star, User, Zap } from 'lucide-react';
+import { useState, useCallback, useMemo } from 'react';
+import { Download, X, ShoppingCart, CreditCard, Eye, Package, Star, User, Zap, Globe, Target } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { formatCurrency } from '../utils/formatters';
-import { channelColor, channelLabel } from '../utils/channelColors';
+import { channelColor, channelDisplayLabel, friendlyPlatformLabel } from '../utils/channelColors';
 import type { RecentPurchase, JourneyEvent } from '../types';
 import { ADRAY_PURPLE } from '../utils/adrayColors';
 
@@ -41,13 +41,39 @@ function formatTs(iso: string): string {
   } catch { return iso; }
 }
 
+function formatShortTs(iso: string): string {
+  try {
+    return new Intl.DateTimeFormat('es-MX', {
+      month: 'short', day: 'numeric',
+      hour: '2-digit', minute: '2-digit',
+    }).format(new Date(iso));
+  } catch { return iso; }
+}
+
+function formatDuration(ms: number): string {
+  if (!Number.isFinite(ms) || ms < 0) return '–';
+  const s = Math.round(ms / 1000);
+  if (s < 60) return `${s}s`;
+  const m = Math.round(s / 60);
+  if (m < 60) return `${m}m`;
+  const h = Math.floor(m / 60);
+  const rem = m % 60;
+  return rem ? `${h}h ${rem}m` : `${h}h`;
+}
+
 function shortPath(url: string | null): string | null {
   if (!url) return null;
   try { return new URL(url).pathname; } catch { return url; }
 }
 
+function eventTime(e: JourneyEvent): number {
+  const iso = e.capturedAt || e.createdAt;
+  const t = new Date(iso).getTime();
+  return Number.isFinite(t) ? t : 0;
+}
+
 function downloadCsv(purchase: RecentPurchase) {
-  const headers = ['eventName', 'createdAt', 'pageUrl', 'utmSource', 'orderId', 'productId', 'productName'];
+  const headers = ['sessionId', 'eventName', 'createdAt', 'pageUrl', 'utmSource', 'utmCampaign', 'utmContent', 'utmTerm', 'orderId', 'productId', 'productName'];
   const rows = purchase.events.map((e) =>
     headers.map((h) => {
       const val = (e as unknown as Record<string, unknown>)[h];
@@ -130,7 +156,7 @@ function EventRow({
 }) {
   const cfg = getEventConfig(event.eventName);
   const isPurchase = event.eventName.toLowerCase() === 'purchase';
-  const hasClickId = event.gclid || event.fbc || event.ttclid || event.clickId;
+  const hasClickId = event.gclid || event.fbc || event.fbclid || event.ttclid || event.clickId;
   const path = shortPath(event.pageUrl);
 
   return (
@@ -189,12 +215,6 @@ function EventRow({
             {path && (
               <p className="truncate text-[10px] text-white/35">{path}</p>
             )}
-            {event.utmSource && (
-              <p className="text-[10px]">
-                <span className="text-white/25">utm_source: </span>
-                <span className="text-white/50">{event.utmSource}</span>
-              </p>
-            )}
             {event.productName && (
               <p className="text-[10px]">
                 <span className="text-white/25">product: </span>
@@ -208,39 +228,205 @@ function EventRow({
   );
 }
 
+// ─── Session grouping ─────────────────────────────────────────
+interface SessionGroup {
+  sessionKey: string;             // real sessionId, or "nosession-N"
+  sessionId: string | null;
+  events: JourneyEvent[];
+  start: number;
+  end: number;
+  landing: string | null;         // first pageUrl in the session
+  utmSource: string | null;
+  utmMedium: string | null;
+  utmCampaign: string | null;
+  utmContent: string | null;
+  utmTerm: string | null;
+  referrer: string | null;
+  hasPurchase: boolean;
+}
+
+function groupBySession(events: JourneyEvent[]): SessionGroup[] {
+  const sorted = [...events].sort((a, b) => eventTime(a) - eventTime(b));
+  const groups: SessionGroup[] = [];
+  const byKey = new Map<string, SessionGroup>();
+  let orphanCounter = 0;
+
+  for (const ev of sorted) {
+    const key = ev.sessionId ?? `__nosession_${++orphanCounter}`;
+    let g = byKey.get(key);
+    if (!g) {
+      g = {
+        sessionKey: key,
+        sessionId: ev.sessionId,
+        events: [],
+        start: eventTime(ev),
+        end: eventTime(ev),
+        landing: ev.pageUrl ?? null,
+        utmSource: ev.utmSource ?? null,
+        utmMedium: ev.utmMedium ?? null,
+        utmCampaign: ev.utmCampaign ?? null,
+        utmContent: ev.utmContent ?? null,
+        utmTerm: ev.utmTerm ?? null,
+        referrer: ev.referrer ?? null,
+        hasPurchase: false,
+      };
+      byKey.set(key, g);
+      groups.push(g);
+    }
+    g.events.push(ev);
+    g.end = Math.max(g.end, eventTime(ev));
+    if (!g.landing && ev.pageUrl) g.landing = ev.pageUrl;
+    // Prefer first non-null UTMs we see (landing UTM is what matters)
+    if (!g.utmSource && ev.utmSource) g.utmSource = ev.utmSource;
+    if (!g.utmMedium && ev.utmMedium) g.utmMedium = ev.utmMedium;
+    if (!g.utmCampaign && ev.utmCampaign) g.utmCampaign = ev.utmCampaign;
+    if (!g.utmContent && ev.utmContent) g.utmContent = ev.utmContent;
+    if (!g.utmTerm && ev.utmTerm) g.utmTerm = ev.utmTerm;
+    if (!g.referrer && ev.referrer) g.referrer = ev.referrer;
+    if (ev.eventName.toLowerCase() === 'purchase') g.hasPurchase = true;
+  }
+
+  return groups.sort((a, b) => a.start - b.start);
+}
+
+// ─── Session block ────────────────────────────────────────────
+function SessionBlock({
+  group,
+  index,
+  total,
+  prevEnd,
+  condensed,
+}: {
+  group: SessionGroup;
+  index: number;
+  total: number;
+  prevEnd: number | null;
+  condensed: boolean;
+}) {
+  const gap = prevEnd != null ? group.start - prevEnd : null;
+  const duration = group.end - group.start;
+  const landing = shortPath(group.landing);
+  const referrerHost = group.referrer ? friendlyPlatformLabel(group.referrer) : null;
+
+  const campaignPieces: string[] = [];
+  if (group.utmCampaign) campaignPieces.push(`campaign: ${group.utmCampaign}`);
+  if (group.utmContent)  campaignPieces.push(`adset: ${group.utmContent}`);
+  if (group.utmTerm)     campaignPieces.push(`ad: ${group.utmTerm}`);
+
+  return (
+    <div className="border-t border-white/[0.04] first:border-t-0">
+      {/* Session header */}
+      <div className="bg-white/[0.015] px-3 py-2 sm:px-4">
+        {gap != null && gap > 60 * 1000 && (
+          <div className="mb-1.5 flex items-center gap-2">
+            <div className="h-px flex-1 bg-white/[0.04]" />
+            <span className="text-[9px] uppercase tracking-wider text-white/25">
+              +{formatDuration(gap)} después · regresa
+            </span>
+            <div className="h-px flex-1 bg-white/[0.04]" />
+          </div>
+        )}
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+          <span className="inline-flex items-center gap-1 rounded-full border border-[var(--adray-purple)]/30 bg-[var(--adray-purple)]/10 px-2 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-[#D8B8FF]">
+            Session {index + 1}
+            {total > 1 && <span className="text-white/40">/{total}</span>}
+          </span>
+          {group.hasPurchase && (
+            <Badge
+              variant="outline"
+              className="h-3.5 shrink-0 border-emerald-500/30 px-1 text-[8px] font-medium text-emerald-400"
+            >
+              conversion
+            </Badge>
+          )}
+          <span className="text-[10px] text-white/40">
+            {formatShortTs(new Date(group.start).toISOString())}
+            {duration > 0 && (
+              <span className="text-white/25"> · {formatDuration(duration)}</span>
+            )}
+          </span>
+          <span className="ml-auto text-[10px] text-white/25">
+            {group.events.length} events
+          </span>
+        </div>
+
+        {!condensed && (landing || referrerHost || campaignPieces.length > 0 || group.utmSource) && (
+          <div className="mt-1 space-y-0.5 text-[10px]">
+            {landing && (
+              <p className="flex items-center gap-1 truncate text-white/40">
+                <Globe size={9} className="shrink-0 text-white/30" />
+                <span className="truncate">{landing}</span>
+              </p>
+            )}
+            {(group.utmSource || referrerHost) && (
+              <p className="text-white/40">
+                <span className="text-white/25">from: </span>
+                <span className="text-white/60">
+                  {group.utmSource ?? referrerHost ?? 'direct'}
+                </span>
+                {group.utmMedium && (
+                  <>
+                    <span className="text-white/25"> / </span>
+                    <span className="text-white/50">{group.utmMedium}</span>
+                  </>
+                )}
+              </p>
+            )}
+            {campaignPieces.length > 0 && (
+              <p className="flex items-start gap-1 text-white/40">
+                <Target size={9} className="mt-0.5 shrink-0 text-white/30" />
+                <span className="min-w-0 flex-1 truncate">{campaignPieces.join(' · ')}</span>
+              </p>
+            )}
+            {!group.sessionId && (
+              <p className="text-[9px] italic text-white/25">
+                (eventos sin sessionId — agrupados juntos)
+              </p>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Events */}
+      <div className="py-1.5">
+        {group.events.map((ev, i) => (
+          <EventRow
+            key={ev.eventId ?? `${group.sessionKey}-${i}`}
+            event={ev}
+            condensed={condensed}
+            isLast={i === group.events.length - 1}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // ─── Main component ───────────────────────────────────────────
 export function SelectedJourney({ purchase, onClose }: SelectedJourneyProps) {
   const [condensed, setCondensed] = useState(false);
   const [eventFilter, setEventFilter] = useState<string | null>(null);
   const handleDownload = useCallback(() => downloadCsv(purchase), [purchase]);
 
-  // Split events into pre-purchase (journey) and post-purchase (after the
-  // purchase event was captured). Backend now marks each with a postPurchase
-  // flag. If flag is absent (legacy events), fall back to: everything after
-  // the first purchase event index is treated as post-purchase.
-  const { preEvents, postEvents } = (() => {
-    const base = eventFilter
+  const filteredEvents = useMemo(
+    () => (eventFilter
       ? purchase.events.filter((e) => e.eventName.toLowerCase() === eventFilter)
-      : purchase.events;
+      : purchase.events),
+    [purchase.events, eventFilter],
+  );
 
-    const hasExplicitFlag = base.some((e) => e.postPurchase === true);
-    if (hasExplicitFlag) {
-      return {
-        preEvents:  base.filter((e) => !e.postPurchase),
-        postEvents: base.filter((e) =>  e.postPurchase),
-      };
-    }
-
-    // Legacy fallback: find purchase event, split by position.
-    const purchaseIdx = base.findIndex((e) => e.eventName.toLowerCase() === 'purchase');
-    if (purchaseIdx === -1) return { preEvents: base, postEvents: [] };
-    return {
-      preEvents:  base.slice(0, purchaseIdx + 1),
-      postEvents: base.slice(purchaseIdx + 1),
-    };
-  })();
+  const sessionGroups = useMemo(() => groupBySession(filteredEvents), [filteredEvents]);
 
   const chColor = channelColor(purchase.attributedChannel);
+
+  // Campaign / adset / ad header line — use conversion-level attribution
+  // (chosen by the selected model), falling back to purchase.attributedPlatform.
+  const campaignLine: string[] = [];
+  if (purchase.attributedCampaign) campaignLine.push(`campaign: ${purchase.attributedCampaign}`);
+  if (purchase.attributedAdset)    campaignLine.push(`adset: ${purchase.attributedAdset}`);
+  if (purchase.attributedAd)       campaignLine.push(`ad: ${purchase.attributedAd}`);
+
+  const platformFriendly = friendlyPlatformLabel(purchase.attributedPlatform);
 
   return (
     <div className="flex h-full min-w-0 flex-col overflow-hidden rounded-2xl border border-white/[0.08] bg-white/[0.02]">
@@ -267,18 +453,31 @@ export function SelectedJourney({ purchase, onClose }: SelectedJourneyProps) {
           <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1">
             <Badge
               variant="outline"
-              className="h-4 shrink-0 px-1.5 text-[9px] text-white/45"
+              className="h-4 shrink-0 max-w-[260px] truncate px-1.5 text-[9px] text-white/45"
               style={{ borderColor: `${chColor}40` }}
+              title={channelDisplayLabel(purchase.attributedChannel, purchase.attributedPlatform)}
             >
-              {channelLabel(purchase.attributedChannel)}
+              {channelDisplayLabel(purchase.attributedChannel, purchase.attributedPlatform)}
             </Badge>
             <span className="shrink-0 text-xs font-semibold text-white/70">
               {formatCurrency(purchase.revenue, purchase.currency)}
             </span>
             <span className="shrink-0 text-[10px] text-white/30">
-              {purchase.events.length} events
+              {purchase.events.length} events · {sessionGroups.length} session{sessionGroups.length === 1 ? '' : 's'}
             </span>
           </div>
+          {(campaignLine.length > 0 || (platformFriendly && purchase.attributedChannel?.toLowerCase() !== 'other')) && (
+            <div className="mt-1.5 flex items-start gap-1 text-[10px]">
+              <Target size={10} className="mt-0.5 shrink-0 text-white/35" />
+              <span className="min-w-0 flex-1 truncate text-white/55">
+                {campaignLine.length > 0
+                  ? campaignLine.join(' · ')
+                  : platformFriendly
+                    ? `source: ${platformFriendly}`
+                    : null}
+              </span>
+            </div>
+          )}
         </div>
 
         {/* Actions: bottom-row on mobile, right-aligned inline on sm+ */}
@@ -320,45 +519,21 @@ export function SelectedJourney({ purchase, onClose }: SelectedJourneyProps) {
         onFilter={setEventFilter}
       />
 
-      {/* Timeline */}
+      {/* Timeline grouped by session */}
       <div className="min-h-0 flex-1 overflow-y-auto [&::-webkit-scrollbar]:w-[3px] [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-white/20 [&::-webkit-scrollbar-track]:bg-transparent">
-        {preEvents.length === 0 && postEvents.length === 0 ? (
+        {sessionGroups.length === 0 ? (
           <p className="py-8 text-center text-xs text-white/25">No events of this type</p>
         ) : (
-          <>
-            <div className="py-2">
-              {preEvents.map((event, i) => (
-                <EventRow
-                  key={event.eventId ?? `ev-pre-${i}`}
-                  event={event}
-                  condensed={condensed}
-                  isLast={i === preEvents.length - 1 && postEvents.length === 0}
-                />
-              ))}
-            </div>
-
-            {postEvents.length > 0 && (
-              <>
-                <div className="flex items-center gap-2 px-4 pt-2 pb-1">
-                  <div className="h-px flex-1 bg-white/[0.06]" />
-                  <span className="text-[9px] font-semibold uppercase tracking-wider text-white/30">
-                    Post-purchase · {postEvents.length}
-                  </span>
-                  <div className="h-px flex-1 bg-white/[0.06]" />
-                </div>
-                <div className="pb-2 opacity-60">
-                  {postEvents.map((event, i) => (
-                    <EventRow
-                      key={event.eventId ?? `ev-post-${i}`}
-                      event={event}
-                      condensed={condensed}
-                      isLast={i === postEvents.length - 1}
-                    />
-                  ))}
-                </div>
-              </>
-            )}
-          </>
+          sessionGroups.map((g, i) => (
+            <SessionBlock
+              key={g.sessionKey}
+              group={g}
+              index={i}
+              total={sessionGroups.length}
+              prevEnd={i === 0 ? null : sessionGroups[i - 1].end}
+              condensed={condensed}
+            />
+          ))
         )}
       </div>
     </div>

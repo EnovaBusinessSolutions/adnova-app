@@ -2743,13 +2743,28 @@ router.get('/:account_id', async (req, res) => {
           }
         : null;
 
-      const finalAttribution = orderStoredAttribution || ((!attribution.isAttributed && wooFallback)
+      // Precedence:
+      //   - last_touch: prefer orderStoredAttribution (the snapshot stored
+      //     alongside the order) because it captures the last touch exactly
+      //     as the platform saw it. Fall back to the model result, then to
+      //     wooFallback.
+      //   - first_touch / linear: prefer the touchpoint-driven `attribution`
+      //     whenever it is attributed (we have enough history to compute it).
+      //     If not attributed, fall back to orderStored → wooFallback.
+      // This fixes the "changing model doesn't move the numbers" bug for
+      // merchants whose orders are pre-attributed at ingest time.
+      const modelUsesFullHistory = attributionModel === 'first_touch' || attributionModel === 'linear';
+      const wooFallbackResult = (!attribution.isAttributed && wooFallback)
         ? {
             primary: wooFallback,
             splits: [{ channel: wooFallback.channel, weight: 1 }],
             isAttributed: true,
           }
-        : attribution);
+        : attribution;
+
+      const finalAttribution = modelUsesFullHistory
+        ? (attribution.isAttributed ? attribution : (orderStoredAttribution || wooFallbackResult))
+        : (orderStoredAttribution || wooFallbackResult);
 
       return {
         ...conv,
@@ -3038,12 +3053,20 @@ router.get('/:account_id', async (req, res) => {
           productName: ev?.rawPayload?.product_name || ev?.rawPayload?.item_name || ev?.rawPayload?.name || null,
           itemId: ev?.rawPayload?.item_id || ev?.rawPayload?.product_id || null,
           utmSource: ev?.rawPayload?.utm_source || null,
+          utmMedium: ev?.rawPayload?.utm_medium || null,
+          utmCampaign: ev?.rawPayload?.utm_campaign || null,
+          utmContent: ev?.rawPayload?.utm_content || null,
+          utmTerm: ev?.rawPayload?.utm_term || null,
+          referrer: ev?.rawPayload?.referrer || ev?.rawPayload?.document_referrer || null,
+          sessionId: ev.sessionId || null,
+          userKey: ev.userKey || null,
           checkoutToken: ev.checkoutToken || null,
           orderId: ev.orderId || null,
           fbp: ev?.rawPayload?.fbp || ev?.rawPayload?._fbp || ev?.rawPayload?.user_data?.fbp || null,
           fbc: ev?.rawPayload?.fbc || ev?.rawPayload?._fbc || ev?.rawPayload?.user_data?.fbc || null,
           ttclid: ev?.rawPayload?.ttclid || ev?.rawPayload?.user_data?.ttclid || null,
           gclid: ev?.rawPayload?.gclid || ev?.rawPayload?.user_data?.gclid || null,
+          fbclid: ev?.rawPayload?.fbclid || ev?.rawPayload?.user_data?.fbclid || null,
           clickId: ev?.rawPayload?.click_id || null,
           customerEmail: ev?.rawPayload?.user_data?.em || ev?.rawPayload?.customer_email || ev?.rawPayload?.user_email || ev?.rawPayload?.email || null,
           clientIp: ev?.rawPayload?.user_data?.client_ip_address || ev?.rawPayload?.client_ip_address || ev?.rawPayload?.client_ip || ev?.rawPayload?.ip || null,
