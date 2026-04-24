@@ -28,6 +28,7 @@ import GeminiMcp from "./pages/GeminiMcp";
 // ✅ NUEVO: Panel interno (equipo)
 import InternalAdmin from "./pages/InternalAdmin";
 import Attribution from "./pages/Attribution";
+import BriPipeline from "./pages/BriPipeline";
 
 const queryClient = new QueryClient();
 
@@ -313,6 +314,7 @@ function AppRoutes() {
 
       {/* ✅ Panel interno (equipo) */}
       <Route path="internal" element={<InternalAdmin />} />
+      <Route path="bri" element={<BriPipeline />} />
 
       {/* ✅ Rutas /start */}
       <Route path="meta-ads/start" element={<MetaAds />} />
