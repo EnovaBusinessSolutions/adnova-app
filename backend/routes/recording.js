@@ -1521,6 +1521,22 @@ router.post('/queue-clean', async (req, res) => {
 });
 
 /* ─────────────────────────────────────────────────────────────────────────────
+ * GET /collect/x/loops-status  (public — read-only health info, no PII)
+ * Reports the runtime state of the BRI auto-loops: when each last ran,
+ * how long it took, last result summary, run/error counters, and when
+ * the next tick is scheduled. Lets the dashboard prove the loops are
+ * actually alive instead of just trusting hardcoded "every 10m" copy.
+ * ───────────────────────────────────────────────────────────────────────────── */
+router.get('/loops-status', async (_req, res) => {
+  try {
+    const loopsStatus = require('../utils/loopsStatus');
+    return res.json({ ok: true, loops: loopsStatus.snapshot(), now: new Date() });
+  } catch (err) {
+    return res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+/* ─────────────────────────────────────────────────────────────────────────────
  * GET /collect/x/queue-stats  (internal)
  * Returns BullMQ counts so we can diagnose a stuck worker without logs.
  * ───────────────────────────────────────────────────────────────────────────── */

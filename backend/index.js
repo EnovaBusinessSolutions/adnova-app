@@ -2054,92 +2054,65 @@ app.listen(PORT, () => {
   console.log(`✓ Servidor corriendo en http://localhost:${PORT}`);
 });
 
-// ── Recording sweep: auto-finalize recordings stuck in RECORDING/FINALIZING ──
-// Runs every 10 minutes internally so no manual dashboard visit is required.
-(function startRecordingSweep() {
-  const SWEEP_INTERVAL_MS = 10 * 60 * 1000;
-  const sweepUrl = `http://localhost:${PORT}/collect/x/sweep`;
-  const secret = process.env.INTERNAL_CRON_SECRET || 'adray-internal';
+// ── BRI auto-loops — keep /bri populated without manual triggers. ──────────
+// All 3 loops share the `loopsStatus` module so `/collect/x/loops-status`
+// reflects whether they're actually alive (vs just "every 10m" marketing).
+const loopsStatus = require('./utils/loopsStatus');
 
-  async function runSweep() {
+function startLoop({ name, intervalMs, firstDelayMs, path, body }) {
+  const url = `http://localhost:${PORT}${path}`;
+  const secret = process.env.INTERNAL_CRON_SECRET || 'adray-internal';
+  loopsStatus.register(name, intervalMs, firstDelayMs);
+
+  async function tick() {
+    const ctx = loopsStatus.start(name);
+    const tsIso = new Date().toISOString();
     try {
-      const r = await fetch(sweepUrl, {
+      const r = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-adray-internal': secret },
-        // Large limit so a backlog of stuck recordings drains in one pass
-        body: JSON.stringify({ limit: 1000 }),
+        body: JSON.stringify(body || {}),
       });
       const data = await r.json().catch(() => ({}));
-      if (data.swept > 0) console.log(`[recordingSweep] Swept ${data.swept} stuck recordings`);
-    } catch (e) {
-      console.warn('[recordingSweep] Sweep failed:', e.message);
+      // Always log a single line per tick so the presence of loops is
+      // verifiable in Render logs without needing data changes.
+      console.log(`[loop:${name}] ${tsIso} status=${r.status} ${JSON.stringify(data).slice(0, 240)}`);
+      loopsStatus.finish(name, ctx, data, null);
+    } catch (err) {
+      console.warn(`[loop:${name}] ${tsIso} FAILED ${err.message}`);
+      loopsStatus.finish(name, ctx, null, err);
     }
   }
 
-  // First sweep after 2 minutes (let server fully boot), then every 10 min
-  setTimeout(() => { runSweep(); setInterval(runSweep, SWEEP_INTERVAL_MS); }, 2 * 60 * 1000);
-})();
+  setTimeout(() => { tick(); setInterval(tick, intervalMs); }, firstDelayMs);
+  console.log(`[loop:${name}] scheduled — firstTick in ${firstDelayMs}ms, then every ${intervalMs}ms`);
+}
 
-// ── SessionPacket backfill: build packets for READY recordings that pre-date ──
-// ── the build-packet pipeline, so /bri shows Sessions for every recording. ──
-// Runs 3 min after boot (letting the sweep start first) then every 15 min.
-// Uses the INLINE builder (/build-packets-now) so it works even when the
-// BullMQ worker is busy draining finalize jobs. No LLM calls here —
-// analyze-session is enqueued for the worker to pick up asynchronously.
-(function startPacketBackfill() {
-  const BACKFILL_INTERVAL_MS = 15 * 60 * 1000;
-  const backfillUrl = `http://localhost:${PORT}/collect/x/build-packets-now`;
-  const secret = process.env.INTERNAL_CRON_SECRET || 'adray-internal';
+// First tick at 30s so the health is visible quickly after a deploy.
+// Each loop is idempotent, so running them close together is safe.
+startLoop({
+  name: 'sweep',
+  intervalMs: 10 * 60 * 1000,
+  firstDelayMs: 30 * 1000,
+  path: '/collect/x/sweep',
+  body: { limit: 1000 },
+});
 
-  async function runBackfill() {
-    try {
-      const r = await fetch(backfillUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-adray-internal': secret },
-        // 50 per run — each involves an R2 download. Larger backlogs drain
-        // across subsequent runs.
-        body: JSON.stringify({ limit: 50 }),
-      });
-      const data = await r.json().catch(() => ({}));
-      if (data.built > 0 || data.failed > 0) {
-        console.log(`[packetBackfill] built=${data.built} failed=${data.failed} candidates=${data.candidates} alreadyHavePacket=${data.alreadyHavePacket}`);
-      }
-    } catch (e) {
-      console.warn('[packetBackfill] Backfill failed:', e.message);
-    }
-  }
+startLoop({
+  name: 'packet-backfill',
+  intervalMs: 15 * 60 * 1000,
+  firstDelayMs: 60 * 1000,
+  path: '/collect/x/build-packets-now',
+  body: { limit: 50 },
+});
 
-  setTimeout(() => { runBackfill(); setInterval(runBackfill, BACKFILL_INTERVAL_MS); }, 3 * 60 * 1000);
-})();
-
-// ── AI analysis backfill: run sessionAnalyst INLINE on packets without   ──
-// ── aiAnalysis, so /bri eventually shows archetype/narrative on every    ──
-// ── row even when the BullMQ worker drops analyze-session jobs.          ──
-// Uses /analyze-pending which has a deterministic path + fallback, so it
-// works without OPENROUTER_API_KEY. First pass 5 min after boot, then 10 min.
-(function startAnalysisBackfill() {
-  const ANALYZE_INTERVAL_MS = 10 * 60 * 1000;
-  const analyzeUrl = `http://localhost:${PORT}/collect/x/analyze-pending`;
-  const secret = process.env.INTERNAL_CRON_SECRET || 'adray-internal';
-
-  async function runAnalyze() {
-    try {
-      const r = await fetch(analyzeUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-adray-internal': secret },
-        body: JSON.stringify({ limit: 20 }),
-      });
-      const data = await r.json().catch(() => ({}));
-      if (data.analyzed > 0 || data.failed > 0) {
-        console.log(`[analysisBackfill] analyzed=${data.analyzed} failed=${data.failed} candidates=${data.candidates}`);
-      }
-    } catch (e) {
-      console.warn('[analysisBackfill] Analyze failed:', e.message);
-    }
-  }
-
-  setTimeout(() => { runAnalyze(); setInterval(runAnalyze, ANALYZE_INTERVAL_MS); }, 5 * 60 * 1000);
-})();
+startLoop({
+  name: 'analysis-backfill',
+  intervalMs: 10 * 60 * 1000,
+  firstDelayMs: 90 * 1000,
+  path: '/collect/x/analyze-pending',
+  body: { limit: 20 },
+});
 
 // ── Inline Recording Worker ────────────────────────────────────────
 // Runs the recording worker in the same process as the web server.
