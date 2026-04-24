@@ -22,7 +22,7 @@ import {
   PlayCircle,
 } from "lucide-react";
 import { ParticleField } from "@/components/ParticleField";
-import claudeLogo from "@/assets/logos/claude.png";
+import claudeLogo from "@/assets/claude.png";
 
 const ADRAY_MCP_URL = "https://adray.ai/mcp";
 const CLAUDE_CONNECTORS_URL = "https://claude.ai/customize/connectors";
@@ -204,11 +204,11 @@ export default function ClaudeMcp() {
 
           <CardContent className="relative p-5 sm:p-8">
             <div className="flex items-center gap-2">
-              <span className="inline-flex h-11 w-11 items-center justify-center rounded-full border border-[#B55CFF]/28 bg-[#B55CFF]/10">
+              <span className="inline-flex h-14 w-14 items-center justify-center rounded-full border border-[#B55CFF]/28 bg-[#B55CFF]/10">
                 <img
                   src={claudeLogo}
                   alt="Claude"
-                  className="h-7 w-7 object-contain"
+                  className="h-14 w-14 object-contain"
                   draggable={false}
                 />
               </span>
