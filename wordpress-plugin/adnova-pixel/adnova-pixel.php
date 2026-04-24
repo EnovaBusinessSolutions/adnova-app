@@ -15,7 +15,7 @@ if (!defined('ABSPATH')) {
 }
 
 final class Adnova_Pixel_Plugin {
-    const VERSION = '1.2.6';
+    const VERSION = '1.3.0';
     const OPTION_SCRIPT_URL = 'adnova_pixel_script_url';
     const OPTION_SITE_ID = 'adnova_pixel_site_id';
     const OPTION_CLARITY_ID = 'adnova_pixel_clarity_id';
@@ -25,10 +25,26 @@ final class Adnova_Pixel_Plugin {
     const DEFAULT_COLLECT_URL = 'https://adray.ai/collect';
     const DEFAULT_ORDER_SYNC_URL = 'https://adray.ai/api/woo/orders-sync';
     const DEFAULT_UPDATE_METADATA_URL = 'https://adray.ai/wp-plugin/adnova-pixel/update.json';
+
+    // Server-side attribution (Phase B): first/last-touch snapshots are written
+    // to HTTP-only cookies in `init`, before any browser JS runs. Ad-blockers
+    // cannot intercept these because they never touch the wire for JS.
+    const ATTRIB_FIRST_COOKIE = '_adray_srv_first';
+    const ATTRIB_LAST_COOKIE = '_adray_srv_last';
+    const ATTRIB_COOKIE_MAX_DAYS = 90;
+    const ATTRIB_TRACKED_PARAMS = array(
+        'utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term',
+        'fbclid', 'gclid', 'ttclid', 'wbraid', 'gbraid', 'msclkid',
+    );
+
     private static $processed_orders = array();
 
     public static function init() {
         register_activation_hook(__FILE__, array(__CLASS__, 'on_activate'));
+        // Phase B: capture UTMs + click IDs server-side before any JS runs.
+        // Priority 1 so we write the cookie before template loads (and before
+        // WP caches send headers).
+        add_action('init', array(__CLASS__, 'capture_server_side_attribution'), 1);
         add_action('wp_enqueue_scripts', array(__CLASS__, 'enqueue_pixel_script'), 100);
         add_action('wp_footer', array(__CLASS__, 'ensure_pixel_fallback_tag'), 999);
         add_filter('script_loader_tag', array(__CLASS__, 'inject_script_attributes'), 10, 3);
@@ -503,6 +519,161 @@ final class Adnova_Pixel_Plugin {
         echo '<script>window.adnova_user_data=' . wp_json_encode($payload) . ';</script>' . "\n";
     }
 
+    /**
+     * Phase B — server-side attribution capture.
+     *
+     * Reads UTMs and click IDs from $_GET on every request (via the `init`
+     * hook, before any theme/JS output). Persists:
+     *   - First touch (cookie _adray_srv_first): written once and kept for
+     *     ATTRIB_COOKIE_MAX_DAYS. Never overwritten while the cookie lives.
+     *   - Last touch (cookie _adray_srv_last): overwritten on every request
+     *     that carries attribution signals.
+     *
+     * This path is invisible to ad-blockers because it never surfaces in the
+     * browser's network tab — the attribution is already server-side by the
+     * time the page renders.
+     */
+    public static function capture_server_side_attribution() {
+        // Skip admin, cron, and REST requests — only interested in front-end.
+        if (is_admin() || (defined('DOING_CRON') && DOING_CRON) || (defined('DOING_AJAX') && DOING_AJAX)) {
+            return;
+        }
+        if (defined('REST_REQUEST') && REST_REQUEST) {
+            return;
+        }
+
+        // Already sent? Can't write cookies then.
+        if (headers_sent()) {
+            return;
+        }
+
+        $snapshot = self::extract_attribution_snapshot_from_request();
+        if (empty($snapshot)) {
+            // No attribution signals on this request — nothing to update.
+            return;
+        }
+
+        $now_iso = gmdate('c');
+        $snapshot['captured_at'] = $now_iso;
+        $snapshot['landing_url'] = self::current_request_url();
+        $referrer = isset($_SERVER['HTTP_REFERER']) ? esc_url_raw(wp_unslash($_SERVER['HTTP_REFERER'])) : '';
+        if ($referrer !== '') {
+            $snapshot['referrer'] = $referrer;
+        }
+
+        // Last touch: always overwrite.
+        self::write_attribution_cookie(self::ATTRIB_LAST_COOKIE, $snapshot);
+
+        // First touch: write only if absent.
+        if (empty($_COOKIE[self::ATTRIB_FIRST_COOKIE])) {
+            self::write_attribution_cookie(self::ATTRIB_FIRST_COOKIE, $snapshot);
+        }
+    }
+
+    private static function extract_attribution_snapshot_from_request() {
+        $snapshot = array();
+        foreach (self::ATTRIB_TRACKED_PARAMS as $param) {
+            if (isset($_GET[$param])) {
+                $value = sanitize_text_field(wp_unslash($_GET[$param]));
+                if ($value !== '') {
+                    // Cap individual values to keep the cookie small.
+                    $snapshot[$param] = substr($value, 0, 300);
+                }
+            }
+        }
+        return $snapshot;
+    }
+
+    private static function current_request_url() {
+        $scheme = (isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on') ? 'https' : 'http';
+        $host = isset($_SERVER['HTTP_HOST']) ? $_SERVER['HTTP_HOST'] : '';
+        $uri = isset($_SERVER['REQUEST_URI']) ? $_SERVER['REQUEST_URI'] : '';
+        if (!$host) {
+            return '';
+        }
+        return esc_url_raw($scheme . '://' . $host . $uri);
+    }
+
+    private static function write_attribution_cookie($name, array $data) {
+        // JSON → base64 keeps cookie value ASCII-safe for intermediaries.
+        $encoded = base64_encode(wp_json_encode($data));
+        // Cookies have a ~4KB limit — cap at 1500 chars of base64.
+        if (strlen($encoded) > 1500) {
+            return;
+        }
+        $expires = time() + (self::ATTRIB_COOKIE_MAX_DAYS * DAY_IN_SECONDS);
+        $secure = (isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on');
+        // HTTP-only so the browser can't read it (but the server always can).
+        setcookie($name, $encoded, array(
+            'expires'  => $expires,
+            'path'     => '/',
+            'domain'   => '',
+            'secure'   => $secure,
+            'httponly' => true,
+            'samesite' => 'Lax',
+        ));
+        // Mirror into $_COOKIE so downstream reads within the same request see it.
+        $_COOKIE[$name] = $encoded;
+    }
+
+    public static function read_attribution_cookie($name) {
+        if (empty($_COOKIE[$name])) {
+            return null;
+        }
+        $raw = (string) $_COOKIE[$name];
+        $decoded = base64_decode($raw, true);
+        if ($decoded === false) {
+            return null;
+        }
+        $data = json_decode($decoded, true);
+        return is_array($data) ? $data : null;
+    }
+
+    /**
+     * Build the server-side attribution snapshot to be attached to webhooks.
+     * Prefers order meta (if the order persisted it at checkout time), then
+     * falls back to the live cookies from the current request.
+     */
+    public static function build_server_attribution_snapshot($order = null) {
+        $first = null;
+        $last = null;
+
+        if ($order && is_object($order) && method_exists($order, 'get_meta')) {
+            $meta_first = $order->get_meta('_adray_srv_first', true);
+            $meta_last = $order->get_meta('_adray_srv_last', true);
+            if (is_string($meta_first) && $meta_first !== '') {
+                $decoded_first = json_decode($meta_first, true);
+                if (is_array($decoded_first)) {
+                    $first = $decoded_first;
+                }
+            }
+            if (is_string($meta_last) && $meta_last !== '') {
+                $decoded_last = json_decode($meta_last, true);
+                if (is_array($decoded_last)) {
+                    $last = $decoded_last;
+                }
+            }
+        }
+
+        if ($first === null) {
+            $first = self::read_attribution_cookie(self::ATTRIB_FIRST_COOKIE);
+        }
+        if ($last === null) {
+            $last = self::read_attribution_cookie(self::ATTRIB_LAST_COOKIE);
+        }
+
+        if (!$first && !$last) {
+            return null;
+        }
+
+        return array(
+            'source' => 'server_side',
+            'captured_by' => 'wordpress_plugin_' . self::VERSION,
+            'first_touch' => $first ?: null,
+            'last_touch' => $last ?: null,
+        );
+    }
+
     private static function get_order_attribution_data($order) {
         if (!$order) {
             return array();
@@ -623,6 +794,17 @@ final class Adnova_Pixel_Plugin {
             }
             if (isset($_COOKIE['__adray_visitor_id'])) {
                 $order->update_meta_data('_adray_visitor_id', sanitize_text_field(wp_unslash($_COOKIE['__adray_visitor_id'])));
+            }
+            // Phase B: persist the server-side attribution snapshot onto the
+            // order so the webhook has access to it even if the customer's
+            // cookies rotate before the async order_sync runs.
+            $first = self::read_attribution_cookie(self::ATTRIB_FIRST_COOKIE);
+            $last = self::read_attribution_cookie(self::ATTRIB_LAST_COOKIE);
+            if (is_array($first)) {
+                $order->update_meta_data('_adray_srv_first', wp_json_encode($first));
+            }
+            if (is_array($last)) {
+                $order->update_meta_data('_adray_srv_last', wp_json_encode($last));
             }
             $order->save();
         }
@@ -973,6 +1155,8 @@ final class Adnova_Pixel_Plugin {
             'woo_source_label' => isset($order_data['woo_source_label']) ? $order_data['woo_source_label'] : null,
             'woo_source_type' => isset($order_data['woo_source_type']) ? $order_data['woo_source_type'] : null,
             'woo_session_source' => isset($order_data['woo_session_source']) ? $order_data['woo_session_source'] : null,
+            // Phase B: server-side attribution captured in `init` hook — ad-blocker proof.
+            'server_attribution_snapshot' => self::build_server_attribution_snapshot($order),
         );
 
         // Use non-blocking to avoid WordPress hanging if backend is slow/unresponsive
