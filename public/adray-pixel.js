@@ -819,42 +819,105 @@
     const body = JSON.stringify(payload);
     adrayLog('sending', eventName, 'to', ADRAY_ENDPOINT, 'fbclid:', fbclid, 'seq:', seq, 'page_type:', payload.page_type);
 
-    // sendBeacon first for all critical events (including purchase/begin_checkout/add_to_cart)
-    // — survives page unload. sendBeacon does not send credentials, so we enqueue a
-    // fetch-with-keepalive retry only if beacon fails.
-    const critical = eventName === 'begin_checkout'
-      || eventName === 'purchase'
-      || eventName === 'add_to_cart';
-
-    let beaconOk = false;
-    if (navigator.sendBeacon && critical) {
-      try {
-        beaconOk = navigator.sendBeacon(
-          ADRAY_ENDPOINT,
-          new Blob([body], { type: 'application/json' })
-        );
-        adrayLog('sendBeacon:', eventName, '→', beaconOk ? 'OK' : 'FAILED');
-      } catch (e) { beaconOk = false; adrayLog('sendBeacon error:', e); }
-    }
-
-    if (!beaconOk) {
-      adrayLog('falling back to fetch for', eventName);
-      fetch(ADRAY_ENDPOINT, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body,
-        mode: "cors",
-        credentials: "include",
-        keepalive: true, // survive pagehide for every event, not just begin_checkout
-      }).then(r => adrayLog('fetch', eventName, '→', r.status)).catch(err => {
-        console.error("AdRay Pixel Error:", err);
-        _adrayEnqueueOffline(body);
-      });
-    }
+    _adrayDispatch(eventName, body);
 
     // After purchase ships, flip session flag so subsequent events are marked.
     if (eventName === 'purchase') {
       _adrayMarkPostPurchase();
+    }
+  }
+
+  // Transport chain: sendBeacon → fetch(keepalive) + retry → Image pixel (GIF) → offline queue.
+  // sendBeacon is preferred first because ad-blockers often hook fetch/XHR but leave beacon alone,
+  // and it survives page unload. Image pixel is last-resort; ad-blockers rarely filter GIFs.
+  function _adrayDispatch(eventName, body) {
+    if (_adrayTrySendBeacon(body, eventName)) return;
+    _adrayFetchWithRetry(body, eventName, 0);
+  }
+
+  function _adrayTrySendBeacon(body, eventName) {
+    if (!navigator.sendBeacon) return false;
+    try {
+      var ok = navigator.sendBeacon(
+        ADRAY_ENDPOINT,
+        new Blob([body], { type: 'application/json' })
+      );
+      adrayLog('sendBeacon:', eventName, '→', ok ? 'OK' : 'FAILED');
+      return ok === true;
+    } catch (e) {
+      adrayLog('sendBeacon error:', e);
+      return false;
+    }
+  }
+
+  var _ADRAY_MAX_RETRIES = 3;
+
+  function _adrayFetchWithRetry(body, eventName, attempt) {
+    adrayLog('fetch attempt', attempt + 1, 'for', eventName);
+    fetch(ADRAY_ENDPOINT, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: body,
+      mode: "cors",
+      credentials: "include",
+      keepalive: true,
+    }).then(function (r) {
+      adrayLog('fetch', eventName, '→', r.status);
+      // Retry on 5xx; 4xx is client error, don't retry.
+      if (r.status >= 500 && attempt + 1 < _ADRAY_MAX_RETRIES) {
+        _adrayBackoff(attempt, function () { _adrayFetchWithRetry(body, eventName, attempt + 1); });
+      }
+    }).catch(function (err) {
+      adrayLog('fetch error:', err && err.message);
+      if (attempt + 1 < _ADRAY_MAX_RETRIES) {
+        _adrayBackoff(attempt, function () { _adrayFetchWithRetry(body, eventName, attempt + 1); });
+      } else {
+        // Final fallback: GET GIF pixel with base64-encoded payload.
+        if (!_adrayTryImagePixel(body, eventName)) {
+          console.error("AdRay Pixel Error:", err);
+          _adrayEnqueueOffline(body);
+        }
+      }
+    });
+  }
+
+  function _adrayBackoff(attempt, fn) {
+    // Exponential with jitter: 200ms, 400ms, 800ms ± 100ms.
+    var base = 200 * Math.pow(2, attempt);
+    var jitter = Math.floor(Math.random() * 100);
+    setTimeout(fn, base + jitter);
+  }
+
+  function _adrayTryImagePixel(body, eventName) {
+    try {
+      // Compact fields for URL size limits (~2KB safe).
+      var p = JSON.parse(body);
+      var compact = {
+        a: p.account_id, s: p.session_id, b: p.browser_id,
+        e: p.event_name, t: p.captured_at || p.timestamp, q: p.seq,
+        u: p.page_url, pt: p.page_type,
+        fb: p.fbclid, gc: p.gclid, tc: p.ttclid,
+        us: p.utm_source, um: p.utm_medium, uc: p.utm_campaign,
+        ut: p.utm_term, uo: p.utm_content,
+        cv: p.cart_value, oi: p.order_id, ck: p.checkout_token,
+        rv: p.revenue, cu: p.currency,
+        r: p.referrer, pl: p.platform
+      };
+      // base64url-encode (URL-safe, no padding) for query-string safety.
+      var json = JSON.stringify(compact);
+      var b64 = (typeof btoa === 'function') ? btoa(unescape(encodeURIComponent(json))) : null;
+      if (!b64) return false;
+      b64 = b64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+      // Respect 2KB URL budget.
+      if (ADRAY_ENDPOINT.length + b64.length + 8 > 2048) return false;
+      var img = new Image(1, 1);
+      img.referrerPolicy = 'no-referrer-when-downgrade';
+      img.src = ADRAY_ENDPOINT + '?d=' + b64 + '&_=' + Date.now();
+      adrayLog('image pixel fallback:', eventName);
+      return true;
+    } catch (e) {
+      adrayLog('image pixel error:', e && e.message);
+      return false;
     }
   }
 
