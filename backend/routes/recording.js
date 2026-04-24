@@ -914,6 +914,9 @@ router.post('/sweep', async (req, res) => {
     // ERROR recordings get 1 retry chance (in case failure was transient)
     const errorCutoff = new Date(Date.now() - 30 * 60 * 1000); // 30 min ago for ERROR
 
+    const requestedLimit = Number(req.body?.limit) || Number(req.query?.limit) || 500;
+    const take = Math.max(1, Math.min(requestedLimit, 2000));
+
     const stuck = await prisma.sessionRecording.findMany({
       where: {
         OR: [
@@ -925,7 +928,7 @@ router.post('/sweep', async (req, res) => {
         ],
       },
       select: { recordingId: true, accountId: true, sessionId: true, status: true },
-      take: 50,
+      take,
     });
 
     let enqueued = 0;
@@ -966,6 +969,91 @@ router.post('/sweep', async (req, res) => {
     return res.json({ ok: true, swept: enqueued, recordingIds: stuck.map(r => r.recordingId) });
   } catch (err) {
     console.error('[recording/sweep] Error:', err.message);
+    return res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * POST /collect/x/backfill-packets  (internal)
+ * For every READY recording that doesn't yet have a SessionPacket, enqueue
+ * recording:build-packet. Idempotent via upsert on sessionId.
+ * Runs periodically from the server boot loop so /bri stays populated as the
+ * sweep drains the RECORDING backlog.
+ * ───────────────────────────────────────────────────────────────────────────── */
+router.post('/backfill-packets', async (req, res) => {
+  const secret = req.headers['x-adray-internal'] || req.body?.secret;
+  if (secret !== (process.env.INTERNAL_CRON_SECRET || 'adray-internal')) {
+    return res.status(403).json({ ok: false });
+  }
+
+  try {
+    const requestedLimit = Number(req.body?.limit) || Number(req.query?.limit) || 500;
+    const take = Math.max(1, Math.min(requestedLimit, 2000));
+
+    // 1. Candidate recordings: READY, still have raw (r2Key set), with a real sessionId.
+    const ready = await prisma.sessionRecording.findMany({
+      where: {
+        status: 'READY',
+        rawErasedAt: null,
+        r2Key: { not: null },
+        sessionId: { not: 'unknown' },
+      },
+      select: { recordingId: true, accountId: true, sessionId: true },
+      orderBy: { createdAt: 'desc' },
+      take,
+    });
+
+    if (ready.length === 0) {
+      return res.json({ ok: true, candidates: 0, alreadyHavePacket: 0, enqueued: 0 });
+    }
+
+    // 2. Which of those sessionIds already have a SessionPacket? Skip them.
+    const existing = await prisma.sessionPacket.findMany({
+      where: { sessionId: { in: ready.map((r) => r.sessionId) } },
+      select: { sessionId: true },
+    });
+    const hasPacket = new Set(existing.map((p) => p.sessionId));
+
+    const pending = ready.filter((r) => !hasPacket.has(r.sessionId));
+
+    // 3. Enqueue build-packet for each pending recording. Idempotent via upsert
+    //    in the worker — safe to run repeatedly without creating duplicates.
+    let enqueued = 0;
+    if (recordingQueue && pending.length > 0) {
+      for (const rec of pending) {
+        try {
+          await recordingQueue.add(
+            'recording:build-packet',
+            { recordingId: rec.recordingId, accountId: rec.accountId, sessionId: rec.sessionId },
+            {
+              // Dedupe so repeated loops don't pile up identical jobs in Redis
+              jobId: `backfill-packet:${rec.recordingId}`,
+              attempts: 3,
+              backoff: { type: 'exponential', delay: 5000 },
+              removeOnComplete: true,
+              removeOnFail: 50,
+            }
+          );
+          enqueued++;
+        } catch (e) {
+          // BullMQ throws on duplicate jobId — that means the job is already queued/active.
+          // Not an error; it's exactly the dedupe we want.
+          if (!String(e?.message || '').includes('already exists')) {
+            console.warn(`[recording/backfill-packets] enqueue failed for ${rec.recordingId}:`, e.message);
+          }
+        }
+      }
+    }
+
+    console.log(`[recording/backfill-packets] candidates=${ready.length} alreadyHavePacket=${hasPacket.size} enqueued=${enqueued}`);
+    return res.json({
+      ok: true,
+      candidates: ready.length,
+      alreadyHavePacket: hasPacket.size,
+      enqueued,
+    });
+  } catch (err) {
+    console.error('[recording/backfill-packets] Error:', err.message);
     return res.status(500).json({ ok: false, error: err.message });
   }
 });
@@ -1056,10 +1144,13 @@ router.post('/finalize-now', async (req, res) => {
       ? { recordingId: targetId }
       : { status: { in: ['RECORDING', 'FINALIZING', 'ERROR'] }, createdAt: { lt: cutoff }, rawErasedAt: null };
 
+    const requestedLimit = Number(req.body?.limit) || Number(req.query?.limit) || 10;
+    const take = Math.max(1, Math.min(requestedLimit, 200));
+
     const recs = await prisma.sessionRecording.findMany({
       where,
       select: { recordingId: true, accountId: true, sessionId: true, r2ChunksPrefix: true, chunkCount: true },
-      take: 10,
+      take,
     });
 
     const results = [];
@@ -1138,6 +1229,345 @@ router.post('/finalize-now', async (req, res) => {
 
     return res.json({ ok: true, processed: results.length, results });
   } catch (err) {
+    return res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * POST /collect/x/build-packets-now  (internal)
+ * Builds SessionPackets INLINE (bypassing BullMQ) for every READY recording
+ * that doesn't yet have a packet. Use when the queue is backlogged and
+ * recording:build-packet jobs are stuck behind a wall of finalize jobs.
+ * Does NOT run analyze-session — the 15-min queue loop will pick those up
+ * (or you call it again separately).
+ * ───────────────────────────────────────────────────────────────────────────── */
+router.post('/build-packets-now', async (req, res) => {
+  const secret = req.headers['x-adray-internal'] || req.body?.secret;
+  if (secret !== (process.env.INTERNAL_CRON_SECRET || 'adray-internal')) {
+    return res.status(403).json({ ok: false });
+  }
+
+  try {
+    const { downloadChunk } = require('../utils/r2Client');
+    const { buildSessionPacket } = require('../services/sessionPacketBuilder');
+    const { extractSignals } = require('../services/recordingSignalExtractor');
+
+    const requestedLimit = Number(req.body?.limit) || Number(req.query?.limit) || 50;
+    const take = Math.max(1, Math.min(requestedLimit, 200));
+
+    // 1. READY recordings, still have raw, real sessionId
+    const ready = await prisma.sessionRecording.findMany({
+      where: {
+        status: 'READY',
+        rawErasedAt: null,
+        r2Key: { not: null },
+        sessionId: { not: 'unknown' },
+      },
+      select: {
+        recordingId: true, sessionId: true, accountId: true, userKey: true,
+        cartValue: true, attributionSnapshot: true, deviceType: true, orderId: true,
+        r2Key: true,
+      },
+      orderBy: { createdAt: 'desc' },
+      take,
+    });
+
+    // 2. Skip sessionIds that already have a packet
+    const existing = await prisma.sessionPacket.findMany({
+      where: { sessionId: { in: ready.map((r) => r.sessionId) } },
+      select: { sessionId: true },
+    });
+    const hasPacket = new Set(existing.map((p) => p.sessionId));
+    const pending = ready.filter((r) => !hasPacket.has(r.sessionId));
+
+    let built = 0;
+    let failed = 0;
+    let orphaned = 0;
+    const failures = [];
+
+    // Mark a recording as orphaned so later runs skip it. Happens when the
+    // raw blob in R2 was erased by retention / bucket cleanup but r2Key
+    // stayed set in Postgres — nothing we can do, the packet is unrecoverable.
+    async function markOrphan(recordingId, reason) {
+      await prisma.sessionRecording.update({
+        where: { recordingId },
+        data: { status: 'ERROR', r2Key: null, rawErasedAt: new Date() },
+      }).catch(() => {});
+      orphaned++;
+      failures.push({ recordingId, reason });
+    }
+
+    const isMissingKey = (err) => {
+      const msg = String(err?.message || err || '').toLowerCase();
+      return (
+        err?.Code === 'NoSuchKey' ||
+        err?.name === 'NoSuchKey' ||
+        msg.includes('specified key does not exist') ||
+        msg.includes('nosuchkey')
+      );
+    };
+
+    // 3. Process each synchronously: download R2 → extract → upsert
+    for (const rec of pending) {
+      let events;
+      try {
+        events = await downloadChunk(rec.r2Key);
+      } catch (dlErr) {
+        if (isMissingKey(dlErr)) {
+          await markOrphan(rec.recordingId, 'R2 blob missing — marked orphan');
+        } else {
+          failed++;
+          failures.push({ recordingId: rec.recordingId, reason: String(dlErr.message || dlErr).slice(0, 160) });
+        }
+        continue;
+      }
+
+      try {
+        if (!Array.isArray(events) || events.length === 0) {
+          await markOrphan(rec.recordingId, 'empty events in R2');
+          continue;
+        }
+
+        let signals = {};
+        try {
+          signals = extractSignals(events, { cartValue: rec.cartValue });
+        } catch (sigErr) {
+          signals = { error: String(sigErr.message || sigErr) };
+        }
+
+        const packet = buildSessionPacket({ events, recording: rec, signals });
+
+        await prisma.sessionPacket.upsert({
+          where: { sessionId: packet.sessionId },
+          create: packet,
+          update: {
+            keyframes: packet.keyframes,
+            signals: packet.signals,
+            ecommerceEvents: packet.ecommerceEvents,
+            outcome: packet.outcome,
+            endTs: packet.endTs,
+            durationMs: packet.durationMs,
+            cartValueAtEnd: packet.cartValueAtEnd,
+            orderId: packet.orderId,
+            device: packet.device,
+            trafficSource: packet.trafficSource,
+            landingPage: packet.landingPage,
+          },
+          select: { id: true },
+        });
+
+        // Queue AI analysis so /bri eventually shows the archetype / narrative.
+        // Non-blocking: if the queue is jammed the packet still exists.
+        if (recordingQueue) {
+          await recordingQueue.add(
+            'recording:analyze-session',
+            { sessionId: packet.sessionId, accountId: packet.accountId },
+            {
+              jobId: `analyze:${packet.sessionId}`,
+              attempts: 3,
+              removeOnComplete: true,
+              removeOnFail: 50,
+            }
+          ).catch(() => {});
+        }
+
+        built++;
+      } catch (err) {
+        failed++;
+        failures.push({ recordingId: rec.recordingId, reason: String(err.message || err).slice(0, 160) });
+      }
+    }
+
+    console.log(`[recording/build-packets-now] candidates=${ready.length} alreadyHavePacket=${hasPacket.size} built=${built} orphaned=${orphaned} failed=${failed}`);
+    return res.json({
+      ok: true,
+      candidates: ready.length,
+      alreadyHavePacket: hasPacket.size,
+      built,
+      orphaned,
+      failed,
+      failures: failures.slice(0, 10),
+    });
+  } catch (err) {
+    console.error('[recording/build-packets-now] Error:', err.message);
+    return res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * POST /collect/x/analyze-pending  (internal)
+ * Runs sessionAnalyst INLINE on every SessionPacket without aiAnalysis, in
+ * batches. Bypasses the BullMQ queue so /bri fills in archetypes even when
+ * the worker is jammed or when analyze-session jobs were cleaned before
+ * running. sessionAnalyst has a deterministic path + fallback, so this
+ * works even if OPENROUTER_API_KEY is missing.
+ * ───────────────────────────────────────────────────────────────────────────── */
+router.post('/analyze-pending', async (req, res) => {
+  const secret = req.headers['x-adray-internal'] || req.body?.secret;
+  if (secret !== (process.env.INTERNAL_CRON_SECRET || 'adray-internal')) {
+    return res.status(403).json({ ok: false });
+  }
+
+  try {
+    const { analyzeSession } = require('../services/sessionAnalyst');
+    const { buildCustomerHistory } = require('../services/recordingNarrativeService');
+
+    const requestedLimit = Number(req.body?.limit) || Number(req.query?.limit) || 20;
+    const take = Math.max(1, Math.min(requestedLimit, 50));
+
+    const pending = await prisma.sessionPacket.findMany({
+      where: { aiAnalyzedAt: null },
+      orderBy: { createdAt: 'desc' },
+      take,
+    });
+
+    if (pending.length === 0) {
+      return res.json({ ok: true, candidates: 0, analyzed: 0, failed: 0 });
+    }
+
+    let analyzed = 0;
+    let failed = 0;
+    const failures = [];
+
+    for (const packet of pending) {
+      try {
+        // Build customer history for this visitor so analyst has tier context
+        let customerHistory = { orderCount: 0, totalSpent: 0, avgOrderValue: 0 };
+        try {
+          const priorOrders = await prisma.order.findMany({
+            where: {
+              accountId: packet.accountId,
+              userKey: packet.visitorId || undefined,
+              ...(packet.orderId ? { NOT: { orderId: packet.orderId } } : {}),
+            },
+            select: { revenue: true, platformCreatedAt: true, createdAt: true },
+            orderBy: { platformCreatedAt: 'asc' },
+          });
+          customerHistory = buildCustomerHistory(priorOrders);
+        } catch (_) {}
+
+        // 25s budget per packet — deterministic path is instant, LLM hits this
+        const timeout = new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('analyze timeout 25s')), 25_000)
+        );
+        const analysis = await Promise.race([
+          analyzeSession(packet, { customerHistory }),
+          timeout,
+        ]);
+
+        if (!analysis) {
+          failed++;
+          failures.push({ sessionId: packet.sessionId, reason: 'analyst returned null' });
+          continue;
+        }
+
+        await prisma.sessionPacket.update({
+          where: { sessionId: packet.sessionId },
+          data: { aiAnalysis: analysis, aiAnalyzedAt: new Date() },
+        });
+        analyzed++;
+      } catch (err) {
+        failed++;
+        failures.push({ sessionId: packet.sessionId, reason: String(err.message || err).slice(0, 160) });
+      }
+    }
+
+    console.log(`[recording/analyze-pending] candidates=${pending.length} analyzed=${analyzed} failed=${failed}`);
+    return res.json({
+      ok: true,
+      candidates: pending.length,
+      analyzed,
+      failed,
+      failures: failures.slice(0, 10),
+    });
+  } catch (err) {
+    console.error('[recording/analyze-pending] Error:', err.message);
+    return res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * POST /collect/x/queue-clean  (internal)
+ * Removes failed / completed jobs from BullMQ so they stop being counted.
+ * Useful after a wave of orphaned recordings burned through retries and left
+ * a big `failed` pile behind.
+ * ───────────────────────────────────────────────────────────────────────────── */
+router.post('/queue-clean', async (req, res) => {
+  const secret = req.headers['x-adray-internal'] || req.body?.secret;
+  if (secret !== (process.env.INTERNAL_CRON_SECRET || 'adray-internal')) {
+    return res.status(403).json({ ok: false });
+  }
+
+  try {
+    if (!recordingQueue) {
+      return res.json({ ok: false, error: 'Queue not initialized' });
+    }
+
+    // Clean states: failed older than 0ms (all), completed older than 1h
+    const [removedFailed, removedCompleted] = await Promise.all([
+      recordingQueue.clean(0, 5000, 'failed').catch(() => []),
+      recordingQueue.clean(60 * 60 * 1000, 5000, 'completed').catch(() => []),
+    ]);
+
+    return res.json({
+      ok: true,
+      removedFailed: Array.isArray(removedFailed) ? removedFailed.length : 0,
+      removedCompleted: Array.isArray(removedCompleted) ? removedCompleted.length : 0,
+    });
+  } catch (err) {
+    console.error('[recording/queue-clean] Error:', err.message);
+    return res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * GET /collect/x/queue-stats  (internal)
+ * Returns BullMQ counts so we can diagnose a stuck worker without logs.
+ * ───────────────────────────────────────────────────────────────────────────── */
+router.get('/queue-stats', async (req, res) => {
+  const secret = req.headers['x-adray-internal'] || req.query?.secret;
+  if (secret !== (process.env.INTERNAL_CRON_SECRET || 'adray-internal')) {
+    return res.status(403).json({ ok: false });
+  }
+
+  try {
+    if (!recordingQueue) {
+      return res.json({ ok: false, error: 'Queue not initialized' });
+    }
+
+    const [waiting, active, delayed, completed, failed] = await Promise.all([
+      recordingQueue.getWaitingCount(),
+      recordingQueue.getActiveCount(),
+      recordingQueue.getDelayedCount(),
+      recordingQueue.getCompletedCount(),
+      recordingQueue.getFailedCount(),
+    ]);
+
+    // Peek at the top of each state to spot stuck job types
+    const [waitingSample, activeSample, failedSample] = await Promise.all([
+      recordingQueue.getJobs(['waiting'], 0, 5, true).catch(() => []),
+      recordingQueue.getJobs(['active'], 0, 5, true).catch(() => []),
+      recordingQueue.getJobs(['failed'], 0, 5, true).catch(() => []),
+    ]);
+
+    const summarize = (j) => ({
+      name: j.name,
+      id: j.id,
+      attemptsMade: j.attemptsMade,
+      failedReason: j.failedReason ? String(j.failedReason).slice(0, 160) : null,
+    });
+
+    return res.json({
+      ok: true,
+      counts: { waiting, active, delayed, completed, failed },
+      samples: {
+        waiting: waitingSample.map(summarize),
+        active: activeSample.map(summarize),
+        failed: failedSample.map(summarize),
+      },
+    });
+  } catch (err) {
+    console.error('[recording/queue-stats] Error:', err.message);
     return res.status(500).json({ ok: false, error: err.message });
   }
 });

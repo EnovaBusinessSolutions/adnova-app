@@ -2065,7 +2065,8 @@ app.listen(PORT, () => {
       const r = await fetch(sweepUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-adray-internal': secret },
-        body: JSON.stringify({}),
+        // Large limit so a backlog of stuck recordings drains in one pass
+        body: JSON.stringify({ limit: 1000 }),
       });
       const data = await r.json().catch(() => ({}));
       if (data.swept > 0) console.log(`[recordingSweep] Swept ${data.swept} stuck recordings`);
@@ -2076,6 +2077,67 @@ app.listen(PORT, () => {
 
   // First sweep after 2 minutes (let server fully boot), then every 10 min
   setTimeout(() => { runSweep(); setInterval(runSweep, SWEEP_INTERVAL_MS); }, 2 * 60 * 1000);
+})();
+
+// ── SessionPacket backfill: build packets for READY recordings that pre-date ──
+// ── the build-packet pipeline, so /bri shows Sessions for every recording. ──
+// Runs 3 min after boot (letting the sweep start first) then every 15 min.
+// Uses the INLINE builder (/build-packets-now) so it works even when the
+// BullMQ worker is busy draining finalize jobs. No LLM calls here —
+// analyze-session is enqueued for the worker to pick up asynchronously.
+(function startPacketBackfill() {
+  const BACKFILL_INTERVAL_MS = 15 * 60 * 1000;
+  const backfillUrl = `http://localhost:${PORT}/collect/x/build-packets-now`;
+  const secret = process.env.INTERNAL_CRON_SECRET || 'adray-internal';
+
+  async function runBackfill() {
+    try {
+      const r = await fetch(backfillUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-adray-internal': secret },
+        // 50 per run — each involves an R2 download. Larger backlogs drain
+        // across subsequent runs.
+        body: JSON.stringify({ limit: 50 }),
+      });
+      const data = await r.json().catch(() => ({}));
+      if (data.built > 0 || data.failed > 0) {
+        console.log(`[packetBackfill] built=${data.built} failed=${data.failed} candidates=${data.candidates} alreadyHavePacket=${data.alreadyHavePacket}`);
+      }
+    } catch (e) {
+      console.warn('[packetBackfill] Backfill failed:', e.message);
+    }
+  }
+
+  setTimeout(() => { runBackfill(); setInterval(runBackfill, BACKFILL_INTERVAL_MS); }, 3 * 60 * 1000);
+})();
+
+// ── AI analysis backfill: run sessionAnalyst INLINE on packets without   ──
+// ── aiAnalysis, so /bri eventually shows archetype/narrative on every    ──
+// ── row even when the BullMQ worker drops analyze-session jobs.          ──
+// Uses /analyze-pending which has a deterministic path + fallback, so it
+// works without OPENROUTER_API_KEY. First pass 5 min after boot, then 10 min.
+(function startAnalysisBackfill() {
+  const ANALYZE_INTERVAL_MS = 10 * 60 * 1000;
+  const analyzeUrl = `http://localhost:${PORT}/collect/x/analyze-pending`;
+  const secret = process.env.INTERNAL_CRON_SECRET || 'adray-internal';
+
+  async function runAnalyze() {
+    try {
+      const r = await fetch(analyzeUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-adray-internal': secret },
+        body: JSON.stringify({ limit: 20 }),
+      });
+      const data = await r.json().catch(() => ({}));
+      if (data.analyzed > 0 || data.failed > 0) {
+        console.log(`[analysisBackfill] analyzed=${data.analyzed} failed=${data.failed} candidates=${data.candidates}`);
+      }
+    } catch (e) {
+      console.warn('[analysisBackfill] Analyze failed:', e.message);
+    }
+  }
+
+  setTimeout(() => { runAnalyze(); setInterval(runAnalyze, ANALYZE_INTERVAL_MS); }, 5 * 60 * 1000);
 })();
 
 // ── Inline Recording Worker ────────────────────────────────────────
