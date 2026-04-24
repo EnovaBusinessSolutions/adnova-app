@@ -4,22 +4,64 @@
   // Endpoint path: /m/s (non-obvious) bypasses most ad-blocker /collect rules.
   // Legacy /collect still served by backend for backward compat.
   var ADRAY_ENDPOINT_PATH = '/m/s';
-  const ADRAY_ENDPOINT = (function () {
+
+  // Backend origin — always the real Adray backend, derived from this script's
+  // own src. Used for rrweb uploads (which are never proxied through the
+  // merchant's WP server) and as the default collect target when no first-party
+  // proxy is configured.
+  const ADRAY_BACKEND_ORIGIN = (function () {
     try {
       var s = document.currentScript;
-      if (s) {
-        var ep = s.getAttribute('data-endpoint');
-        if (ep) return ep.replace(/\/+$/, '');
-        if (s.src) return new URL(s.src).origin + ADRAY_ENDPOINT_PATH;
-      }
+      if (s && s.src) return new URL(s.src).origin;
       var tags = document.querySelectorAll('script[src*="adray-pixel"], script[src*="site-analytics"], script[src*="pixel.js"]');
       for (var i = 0; i < tags.length; i++) {
-        ep = tags[i].getAttribute('data-endpoint');
-        if (ep) return ep.replace(/\/+$/, '');
-        if (tags[i].src) return new URL(tags[i].src).origin + ADRAY_ENDPOINT_PATH;
+        if (tags[i].src) return new URL(tags[i].src).origin;
       }
     } catch (_) {}
-    return 'https://adray.ai' + ADRAY_ENDPOINT_PATH;
+    return 'https://adray.ai';
+  }());
+
+  // Collect endpoint — prefer a first-party proxy when configured (via the
+  // `data-proxy-endpoint` script attribute or `window.adrayPixelConfig.proxyEndpoint`).
+  // A same-origin proxy keeps the /collect wire invisible to ad-blockers:
+  // Brave Shields, uBlock Origin, AdBlock Plus, etc. can't block requests to
+  // the merchant's own domain without also breaking the storefront. Falls back
+  // to `data-endpoint` (legacy) and finally to `{ADRAY_BACKEND_ORIGIN}/m/s`.
+  const ADRAY_ENDPOINT = (function () {
+    function resolve(raw) {
+      if (!raw) return null;
+      raw = String(raw).trim();
+      if (!raw) return null;
+      try {
+        return new URL(raw, window.location.href).toString().replace(/\/+$/, '');
+      } catch (_) {
+        return raw.replace(/\/+$/, '');
+      }
+    }
+
+    try {
+      var s = document.currentScript;
+      var explicit = null;
+
+      if (s) {
+        explicit = s.getAttribute('data-proxy-endpoint') || s.getAttribute('data-endpoint');
+      }
+      if (!explicit) {
+        var tags = document.querySelectorAll('script[src*="adray-pixel"], script[src*="site-analytics"], script[src*="pixel.js"]');
+        for (var i = 0; i < tags.length; i++) {
+          var attr = tags[i].getAttribute('data-proxy-endpoint') || tags[i].getAttribute('data-endpoint');
+          if (attr) { explicit = attr; break; }
+        }
+      }
+      if (!explicit && window.adrayPixelConfig && typeof window.adrayPixelConfig.proxyEndpoint === 'string') {
+        explicit = window.adrayPixelConfig.proxyEndpoint;
+      }
+
+      var resolved = resolve(explicit);
+      if (resolved) return resolved;
+    } catch (_) {}
+
+    return ADRAY_BACKEND_ORIGIN + ADRAY_ENDPOINT_PATH;
   }());
   const EVENT_TTL_MS = 2000;
   const ADRAY_LAST_CART_VALUE_KEY = '__adray_last_cart_value_v1';
@@ -819,42 +861,105 @@
     const body = JSON.stringify(payload);
     adrayLog('sending', eventName, 'to', ADRAY_ENDPOINT, 'fbclid:', fbclid, 'seq:', seq, 'page_type:', payload.page_type);
 
-    // sendBeacon first for all critical events (including purchase/begin_checkout/add_to_cart)
-    // — survives page unload. sendBeacon does not send credentials, so we enqueue a
-    // fetch-with-keepalive retry only if beacon fails.
-    const critical = eventName === 'begin_checkout'
-      || eventName === 'purchase'
-      || eventName === 'add_to_cart';
-
-    let beaconOk = false;
-    if (navigator.sendBeacon && critical) {
-      try {
-        beaconOk = navigator.sendBeacon(
-          ADRAY_ENDPOINT,
-          new Blob([body], { type: 'application/json' })
-        );
-        adrayLog('sendBeacon:', eventName, '→', beaconOk ? 'OK' : 'FAILED');
-      } catch (e) { beaconOk = false; adrayLog('sendBeacon error:', e); }
-    }
-
-    if (!beaconOk) {
-      adrayLog('falling back to fetch for', eventName);
-      fetch(ADRAY_ENDPOINT, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body,
-        mode: "cors",
-        credentials: "include",
-        keepalive: true, // survive pagehide for every event, not just begin_checkout
-      }).then(r => adrayLog('fetch', eventName, '→', r.status)).catch(err => {
-        console.error("AdRay Pixel Error:", err);
-        _adrayEnqueueOffline(body);
-      });
-    }
+    _adrayDispatch(eventName, body);
 
     // After purchase ships, flip session flag so subsequent events are marked.
     if (eventName === 'purchase') {
       _adrayMarkPostPurchase();
+    }
+  }
+
+  // Transport chain: sendBeacon → fetch(keepalive) + retry → Image pixel (GIF) → offline queue.
+  // sendBeacon is preferred first because ad-blockers often hook fetch/XHR but leave beacon alone,
+  // and it survives page unload. Image pixel is last-resort; ad-blockers rarely filter GIFs.
+  function _adrayDispatch(eventName, body) {
+    if (_adrayTrySendBeacon(body, eventName)) return;
+    _adrayFetchWithRetry(body, eventName, 0);
+  }
+
+  function _adrayTrySendBeacon(body, eventName) {
+    if (!navigator.sendBeacon) return false;
+    try {
+      var ok = navigator.sendBeacon(
+        ADRAY_ENDPOINT,
+        new Blob([body], { type: 'application/json' })
+      );
+      adrayLog('sendBeacon:', eventName, '→', ok ? 'OK' : 'FAILED');
+      return ok === true;
+    } catch (e) {
+      adrayLog('sendBeacon error:', e);
+      return false;
+    }
+  }
+
+  var _ADRAY_MAX_RETRIES = 3;
+
+  function _adrayFetchWithRetry(body, eventName, attempt) {
+    adrayLog('fetch attempt', attempt + 1, 'for', eventName);
+    fetch(ADRAY_ENDPOINT, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: body,
+      mode: "cors",
+      credentials: "include",
+      keepalive: true,
+    }).then(function (r) {
+      adrayLog('fetch', eventName, '→', r.status);
+      // Retry on 5xx; 4xx is client error, don't retry.
+      if (r.status >= 500 && attempt + 1 < _ADRAY_MAX_RETRIES) {
+        _adrayBackoff(attempt, function () { _adrayFetchWithRetry(body, eventName, attempt + 1); });
+      }
+    }).catch(function (err) {
+      adrayLog('fetch error:', err && err.message);
+      if (attempt + 1 < _ADRAY_MAX_RETRIES) {
+        _adrayBackoff(attempt, function () { _adrayFetchWithRetry(body, eventName, attempt + 1); });
+      } else {
+        // Final fallback: GET GIF pixel with base64-encoded payload.
+        if (!_adrayTryImagePixel(body, eventName)) {
+          console.error("AdRay Pixel Error:", err);
+          _adrayEnqueueOffline(body);
+        }
+      }
+    });
+  }
+
+  function _adrayBackoff(attempt, fn) {
+    // Exponential with jitter: 200ms, 400ms, 800ms ± 100ms.
+    var base = 200 * Math.pow(2, attempt);
+    var jitter = Math.floor(Math.random() * 100);
+    setTimeout(fn, base + jitter);
+  }
+
+  function _adrayTryImagePixel(body, eventName) {
+    try {
+      // Compact fields for URL size limits (~2KB safe).
+      var p = JSON.parse(body);
+      var compact = {
+        a: p.account_id, s: p.session_id, b: p.browser_id,
+        e: p.event_name, t: p.captured_at || p.timestamp, q: p.seq,
+        u: p.page_url, pt: p.page_type,
+        fb: p.fbclid, gc: p.gclid, tc: p.ttclid,
+        us: p.utm_source, um: p.utm_medium, uc: p.utm_campaign,
+        ut: p.utm_term, uo: p.utm_content,
+        cv: p.cart_value, oi: p.order_id, ck: p.checkout_token,
+        rv: p.revenue, cu: p.currency,
+        r: p.referrer, pl: p.platform
+      };
+      // base64url-encode (URL-safe, no padding) for query-string safety.
+      var json = JSON.stringify(compact);
+      var b64 = (typeof btoa === 'function') ? btoa(unescape(encodeURIComponent(json))) : null;
+      if (!b64) return false;
+      b64 = b64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+      // Respect 2KB URL budget.
+      if (ADRAY_ENDPOINT.length + b64.length + 8 > 2048) return false;
+      var img = new Image(1, 1);
+      img.referrerPolicy = 'no-referrer-when-downgrade';
+      img.src = ADRAY_ENDPOINT + '?d=' + b64 + '&_=' + Date.now();
+      adrayLog('image pixel fallback:', eventName);
+      return true;
+    } catch (e) {
+      adrayLog('image pixel error:', e && e.message);
+      return false;
     }
   }
 
@@ -1931,7 +2036,11 @@
   var _adrayFlushTimer = null;
   var _ADRAY_FLUSH_MS = 4000;
   var _ADRAY_CHUNK_MAX_BYTES = 200000;
-  var _ADRAY_REC_BASE = ADRAY_ENDPOINT.replace(/\/(m\/s|collect)$/, '');
+  // rrweb uploads are large (chunked DOM mutations, hundreds of KB) and WP's
+  // HTTP API would be a poor proxy for them. Always hit the real backend
+  // origin, regardless of whether /collect is proxied through a first-party
+  // endpoint. rrweb isn't on typical ad-blocker blocklists.
+  var _ADRAY_REC_BASE = ADRAY_BACKEND_ORIGIN;
   var _ADRAY_RRWEB_CDN = _ADRAY_REC_BASE + '/static/dom-observer.min.js';
 
   // ── Blocked pages: Shopify prohibits DOM recording on checkout/payment pages

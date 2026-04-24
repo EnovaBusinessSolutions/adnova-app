@@ -119,12 +119,102 @@ function isAccountAllowed(accountId) {
   return normalized ? allowed.has(normalized) : false;
 }
 
-// Intercept GET requests from crawlers (like Meta) immediately
-router.get('/', (req, res) => {
-  return res.status(200).send('OK');
+// 1x1 transparent GIF for pixel-image fallback responses.
+const TRANSPARENT_GIF = Buffer.from(
+  'R0lGODlhAQABAIAAAP///wAAACH5BAEAAAAALAAAAAABAAEAAAICRAEAOw==',
+  'base64'
+);
+
+function respondTransparentGif(res) {
+  res.status(200);
+  res.setHeader('Content-Type', 'image/gif');
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+  res.setHeader('Content-Length', TRANSPARENT_GIF.length);
+  return res.end(TRANSPARENT_GIF);
+}
+
+// Expand compact keys emitted by the pixel's Image fallback path back into
+// the full payload shape that the POST handler expects. Keep this mapping
+// in sync with _adrayTryImagePixel() in public/adray-pixel.js.
+function expandCompactPayload(compact = {}) {
+  return {
+    account_id: compact.a,
+    session_id: compact.s,
+    browser_id: compact.b,
+    event_name: compact.e,
+    captured_at: compact.t,
+    timestamp: compact.t,
+    seq: compact.q,
+    page_url: compact.u,
+    page_type: compact.pt,
+    fbclid: compact.fb,
+    gclid: compact.gc,
+    ttclid: compact.tc,
+    utm_source: compact.us,
+    utm_medium: compact.um,
+    utm_campaign: compact.uc,
+    utm_term: compact.ut,
+    utm_content: compact.uo,
+    cart_value: compact.cv,
+    order_id: compact.oi,
+    checkout_token: compact.ck,
+    revenue: compact.rv,
+    currency: compact.cu,
+    referrer: compact.r,
+    platform: compact.pl,
+    raw_source: 'pixel_image_fallback',
+  };
+}
+
+function decodePixelImageParam(raw) {
+  if (!raw || typeof raw !== 'string') return null;
+  try {
+    // base64url → base64.
+    let b64 = raw.replace(/-/g, '+').replace(/_/g, '/');
+    const padLen = (4 - (b64.length % 4)) % 4;
+    b64 = b64 + '='.repeat(padLen);
+    const json = Buffer.from(b64, 'base64').toString('utf8');
+    const compact = JSON.parse(json);
+    return compact && typeof compact === 'object' ? compact : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+// GET handler serves two purposes:
+//  1) Crawler health-check (Meta, scanners) — plain "OK" response.
+//  2) Pixel GIF fallback for ad-blocked clients — `?d=<base64url>` carries a
+//     compact event payload and we respond with a 1×1 transparent GIF.
+router.get('/', async (req, res) => {
+  const raw = req.query && req.query.d;
+  if (!raw) {
+    return res.status(200).send('OK');
+  }
+
+  const compact = decodePixelImageParam(raw);
+  if (!compact) {
+    return respondTransparentGif(res);
+  }
+
+  // Reuse the POST handler by mutating req.body. Always respond with the GIF
+  // first so the browser never sees a 5xx even if processing fails downstream.
+  respondTransparentGif(res);
+
+  req.body = expandCompactPayload(compact);
+  // Detach processing — the response is already sent.
+  setImmediate(() => {
+    processCollectPayload(req)
+      .catch((err) => {
+        console.error('[AdRay Collect][image-fallback] processing error:', err?.message || err);
+      });
+  });
 });
 
-router.post('/', async (req, res) => {
+// Shared processor used by both POST /collect and the GET image-fallback path.
+// When `res` is provided, responds with JSON. When `res` is null (detached
+// processing from the image-fallback handler), returns a result object and
+// lets errors bubble up to the caller.
+async function processCollectPayload(req, res = null) {
   let step = 'init';
   try {
     step = 'parse_payload';
@@ -138,12 +228,15 @@ router.post('/', async (req, res) => {
     step = 'validate_account';
     if (!accountId) {
       console.warn('[AdRay Collect] Rejected: account_id is required');
-      return res.status(400).json({ success: false, error: 'account_id is required' });
+      if (res) return res.status(400).json({ success: false, error: 'account_id is required' });
+      return { success: false, error: 'account_id is required' };
     }
 
     if (!isAccountAllowed(accountId)) {
       console.info(`[AdRay Collect] Ignored event for non-allowed account: ${accountId}`);
-      return res.json({ success: true, ignored: true, reason: 'account_not_allowed', accountId });
+      const body = { success: true, ignored: true, reason: 'account_not_allowed', accountId };
+      if (res) return res.json(body);
+      return body;
     }
 
     // 0. Ensure Account exists in DB (auto-provision for new accounts)
@@ -192,7 +285,9 @@ router.post('/', async (req, res) => {
         const isNew = await redisClient.set(dedupKey, '1', 'EX', 86400, 'NX');
         if (!isNew) {
            console.log(`[AdRay Collect] Deduplicated event: ${payload.event_id}`);
-           return res.json({ success: true, event_id: payload.event_id, user_key: userKey, deduplicated: true });
+           const body = { success: true, event_id: payload.event_id, user_key: userKey, deduplicated: true };
+           if (res) return res.json(body);
+           return body;
         }
       } catch (redisErr) {
         // Redis is an optimization layer. Do not fail collection if it's unavailable.
@@ -482,23 +577,29 @@ router.post('/', async (req, res) => {
       }
     }
 
-    res.json({
+    const result = {
       success: true,
       event_id: eventId,
       user_key: userKey,
       event_persisted: eventPersisted,
       session_persisted: sessionPersisted,
       fallback_stored: fallbackStored
-    });
+    };
+    if (res) res.json(result);
 
     // Mirror to staging so both environments stay in sync (fire-and-forget).
     forwardToStaging('/collect', payload);
 
+    return result;
+
   } catch (error) {
     console.error(`[AdRay Collect] Error at step '${step}':`, error);
     // Return non-5xx to avoid browser retry storms while we surface diagnostics.
-    res.status(200).json({ success: false, error: 'Collect processing failed', step });
+    if (res) return res.status(200).json({ success: false, error: 'Collect processing failed', step });
+    throw error;
   }
-});
+}
+
+router.post('/', (req, res) => processCollectPayload(req, res));
 
 module.exports = router;

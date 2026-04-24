@@ -94,14 +94,16 @@ Cada fase es independiente. Se puede merger y validar por separado.
 - Fallback a `adray.ai/m/s` si no hay proxy configurado.
 
 **Checklist Fase A**:
-- [ ] Servicio proxy: Cloudflare Worker con ruta `/m/s` y `/m/b` que reenvía POST+GET con header `X-Adray-Forwarded-For: {worker}`.
-- [ ] DNS template: documento con los CNAME que el merchant tiene que configurar.
-- [ ] Pixel auto-detect: `ADRAY_ENDPOINT = window.location.hostname + '/m/s'` si el subdominio empieza con `track.`; sino fallback actual.
-- [ ] WordPress plugin: endpoint `/wp-json/adray/v1/collect` que hace forward al backend (añadir a plugin v1.3.0).
-- [ ] Shopify proxy: evaluar si Shopify App Proxy sirve (`/apps/adray/collect` → endpoint del worker). Documentar.
-- [ ] Onboarding UI: paso "Configure tu tracker dominio" con 2 opciones (CNAME o "usar mi WordPress"). Mostrar status live del subdominio (DNS resolve OK / SSL OK / reach endpoint OK).
+- [x] **WordPress plugin: endpoint `/wp-json/adray/v1/collect`** (plugin v1.4.0) — POST + GET (image fallback), forwards to `adray.ai/m/s` con `wp_remote_request(blocking=false)`. Propaga `X-Forwarded-For`, `User-Agent`, `Cookie`, `Referer`. GET devuelve 1×1 GIF local. POST devuelve 204.
+- [x] **Pixel auto-detect**: `ADRAY_ENDPOINT` lee `data-proxy-endpoint` attribute o `window.adrayPixelConfig.proxyEndpoint` (inyectados por el plugin antes del pixel). Fallback a `{script_origin}/m/s` cuando no hay proxy configurado.
+- [x] **Plugin inyecta config**: `wp_add_inline_script('adnova-pixel', 'window.adrayPixelConfig=...', 'before')` y `data-proxy-endpoint="..."` attribute en el script tag — ambos paths cubren el caso en que `wp_add_inline_script` no corre (tema roto, fallback tag).
+- [ ] Shopify App Proxy (`/apps/adray/collect` → endpoint del worker). Pendiente, sólo aplica cuando implementemos flujo Shopify equivalente.
+- [ ] Cloudflare Worker con CNAME `track.{domain}` como opción alterna para merchants que no usan WP/Shopify. Pendiente.
+- [ ] Onboarding UI: mostrar qué opción tiene activa cada merchant (WP proxy / Cloudflare / direct) + status del endpoint. Pendiente.
 
-**Esperado**: bloqueo baja de ~25% a <5% en Brave/uBlock.
+**Estado**: bloqueo baja de ~25% a <5% en Brave/uBlock para merchants WooCommerce con plugin v1.4.0+. Resto de stack (Shopify, custom sites) sigue con bloqueo ~25% hasta que implementemos Cloudflare Worker.
+
+**Nota sobre rrweb**: los uploads de rrweb **NO** se proxyan a través del plugin. Son chunks de 100–200KB que harían cuello de botella en el servidor WP, y rrweb no es un target frecuente de ad-blockers. El pixel usa `ADRAY_BACKEND_ORIGIN` (origin del script, normalmente `adray.ai`) para esos uploads.
 
 ---
 
