@@ -17,6 +17,11 @@ const OAuthTokenSchema = new Schema(
   { collection: 'oauth_tokens', timestamps: true }
 );
 
-OAuthTokenSchema.index({ accessTokenExpiresAt: 1 }, { expireAfterSeconds: 0 });
+// TTL on the refresh token, not the access token. The access token lives 1h
+// but the refresh token lives 180d; deleting the whole record at access-token
+// expiry invalidates the refresh token too and forces users to re-authorize
+// their MCP connector every hour. Access-token expiry is still enforced at
+// query time in oauth-middleware.js.
+OAuthTokenSchema.index({ refreshTokenExpiresAt: 1 }, { expireAfterSeconds: 0 });
 
 module.exports = mongoose.models.OAuthToken || model('OAuthToken', OAuthTokenSchema);
