@@ -99,6 +99,28 @@ export interface PixelHealth {
   purchaseSignalCoverage: number;
 }
 
+/**
+ * Response shape of GET /api/analytics/:id/pixel-health — the ad-blocker
+ * bulletproof plan's coverage report (Phase D).
+ */
+export interface PixelHealthCoverage {
+  accountId: string;
+  windowDays: number;
+  totalOrders: number;
+  pixelCoverage: CoverageRatio;
+  attributionCoverage: CoverageRatio;
+  serverSideCoverage: CoverageRatio;
+  blockedOrders: { count: number; total: number; rate: number };
+  generatedAt: string;
+}
+
+export interface CoverageRatio {
+  covered?: number;
+  attributed?: number;
+  total: number;
+  rate: number;
+}
+
 export interface DailyPoint {
   date: string;
   revenue: number;
