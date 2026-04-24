@@ -1282,15 +1282,49 @@ router.post('/build-packets-now', async (req, res) => {
 
     let built = 0;
     let failed = 0;
+    let orphaned = 0;
     const failures = [];
+
+    // Mark a recording as orphaned so later runs skip it. Happens when the
+    // raw blob in R2 was erased by retention / bucket cleanup but r2Key
+    // stayed set in Postgres — nothing we can do, the packet is unrecoverable.
+    async function markOrphan(recordingId, reason) {
+      await prisma.sessionRecording.update({
+        where: { recordingId },
+        data: { status: 'ERROR', r2Key: null, rawErasedAt: new Date() },
+      }).catch(() => {});
+      orphaned++;
+      failures.push({ recordingId, reason });
+    }
+
+    const isMissingKey = (err) => {
+      const msg = String(err?.message || err || '').toLowerCase();
+      return (
+        err?.Code === 'NoSuchKey' ||
+        err?.name === 'NoSuchKey' ||
+        msg.includes('specified key does not exist') ||
+        msg.includes('nosuchkey')
+      );
+    };
 
     // 3. Process each synchronously: download R2 → extract → upsert
     for (const rec of pending) {
+      let events;
       try {
-        const events = await downloadChunk(rec.r2Key);
-        if (!Array.isArray(events) || events.length === 0) {
+        events = await downloadChunk(rec.r2Key);
+      } catch (dlErr) {
+        if (isMissingKey(dlErr)) {
+          await markOrphan(rec.recordingId, 'R2 blob missing — marked orphan');
+        } else {
           failed++;
-          failures.push({ recordingId: rec.recordingId, reason: 'no events in R2' });
+          failures.push({ recordingId: rec.recordingId, reason: String(dlErr.message || dlErr).slice(0, 160) });
+        }
+        continue;
+      }
+
+      try {
+        if (!Array.isArray(events) || events.length === 0) {
+          await markOrphan(rec.recordingId, 'empty events in R2');
           continue;
         }
 
@@ -1344,17 +1378,52 @@ router.post('/build-packets-now', async (req, res) => {
       }
     }
 
-    console.log(`[recording/build-packets-now] candidates=${ready.length} alreadyHavePacket=${hasPacket.size} built=${built} failed=${failed}`);
+    console.log(`[recording/build-packets-now] candidates=${ready.length} alreadyHavePacket=${hasPacket.size} built=${built} orphaned=${orphaned} failed=${failed}`);
     return res.json({
       ok: true,
       candidates: ready.length,
       alreadyHavePacket: hasPacket.size,
       built,
+      orphaned,
       failed,
       failures: failures.slice(0, 10),
     });
   } catch (err) {
     console.error('[recording/build-packets-now] Error:', err.message);
+    return res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * POST /collect/x/queue-clean  (internal)
+ * Removes failed / completed jobs from BullMQ so they stop being counted.
+ * Useful after a wave of orphaned recordings burned through retries and left
+ * a big `failed` pile behind.
+ * ───────────────────────────────────────────────────────────────────────────── */
+router.post('/queue-clean', async (req, res) => {
+  const secret = req.headers['x-adray-internal'] || req.body?.secret;
+  if (secret !== (process.env.INTERNAL_CRON_SECRET || 'adray-internal')) {
+    return res.status(403).json({ ok: false });
+  }
+
+  try {
+    if (!recordingQueue) {
+      return res.json({ ok: false, error: 'Queue not initialized' });
+    }
+
+    // Clean states: failed older than 0ms (all), completed older than 1h
+    const [removedFailed, removedCompleted] = await Promise.all([
+      recordingQueue.clean(0, 5000, 'failed').catch(() => []),
+      recordingQueue.clean(60 * 60 * 1000, 5000, 'completed').catch(() => []),
+    ]);
+
+    return res.json({
+      ok: true,
+      removedFailed: Array.isArray(removedFailed) ? removedFailed.length : 0,
+      removedCompleted: Array.isArray(removedCompleted) ? removedCompleted.length : 0,
+    });
+  } catch (err) {
+    console.error('[recording/queue-clean] Error:', err.message);
     return res.status(500).json({ ok: false, error: err.message });
   }
 });
