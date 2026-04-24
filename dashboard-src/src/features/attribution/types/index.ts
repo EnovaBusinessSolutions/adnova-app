@@ -167,6 +167,7 @@ export interface RecentPurchase {
   attributedAdset: string | null;
   attributedAd: string | null;
   attributedClickId: string | null;
+  attributedClickIdProvider?: 'meta' | 'google' | 'tiktok' | null;
   attributionConfidence?: number | null;
   attributionSource?: string | null;
   confidenceScore: number | null;

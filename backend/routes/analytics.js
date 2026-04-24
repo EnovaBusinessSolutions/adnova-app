@@ -59,6 +59,45 @@ try {
   googleAdsService = require('../services/googleAdsService');
 } catch (_) {}
 
+let clickIdResolver = null;
+try {
+  clickIdResolver = require('../services/clickIdResolver');
+} catch (_) {}
+
+// ─── Attribution field sanitization & multi-source merge ─────
+// Some ad platforms feed back "/" or empty strings as utm_content when the
+// advertiser forgets to set a real value. Drop those so we don't render
+// "adset: /" in the UI.
+const ATTR_TRASH_VALUES = new Set(['', '/', 'null', 'undefined', '(none)', '-', 'nan', 'n/a', 'na']);
+function sanitizeAttrValue(v) {
+  if (v == null) return null;
+  const s = String(v).trim();
+  if (!s) return null;
+  if (ATTR_TRASH_VALUES.has(s.toLowerCase())) return null;
+  // URL-path-looking tokens are almost never valid campaign/adset/ad names.
+  if (s.startsWith('/') && s.length < 40 && !/\s/.test(s)) return null;
+  return s;
+}
+
+// Returns the first non-null, sanitized value across candidates (left→right).
+function firstAttrValue(...candidates) {
+  for (const c of candidates) {
+    const v = sanitizeAttrValue(c);
+    if (v) return v;
+  }
+  return null;
+}
+
+// Provider derived from the click id kind, used when we have a click id
+// but no campaign/adset name — so the UI can render "Meta Ads · fbclid …"
+// instead of a blank field.
+function clickIdProviderFor({ fbclid, gclid, ttclid }) {
+  if (fbclid) return 'meta';
+  if (gclid)  return 'google';
+  if (ttclid) return 'tiktok';
+  return null;
+}
+
 const EVENT_BUCKET_ALIASES = {
   page_view: ['page_view', 'pageview', 'view_page'],
   view_item: ['view_item', 'product_view', 'view_product', 'product_detail_view'],
@@ -2730,10 +2769,10 @@ router.get('/:account_id', async (req, res) => {
         ? {
             primary: {
               channel: (conv.orderAttributedChannel === 'google' && !String(conv.orderAttributionSnapshot?.utm_medium || '').match(/cpc|paid_search|ads/i) && !String(conv.wooSourceLabel || '').match(/cpc|ads/i) && !conv.orderAttributionSnapshot?.gclid) ? 'organic' : normalizeChannelForStats(conv.orderAttributedChannel),
-              platform: conv?.wooSourceLabel || conv?.orderAttributionSnapshot?.utm_source || conv.orderAttributedChannel,
-              campaign: conv?.orderAttributionSnapshot?.utm_campaign || null,
-              adset: conv?.orderAttributionSnapshot?.utm_content || null,
-              ad: conv?.orderAttributionSnapshot?.utm_term || null,
+              platform: firstAttrValue(conv?.wooSourceLabel, conv?.orderAttributionSnapshot?.utm_source, conv.orderAttributedChannel),
+              campaign: firstAttrValue(conv?.orderAttributionSnapshot?.utm_campaign),
+              adset: firstAttrValue(conv?.orderAttributionSnapshot?.utm_content),
+              ad: firstAttrValue(conv?.orderAttributionSnapshot?.utm_term),
               clickId: conv?.orderAttributionSnapshot?.gclid || conv?.orderAttributionSnapshot?.fbclid || conv?.orderAttributionSnapshot?.ttclid || null,
               confidence: Number(conv.orderAttributionConfidence || 0.75),
               source: String(conv.orderAttributionModel || '').startsWith('woo_') ? 'woo_fallback' : 'orders_sync',
@@ -2766,16 +2805,64 @@ router.get('/:account_id', async (req, res) => {
         ? (attribution.isAttributed ? attribution : (orderStoredAttribution || wooFallbackResult))
         : (orderStoredAttribution || wooFallbackResult);
 
+      // ─── Multi-source enrichment ──────────────────────────
+      // After the chosen primary is picked, fill in any null
+      // campaign/adset/ad/clickId from any other available snapshot or
+      // session. This is what makes an order with only a fbclid still look
+      // meaningful when its ad carried proper UTMs in a prior session.
+      const enrichSources = [
+        conv.orderAttributionSnapshot,
+        checkout?.attributionSnapshot,
+        conv.payloadSnapshot,
+        ...sessions.map(toSnapshotFromSession),
+      ].filter(Boolean);
+
+      const enrichedPrimary = { ...finalAttribution.primary };
+      enrichedPrimary.campaign = firstAttrValue(
+        enrichedPrimary.campaign,
+        ...enrichSources.map((s) => s?.utm_campaign),
+      );
+      enrichedPrimary.adset = firstAttrValue(
+        enrichedPrimary.adset,
+        ...enrichSources.map((s) => s?.utm_content),
+      );
+      enrichedPrimary.ad = firstAttrValue(
+        enrichedPrimary.ad,
+        ...enrichSources.map((s) => s?.utm_term),
+      );
+      if (!enrichedPrimary.clickId) {
+        for (const s of enrichSources) {
+          const cid = s?.gclid || s?.fbclid || s?.ttclid;
+          if (cid) { enrichedPrimary.clickId = cid; break; }
+        }
+      }
+      enrichedPrimary.platform = firstAttrValue(
+        enrichedPrimary.platform,
+        ...enrichSources.map((s) => s?.utm_source),
+      );
+
+      // Click-ID provider: when we still don't have a campaign name but we
+      // DO have a click id, surface which ad platform it came from so the UI
+      // can render "Meta Ads · fbclid: …" instead of a blank attribution.
+      const clickIdProvider = clickIdProviderFor({
+        fbclid: enrichSources.find((s) => s?.fbclid)?.fbclid
+               || (enrichedPrimary.clickId && enrichedPrimary.platform?.toLowerCase()?.match(/facebook|instagram|meta|fb/) ? enrichedPrimary.clickId : null),
+        gclid:  enrichSources.find((s) => s?.gclid)?.gclid
+               || (enrichedPrimary.clickId && enrichedPrimary.platform?.toLowerCase()?.match(/google|cpc/) ? enrichedPrimary.clickId : null),
+        ttclid: enrichSources.find((s) => s?.ttclid)?.ttclid,
+      });
+
       return {
         ...conv,
         userKey: resolvedUserKey,
         sessionId: resolvedSessionId,
         attributedChannel: finalAttribution.primary.channel,
-        attributedPlatform: finalAttribution.primary.platform,
-        attributedCampaign: finalAttribution.primary.campaign || null,
-        attributedAdset: finalAttribution.primary.adset || null,
-        attributedAd: finalAttribution.primary.ad || null,
-        attributedClickId: finalAttribution.primary.clickId || null,
+        attributedPlatform: enrichedPrimary.platform,
+        attributedCampaign: enrichedPrimary.campaign,
+        attributedAdset: enrichedPrimary.adset,
+        attributedAd: enrichedPrimary.ad,
+        attributedClickId: enrichedPrimary.clickId,
+        attributedClickIdProvider: clickIdProvider,
         attributionConfidence: finalAttribution.primary.confidence,
         attributionSource: finalAttribution.primary.source,
         attributionModel,
@@ -3133,6 +3220,47 @@ router.get('/:account_id', async (req, res) => {
         events: journeyEvents,
       };
     }));
+
+    // ─── Click-ID → campaign name resolution (best effort) ──
+    // For orders that have a click id (gclid/fbclid/ttclid) but no campaign
+    // name, query the ad platform to fill in campaign / adset / ad. This is
+    // capped to the first 20 orders per request and runs with a soft timeout
+    // so a slow Google Ads call never blocks the dashboard.
+    try {
+      if (clickIdResolver && recentPurchases.length) {
+        const toResolve = [];
+        for (const p of recentPurchases) {
+          if (p.attributedCampaign) continue;
+          const cid = p.attributedClickId;
+          if (!cid) continue;
+          const provider = p.attributedClickIdProvider;
+          const clickDate = p.events?.[0]?.capturedAt || p.events?.[0]?.createdAt || p.createdAt;
+          if (provider === 'google') toResolve.push({ gclid: cid, clickDate, accountId: account_id, __ref: p });
+          else if (provider === 'meta') toResolve.push({ fbclid: cid, clickDate, accountId: account_id, __ref: p });
+          else if (provider === 'tiktok') toResolve.push({ ttclid: cid, clickDate, accountId: account_id, __ref: p });
+          if (toResolve.length >= 20) break;
+        }
+
+        if (toResolve.length) {
+          const resolved = await clickIdResolver.resolveMany(
+            toResolve.map(({ __ref, ...rest }) => rest),
+            { concurrency: 4, timeoutMs: 6000 },
+          );
+          for (const item of toResolve) {
+            const key = item.gclid ? `gclid:${item.gclid}` : item.fbclid ? `fbclid:${item.fbclid}` : item.ttclid ? `ttclid:${item.ttclid}` : null;
+            const r = key ? resolved.get(key) : null;
+            if (!r) continue;
+            const p = item.__ref;
+            if (!p.attributedCampaign && r.campaign) p.attributedCampaign = r.campaign;
+            if (!p.attributedAdset && r.adset)       p.attributedAdset    = r.adset;
+            if (!p.attributedAd && r.ad)             p.attributedAd       = r.ad;
+            p.attributionSource = `${p.attributionSource || 'click_id'}+${r.resolvedVia}`;
+          }
+        }
+      }
+    } catch (err) {
+      console.warn('[Analytics API] click-id resolution skipped:', err?.message);
+    }
 
     // Enrich recentPurchases with Clarity session recording URLs.
     // Wrapped in try/catch: columns may not exist yet if DB migration is pending.
