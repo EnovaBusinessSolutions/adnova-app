@@ -200,6 +200,12 @@ export interface LiveFeedEvent {
     collectedAt?: string;
     productId?: string | null;
     customerName?: string | null;
+    channel?: string;            // meta / google / tiktok / organic / other / direct
+    channelRaw?: string;
+    channelPlatform?: string | null;
+    channelSource?: 'click_id' | 'utm' | 'referrer' | 'none';
+    clickIdProvider?: 'meta' | 'google' | 'tiktok' | null;
+    utmCampaign?: string | null;
     [key: string]: unknown;
   };
 }
