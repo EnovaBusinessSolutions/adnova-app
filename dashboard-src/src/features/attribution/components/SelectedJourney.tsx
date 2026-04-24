@@ -66,6 +66,18 @@ function shortPath(url: string | null): string | null {
   try { return new URL(url).pathname; } catch { return url; }
 }
 
+// Defensive sanitizer — backend already sanitizes, but old cached rows
+// may still carry "/", "null", etc. Drop them so the UI never renders
+// "adset: /" or similar noise.
+const TRASH = new Set(['', '/', 'null', 'undefined', '(none)', '-', 'nan', 'n/a', 'na']);
+function cleanAttr(v: string | null | undefined): string | null {
+  if (v == null) return null;
+  const s = String(v).trim();
+  if (!s || TRASH.has(s.toLowerCase())) return null;
+  if (s.startsWith('/') && s.length < 40 && !/\s/.test(s)) return null;
+  return s;
+}
+
 function eventTime(e: JourneyEvent): number {
   const iso = e.capturedAt || e.createdAt;
   const t = new Date(iso).getTime();
@@ -308,10 +320,15 @@ function SessionBlock({
   const landing = shortPath(group.landing);
   const referrerHost = group.referrer ? friendlyPlatformLabel(group.referrer) : null;
 
+  const cleanCampaign = cleanAttr(group.utmCampaign);
+  const cleanContent  = cleanAttr(group.utmContent);
+  const cleanTerm     = cleanAttr(group.utmTerm);
+  const cleanSource   = cleanAttr(group.utmSource);
+  const cleanMedium   = cleanAttr(group.utmMedium);
   const campaignPieces: string[] = [];
-  if (group.utmCampaign) campaignPieces.push(`campaign: ${group.utmCampaign}`);
-  if (group.utmContent)  campaignPieces.push(`adset: ${group.utmContent}`);
-  if (group.utmTerm)     campaignPieces.push(`ad: ${group.utmTerm}`);
+  if (cleanCampaign) campaignPieces.push(`campaign: ${cleanCampaign}`);
+  if (cleanContent)  campaignPieces.push(`adset: ${cleanContent}`);
+  if (cleanTerm)     campaignPieces.push(`ad: ${cleanTerm}`);
 
   return (
     <div className="border-t border-white/[0.04] first:border-t-0">
@@ -350,7 +367,7 @@ function SessionBlock({
           </span>
         </div>
 
-        {!condensed && (landing || referrerHost || campaignPieces.length > 0 || group.utmSource) && (
+        {!condensed && (landing || referrerHost || campaignPieces.length > 0 || cleanSource) && (
           <div className="mt-1 space-y-0.5 text-[10px]">
             {landing && (
               <p className="flex items-center gap-1 truncate text-white/40">
@@ -358,16 +375,16 @@ function SessionBlock({
                 <span className="truncate">{landing}</span>
               </p>
             )}
-            {(group.utmSource || referrerHost) && (
+            {(cleanSource || referrerHost) && (
               <p className="text-white/40">
                 <span className="text-white/25">from: </span>
                 <span className="text-white/60">
-                  {group.utmSource ?? referrerHost ?? 'direct'}
+                  {cleanSource ?? referrerHost ?? 'direct'}
                 </span>
-                {group.utmMedium && (
+                {cleanMedium && (
                   <>
                     <span className="text-white/25"> / </span>
-                    <span className="text-white/50">{group.utmMedium}</span>
+                    <span className="text-white/50">{cleanMedium}</span>
                   </>
                 )}
               </p>
@@ -421,10 +438,14 @@ export function SelectedJourney({ purchase, onClose }: SelectedJourneyProps) {
 
   // Campaign / adset / ad header line — use conversion-level attribution
   // (chosen by the selected model), falling back to purchase.attributedPlatform.
+  // Defensive clean: old snapshots may still have "/" junk.
+  const cleanPurchaseCampaign = cleanAttr(purchase.attributedCampaign);
+  const cleanPurchaseAdset    = cleanAttr(purchase.attributedAdset);
+  const cleanPurchaseAd       = cleanAttr(purchase.attributedAd);
   const campaignLine: string[] = [];
-  if (purchase.attributedCampaign) campaignLine.push(`campaign: ${purchase.attributedCampaign}`);
-  if (purchase.attributedAdset)    campaignLine.push(`adset: ${purchase.attributedAdset}`);
-  if (purchase.attributedAd)       campaignLine.push(`ad: ${purchase.attributedAd}`);
+  if (cleanPurchaseCampaign) campaignLine.push(`campaign: ${cleanPurchaseCampaign}`);
+  if (cleanPurchaseAdset)    campaignLine.push(`adset: ${cleanPurchaseAdset}`);
+  if (cleanPurchaseAd)       campaignLine.push(`ad: ${cleanPurchaseAd}`);
 
   const platformFriendly = friendlyPlatformLabel(purchase.attributedPlatform);
 
