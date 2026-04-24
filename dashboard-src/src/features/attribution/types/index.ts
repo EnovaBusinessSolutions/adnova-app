@@ -16,9 +16,7 @@ export interface ShopsResponse {
 export type AttributionModel =
   | 'last_touch'
   | 'first_touch'
-  | 'linear'
-  | 'time_decay'
-  | 'position';
+  | 'linear';
 
 export type RangePreset = 7 | 14 | 30 | 90;
 
@@ -138,12 +136,20 @@ export interface JourneyEvent {
   productName: string | null;
   itemId: string | null;
   utmSource: string | null;
+  utmMedium: string | null;
+  utmCampaign: string | null;
+  utmContent: string | null;
+  utmTerm: string | null;
+  referrer: string | null;
+  sessionId: string | null;
+  userKey: string | null;
   checkoutToken: string | null;
   orderId: string | null;
   fbp: string | null;
   fbc: string | null;
   ttclid: string | null;
   gclid: string | null;
+  fbclid: string | null;
   clickId: string | null;
   customerEmail: string | null;
   clientIp: string | null;
@@ -156,6 +162,14 @@ export interface RecentPurchase {
   revenue: number;
   currency: string | null;
   attributedChannel: string | null;
+  attributedPlatform: string | null;
+  attributedCampaign: string | null;
+  attributedAdset: string | null;
+  attributedAd: string | null;
+  attributedClickId: string | null;
+  attributedClickIdProvider?: 'meta' | 'google' | 'tiktok' | null;
+  attributionConfidence?: number | null;
+  attributionSource?: string | null;
   confidenceScore: number | null;
   createdAt: string;
   sessionId: string | null;
@@ -186,6 +200,12 @@ export interface LiveFeedEvent {
     collectedAt?: string;
     productId?: string | null;
     customerName?: string | null;
+    channel?: string;            // meta / google / tiktok / organic / other / direct
+    channelRaw?: string;
+    channelPlatform?: string | null;
+    channelSource?: 'click_id' | 'utm' | 'referrer' | 'none';
+    clickIdProvider?: 'meta' | 'google' | 'tiktok' | null;
+    utmCampaign?: string | null;
     [key: string]: unknown;
   };
 }

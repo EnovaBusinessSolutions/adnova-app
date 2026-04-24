@@ -59,6 +59,45 @@ try {
   googleAdsService = require('../services/googleAdsService');
 } catch (_) {}
 
+let clickIdResolver = null;
+try {
+  clickIdResolver = require('../services/clickIdResolver');
+} catch (_) {}
+
+// ─── Attribution field sanitization & multi-source merge ─────
+// Some ad platforms feed back "/" or empty strings as utm_content when the
+// advertiser forgets to set a real value. Drop those so we don't render
+// "adset: /" in the UI.
+const ATTR_TRASH_VALUES = new Set(['', '/', 'null', 'undefined', '(none)', '-', 'nan', 'n/a', 'na']);
+function sanitizeAttrValue(v) {
+  if (v == null) return null;
+  const s = String(v).trim();
+  if (!s) return null;
+  if (ATTR_TRASH_VALUES.has(s.toLowerCase())) return null;
+  // URL-path-looking tokens are almost never valid campaign/adset/ad names.
+  if (s.startsWith('/') && s.length < 40 && !/\s/.test(s)) return null;
+  return s;
+}
+
+// Returns the first non-null, sanitized value across candidates (left→right).
+function firstAttrValue(...candidates) {
+  for (const c of candidates) {
+    const v = sanitizeAttrValue(c);
+    if (v) return v;
+  }
+  return null;
+}
+
+// Provider derived from the click id kind, used when we have a click id
+// but no campaign/adset name — so the UI can render "Meta Ads · fbclid …"
+// instead of a blank field.
+function clickIdProviderFor({ fbclid, gclid, ttclid }) {
+  if (fbclid) return 'meta';
+  if (gclid)  return 'google';
+  if (ttclid) return 'tiktok';
+  return null;
+}
+
 const EVENT_BUCKET_ALIASES = {
   page_view: ['page_view', 'pageview', 'view_page'],
   view_item: ['view_item', 'product_view', 'view_product', 'product_detail_view'],
@@ -1401,8 +1440,33 @@ function stitchSnapshotAttribution(snapshot = {}) {
   }
 
   if (snapshot.utm_source) {
+    // Classify by utm_source + utm_medium combined. Without this, rows
+    // where the advertiser set utm_source=fb, utm_medium=paid end up as
+    // channel="paid" → "other", even though they are clearly Meta.
+    const src = String(snapshot.utm_source || '').toLowerCase();
+    const med = String(snapshot.utm_medium || '').toLowerCase();
+    const isPaidMedium = ['paid', 'paid_social', 'paid_search', 'cpc', 'ppc', 'display', 'social'].includes(med);
+
+    let channel;
+    if (['fb', 'facebook', 'ig', 'instagram', 'meta'].some((p) => src.includes(p))) {
+      // Any Meta-family source — if organic is explicitly set, respect it.
+      channel = med === 'organic' ? 'organic_social' : 'meta';
+    } else if (src.includes('tiktok') || src === 'tt') {
+      channel = med === 'organic' ? 'organic_social' : 'tiktok';
+    } else if (src.includes('google') || src === 'googleads' || src === 'adwords') {
+      channel = med === 'organic' ? 'organic_search' : 'google';
+    } else if (isPaidMedium) {
+      // Unknown paid source (e.g. utm_source=newsletter, utm_medium=cpc) —
+      // keep the source as platform and tag the channel per medium semantics.
+      channel = med === 'cpc' || med === 'paid_search' ? 'google' : 'other';
+    } else {
+      // Fall back to utm_medium verbatim; normalizeChannelForStats will
+      // collapse anything unknown to "other".
+      channel = med || 'referral';
+    }
+
     return {
-      channel: snapshot.utm_medium || 'referral',
+      channel,
       platform: snapshot.utm_source,
       campaign: snapshot.utm_campaign || null,
       adset: snapshot.utm_content || null,
@@ -2730,10 +2794,10 @@ router.get('/:account_id', async (req, res) => {
         ? {
             primary: {
               channel: (conv.orderAttributedChannel === 'google' && !String(conv.orderAttributionSnapshot?.utm_medium || '').match(/cpc|paid_search|ads/i) && !String(conv.wooSourceLabel || '').match(/cpc|ads/i) && !conv.orderAttributionSnapshot?.gclid) ? 'organic' : normalizeChannelForStats(conv.orderAttributedChannel),
-              platform: conv?.wooSourceLabel || conv?.orderAttributionSnapshot?.utm_source || conv.orderAttributedChannel,
-              campaign: conv?.orderAttributionSnapshot?.utm_campaign || null,
-              adset: conv?.orderAttributionSnapshot?.utm_content || null,
-              ad: conv?.orderAttributionSnapshot?.utm_term || null,
+              platform: firstAttrValue(conv?.wooSourceLabel, conv?.orderAttributionSnapshot?.utm_source, conv.orderAttributedChannel),
+              campaign: firstAttrValue(conv?.orderAttributionSnapshot?.utm_campaign),
+              adset: firstAttrValue(conv?.orderAttributionSnapshot?.utm_content),
+              ad: firstAttrValue(conv?.orderAttributionSnapshot?.utm_term),
               clickId: conv?.orderAttributionSnapshot?.gclid || conv?.orderAttributionSnapshot?.fbclid || conv?.orderAttributionSnapshot?.ttclid || null,
               confidence: Number(conv.orderAttributionConfidence || 0.75),
               source: String(conv.orderAttributionModel || '').startsWith('woo_') ? 'woo_fallback' : 'orders_sync',
@@ -2743,24 +2807,87 @@ router.get('/:account_id', async (req, res) => {
           }
         : null;
 
-      const finalAttribution = orderStoredAttribution || ((!attribution.isAttributed && wooFallback)
+      // Precedence:
+      //   - last_touch: prefer orderStoredAttribution (the snapshot stored
+      //     alongside the order) because it captures the last touch exactly
+      //     as the platform saw it. Fall back to the model result, then to
+      //     wooFallback.
+      //   - first_touch / linear: prefer the touchpoint-driven `attribution`
+      //     whenever it is attributed (we have enough history to compute it).
+      //     If not attributed, fall back to orderStored → wooFallback.
+      // This fixes the "changing model doesn't move the numbers" bug for
+      // merchants whose orders are pre-attributed at ingest time.
+      const modelUsesFullHistory = attributionModel === 'first_touch' || attributionModel === 'linear';
+      const wooFallbackResult = (!attribution.isAttributed && wooFallback)
         ? {
             primary: wooFallback,
             splits: [{ channel: wooFallback.channel, weight: 1 }],
             isAttributed: true,
           }
-        : attribution);
+        : attribution;
+
+      const finalAttribution = modelUsesFullHistory
+        ? (attribution.isAttributed ? attribution : (orderStoredAttribution || wooFallbackResult))
+        : (orderStoredAttribution || wooFallbackResult);
+
+      // ─── Multi-source enrichment ──────────────────────────
+      // After the chosen primary is picked, fill in any null
+      // campaign/adset/ad/clickId from any other available snapshot or
+      // session. This is what makes an order with only a fbclid still look
+      // meaningful when its ad carried proper UTMs in a prior session.
+      const enrichSources = [
+        conv.orderAttributionSnapshot,
+        checkout?.attributionSnapshot,
+        conv.payloadSnapshot,
+        ...sessions.map(toSnapshotFromSession),
+      ].filter(Boolean);
+
+      const enrichedPrimary = { ...finalAttribution.primary };
+      enrichedPrimary.campaign = firstAttrValue(
+        enrichedPrimary.campaign,
+        ...enrichSources.map((s) => s?.utm_campaign),
+      );
+      enrichedPrimary.adset = firstAttrValue(
+        enrichedPrimary.adset,
+        ...enrichSources.map((s) => s?.utm_content),
+      );
+      enrichedPrimary.ad = firstAttrValue(
+        enrichedPrimary.ad,
+        ...enrichSources.map((s) => s?.utm_term),
+      );
+      if (!enrichedPrimary.clickId) {
+        for (const s of enrichSources) {
+          const cid = s?.gclid || s?.fbclid || s?.ttclid;
+          if (cid) { enrichedPrimary.clickId = cid; break; }
+        }
+      }
+      enrichedPrimary.platform = firstAttrValue(
+        enrichedPrimary.platform,
+        ...enrichSources.map((s) => s?.utm_source),
+      );
+
+      // Click-ID provider: when we still don't have a campaign name but we
+      // DO have a click id, surface which ad platform it came from so the UI
+      // can render "Meta Ads · fbclid: …" instead of a blank attribution.
+      const clickIdProvider = clickIdProviderFor({
+        fbclid: enrichSources.find((s) => s?.fbclid)?.fbclid
+               || (enrichedPrimary.clickId && enrichedPrimary.platform?.toLowerCase()?.match(/facebook|instagram|meta|fb/) ? enrichedPrimary.clickId : null),
+        gclid:  enrichSources.find((s) => s?.gclid)?.gclid
+               || (enrichedPrimary.clickId && enrichedPrimary.platform?.toLowerCase()?.match(/google|cpc/) ? enrichedPrimary.clickId : null),
+        ttclid: enrichSources.find((s) => s?.ttclid)?.ttclid,
+      });
 
       return {
         ...conv,
         userKey: resolvedUserKey,
         sessionId: resolvedSessionId,
         attributedChannel: finalAttribution.primary.channel,
-        attributedPlatform: finalAttribution.primary.platform,
-        attributedCampaign: finalAttribution.primary.campaign || null,
-        attributedAdset: finalAttribution.primary.adset || null,
-        attributedAd: finalAttribution.primary.ad || null,
-        attributedClickId: finalAttribution.primary.clickId || null,
+        attributedPlatform: enrichedPrimary.platform,
+        attributedCampaign: enrichedPrimary.campaign,
+        attributedAdset: enrichedPrimary.adset,
+        attributedAd: enrichedPrimary.ad,
+        attributedClickId: enrichedPrimary.clickId,
+        attributedClickIdProvider: clickIdProvider,
         attributionConfidence: finalAttribution.primary.confidence,
         attributionSource: finalAttribution.primary.source,
         attributionModel,
@@ -2938,6 +3065,46 @@ router.get('/:account_id', async (req, res) => {
       }
     }
 
+    // Per-user purchase-history index: for repeat buyers (B2B, subscriptions),
+    // the journey of order N must not cross back over the purchase of order
+    // N-1 of the same userKey/customerId. Without this, stitching pulls the
+    // entire lifetime history of the customer into one journey.
+    const priorPurchaseTsByUserKey = new Map();
+    const priorPurchaseTsByCustomerId = new Map();
+    for (const c of modeledConversions) {
+      const t = new Date(c.createdAt).getTime();
+      if (!Number.isFinite(t)) continue;
+      if (c.userKey) {
+        const k = String(c.userKey);
+        const arr = priorPurchaseTsByUserKey.get(k) || [];
+        arr.push(t);
+        priorPurchaseTsByUserKey.set(k, arr);
+      }
+      if (c.customerId) {
+        const k = String(c.customerId);
+        const arr = priorPurchaseTsByCustomerId.get(k) || [];
+        arr.push(t);
+        priorPurchaseTsByCustomerId.set(k, arr);
+      }
+    }
+    for (const arr of priorPurchaseTsByUserKey.values()) arr.sort((a, b) => a - b);
+    for (const arr of priorPurchaseTsByCustomerId.values()) arr.sort((a, b) => a - b);
+
+    // Largest purchase ts strictly less than convTs across userKey + customerId.
+    function priorBoundaryTs(userKey, customerId, convTs) {
+      let boundary = -Infinity;
+      const scan = (arr) => {
+        if (!arr) return;
+        // arr is ascending — find last element < convTs
+        for (let i = arr.length - 1; i >= 0; i--) {
+          if (arr[i] < convTs) { if (arr[i] > boundary) boundary = arr[i]; break; }
+        }
+      };
+      if (userKey)    scan(priorPurchaseTsByUserKey.get(String(userKey)));
+      if (customerId) scan(priorPurchaseTsByCustomerId.get(String(customerId)));
+      return boundary === -Infinity ? null : boundary;
+    }
+
     const recentPurchases = await Promise.all(recentConversions.map(async (conv) => {
       const key = `${conv.orderId || ''}::${conv.checkoutToken || ''}::${new Date(conv.createdAt).toISOString()}`;
       const detailed = detailedByKey.get(key);
@@ -2953,9 +3120,16 @@ router.get('/:account_id', async (req, res) => {
         ...(conv.orderId ? (eventsByOrderId.get(String(conv.orderId)) || []) : []),
         ...(conv.checkoutToken ? (eventsByCheckoutToken.get(String(conv.checkoutToken)) || []) : [])
       ];
-      
+
       const inferredSessionId = conv.sessionId || purchaseEventCandidates.find(e => e.sessionId)?.sessionId;
       const inferredUserKey = conv.userKey || purchaseEventCandidates.find(e => e.userKey)?.userKey;
+
+      // Cut the lookback at the previous purchase of the same buyer so we
+      // don't pull in sessions/events that belong to their earlier order.
+      const boundaryTs = priorBoundaryTs(inferredUserKey, conv.customerId, convTs);
+      const effectiveEarliestTs = boundaryTs != null
+        ? Math.max(earliestTs, boundaryTs + 1)
+        : earliestTs;
 
       const rawStitched = [
           ...(conv.orderId ? (eventsByOrderId.get(String(conv.orderId)) || []) : []),
@@ -2967,9 +3141,12 @@ router.get('/:account_id', async (req, res) => {
 
       const uniqueEventsMap = new Map();
       for (const ev of rawStitched) {
-          if (!uniqueEventsMap.has(ev.eventId) && ev._evTs >= earliestTs && ev._evTs <= latestTs) {
-             uniqueEventsMap.set(ev.eventId, ev);
-          }
+          if (uniqueEventsMap.has(ev.eventId)) continue;
+          if (ev._evTs < effectiveEarliestTs || ev._evTs > latestTs) continue;
+          // Drop events that explicitly belong to a different order of the
+          // same buyer (belt-and-suspenders against wide time windows).
+          if (ev.orderId && conv.orderId && String(ev.orderId) !== String(conv.orderId)) continue;
+          uniqueEventsMap.set(ev.eventId, ev);
       }
 
       let stitchedEvents = Array.from(uniqueEventsMap.values())
@@ -2982,7 +3159,7 @@ router.get('/:account_id', async (req, res) => {
             where: {
               accountId: account_id,
               createdAt: {
-                gte: new Date(earliestTs),
+                gte: new Date(effectiveEarliestTs),
                 lte: new Date(latestTs),
               },
               OR: [
@@ -3008,7 +3185,11 @@ router.get('/:account_id', async (req, res) => {
           });
 
           if (customerLinkedEvents.length) {
-            stitchedEvents = [...stitchedEvents, ...customerLinkedEvents]
+            // Same order-scope filter as the primary path.
+            const scoped = customerLinkedEvents.filter((ev) =>
+              !(ev.orderId && conv.orderId && String(ev.orderId) !== String(conv.orderId))
+            );
+            stitchedEvents = [...stitchedEvents, ...scoped]
               .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
           }
         } catch (_) {
@@ -3037,13 +3218,21 @@ router.get('/:account_id', async (req, res) => {
           productId: ev.productId || null,
           productName: ev?.rawPayload?.product_name || ev?.rawPayload?.item_name || ev?.rawPayload?.name || null,
           itemId: ev?.rawPayload?.item_id || ev?.rawPayload?.product_id || null,
-          utmSource: ev?.rawPayload?.utm_source || null,
+          utmSource: sanitizeAttrValue(ev?.rawPayload?.utm_source),
+          utmMedium: sanitizeAttrValue(ev?.rawPayload?.utm_medium),
+          utmCampaign: sanitizeAttrValue(ev?.rawPayload?.utm_campaign),
+          utmContent: sanitizeAttrValue(ev?.rawPayload?.utm_content),
+          utmTerm: sanitizeAttrValue(ev?.rawPayload?.utm_term),
+          referrer: ev?.rawPayload?.referrer || ev?.rawPayload?.document_referrer || null,
+          sessionId: ev.sessionId || null,
+          userKey: ev.userKey || null,
           checkoutToken: ev.checkoutToken || null,
           orderId: ev.orderId || null,
           fbp: ev?.rawPayload?.fbp || ev?.rawPayload?._fbp || ev?.rawPayload?.user_data?.fbp || null,
           fbc: ev?.rawPayload?.fbc || ev?.rawPayload?._fbc || ev?.rawPayload?.user_data?.fbc || null,
           ttclid: ev?.rawPayload?.ttclid || ev?.rawPayload?.user_data?.ttclid || null,
           gclid: ev?.rawPayload?.gclid || ev?.rawPayload?.user_data?.gclid || null,
+          fbclid: ev?.rawPayload?.fbclid || ev?.rawPayload?.user_data?.fbclid || null,
           clickId: ev?.rawPayload?.click_id || null,
           customerEmail: ev?.rawPayload?.user_data?.em || ev?.rawPayload?.customer_email || ev?.rawPayload?.user_email || ev?.rawPayload?.email || null,
           clientIp: ev?.rawPayload?.user_data?.client_ip_address || ev?.rawPayload?.client_ip_address || ev?.rawPayload?.client_ip || ev?.rawPayload?.ip || null,
@@ -3056,6 +3245,71 @@ router.get('/:account_id', async (req, res) => {
         events: journeyEvents,
       };
     }));
+
+    // ─── Post-enrichment of click IDs from journey events ──
+    // If the order-level attribution didn't capture a click id (common when
+    // the webhook/platform snapshot doesn't carry fbclid), but a journey
+    // event does, copy it up. This lets the UI render "Meta Ads · click ID"
+    // and lets the resolver attempt a lookup on the next request.
+    for (const p of recentPurchases) {
+      if (p.attributedClickId && p.attributedClickIdProvider) continue;
+
+      // Prefer the earliest event — the click id is captured on landing.
+      let fb = null, gc = null, tt = null;
+      for (const ev of (p.events || [])) {
+        if (!fb) fb = ev.fbclid || null;
+        if (!gc) gc = ev.gclid || null;
+        if (!tt) tt = ev.ttclid || null;
+        if (fb || gc || tt) break;
+      }
+      if (!p.attributedClickId) {
+        p.attributedClickId = gc || fb || tt || null;
+      }
+      if (!p.attributedClickIdProvider) {
+        p.attributedClickIdProvider = gc ? 'google' : fb ? 'meta' : tt ? 'tiktok' : null;
+      }
+    }
+
+    // ─── Click-ID → campaign name resolution (best effort) ──
+    // For orders that have a click id (gclid/fbclid/ttclid) but no campaign
+    // name, query the ad platform to fill in campaign / adset / ad. This is
+    // capped to the first 20 orders per request and runs with a soft timeout
+    // so a slow Google Ads call never blocks the dashboard.
+    try {
+      if (clickIdResolver && recentPurchases.length) {
+        const toResolve = [];
+        for (const p of recentPurchases) {
+          if (p.attributedCampaign) continue;
+          const cid = p.attributedClickId;
+          if (!cid) continue;
+          const provider = p.attributedClickIdProvider;
+          const clickDate = p.events?.[0]?.capturedAt || p.events?.[0]?.createdAt || p.createdAt;
+          if (provider === 'google') toResolve.push({ gclid: cid, clickDate, accountId: account_id, __ref: p });
+          else if (provider === 'meta') toResolve.push({ fbclid: cid, clickDate, accountId: account_id, __ref: p });
+          else if (provider === 'tiktok') toResolve.push({ ttclid: cid, clickDate, accountId: account_id, __ref: p });
+          if (toResolve.length >= 20) break;
+        }
+
+        if (toResolve.length) {
+          const resolved = await clickIdResolver.resolveMany(
+            toResolve.map(({ __ref, ...rest }) => rest),
+            { concurrency: 4, timeoutMs: 6000 },
+          );
+          for (const item of toResolve) {
+            const key = item.gclid ? `gclid:${item.gclid}` : item.fbclid ? `fbclid:${item.fbclid}` : item.ttclid ? `ttclid:${item.ttclid}` : null;
+            const r = key ? resolved.get(key) : null;
+            if (!r) continue;
+            const p = item.__ref;
+            if (!p.attributedCampaign && r.campaign) p.attributedCampaign = r.campaign;
+            if (!p.attributedAdset && r.adset)       p.attributedAdset    = r.adset;
+            if (!p.attributedAd && r.ad)             p.attributedAd       = r.ad;
+            p.attributionSource = `${p.attributionSource || 'click_id'}+${r.resolvedVia}`;
+          }
+        }
+      }
+    } catch (err) {
+      console.warn('[Analytics API] click-id resolution skipped:', err?.message);
+    }
 
     // Enrich recentPurchases with Clarity session recording URLs.
     // Wrapped in try/catch: columns may not exist yet if DB migration is pending.

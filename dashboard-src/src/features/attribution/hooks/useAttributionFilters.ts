@@ -3,7 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 import type { AttributionModel, RangePreset } from '../types';
 
 const VALID_MODELS: AttributionModel[] = [
-  'last_touch', 'first_touch', 'linear', 'time_decay', 'position',
+  'last_touch', 'first_touch', 'linear',
 ];
 const VALID_RANGES: RangePreset[] = [7, 14, 30, 90];
 
