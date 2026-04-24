@@ -15,7 +15,7 @@ import { DashboardLayout } from "@/components/DashboardLayout";
 import { Card, CardContent } from "@/components/ui/card";
 import { ParticleField } from "@/components/ParticleField";
 import chatgptLogo from "@/assets/chatgpt.png";
-import claudeLogo from "@/assets/claude.png";
+import claudeLogo from "@/assets/logos/claude.png";
 import adrayIcon from "@/assets/adray-icon.png";
 import { ArrowRight, Check } from "lucide-react";
 
