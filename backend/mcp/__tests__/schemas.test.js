@@ -244,6 +244,28 @@ describe('Error Contract', () => {
     expect(parsed.spend).toBe(100);
   });
 
+  test('createToolResponse includes structuredContent for objects', () => {
+    const resp = createToolResponse({ channel: 'meta', spend: 100 });
+    expect(resp.structuredContent).toEqual({ channel: 'meta', spend: 100 });
+  });
+
+  test('createToolResponse wraps arrays as { items } for structuredContent', () => {
+    const resp = createToolResponse([{ a: 1 }, { a: 2 }]);
+    expect(resp.structuredContent).toEqual({ items: [{ a: 1 }, { a: 2 }] });
+  });
+
+  test('createToolResponse does not set structuredContent for primitives', () => {
+    const resp = createToolResponse('hello');
+    expect(resp.structuredContent).toBeUndefined();
+    expect(resp.content[0].text).toBe('"hello"');
+  });
+
+  test('createToolErrorResponse does not include structuredContent', () => {
+    const resp = createToolErrorResponse('UNAUTHORIZED', 'get_ad_performance');
+    expect(resp.structuredContent).toBeUndefined();
+    expect(resp.isError).toBe(true);
+  });
+
   test('all ERROR_CODES have required fields', () => {
     for (const [key, val] of Object.entries(ERROR_CODES)) {
       expect(val.error_code).toBe(key);

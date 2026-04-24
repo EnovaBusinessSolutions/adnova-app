@@ -3,6 +3,7 @@
 const metaAdapter = require('../adapters/meta');
 const googleAdapter = require('../adapters/google');
 const { validateDateRange, resolveDateRangeDefaults, getAdsetPerformanceInput } = require('../schemas/tool-schemas');
+const { getAdsetPerformanceOutput } = require('../schemas/output-schemas');
 const { createToolResponse, createToolErrorResponse } = require('../schemas/errors');
 const { isGoogleReadsFromDbOnly } = require('../snapshot/config');
 const { resolveToolUserId } = require('../mcpContext');
@@ -14,10 +15,17 @@ function register(server, mcpUserId) {
   server.registerTool(
     TOOL_NAME,
     {
+      title: 'Get ad set / ad group performance',
       description:
-        'Retrieves performance metrics broken down by ad set (Meta) or ad group (Google) for a campaign.',
+        'Retrieves performance metrics broken down by ad set (Meta) or ad group (Google) for a single campaign. Pass the campaign_id returned by get_campaign_performance.',
       inputSchema: getAdsetPerformanceInput,
-      annotations: { readOnlyHint: true },
+      outputSchema: getAdsetPerformanceOutput,
+      annotations: {
+        readOnlyHint: true,
+        idempotentHint: true,
+        destructiveHint: false,
+        openWorldHint: true,
+      },
     },
     async (params, extra) => {
       try {

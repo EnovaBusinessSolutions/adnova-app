@@ -68,7 +68,16 @@ function createToolError(code, toolName, extraMessage) {
 }
 
 function createToolResponse(data) {
-  return { content: [{ type: 'text', text: JSON.stringify(data) }] };
+  const response = { content: [{ type: 'text', text: JSON.stringify(data) }] };
+  // Modern MCP clients (Claude.ai, Inspector) consume `structuredContent` to
+  // access typed tool output without re-parsing JSON from the text block. The
+  // field is optional and ignored by older clients. Objects pass through
+  // as-is; arrays are wrapped as { items: [...] } because the SDK requires
+  // structuredContent to be an object.
+  if (data && typeof data === 'object') {
+    response.structuredContent = Array.isArray(data) ? { items: data } : data;
+  }
+  return response;
 }
 
 function createToolErrorResponse(code, toolName, extraMessage) {

@@ -1,6 +1,7 @@
 'use strict';
 
 const { validateDateRange, resolveComparisonDefaults, getDateComparisonInput } = require('../schemas/tool-schemas');
+const { getDateComparisonOutput } = require('../schemas/output-schemas');
 const { createToolResponse, createToolErrorResponse } = require('../schemas/errors');
 const { resolveDateComparisonPayload } = require('../services/adsPerformanceResolve');
 const { resolveToolUserId } = require('../mcpContext');
@@ -12,10 +13,17 @@ function register(server, mcpUserId) {
   server.registerTool(
     TOOL_NAME,
     {
+      title: 'Compare two date periods',
       description:
-        'Compares ad performance metrics between two date periods for a given channel.',
+        'Compares performance metrics between two date periods for a given channel (or "all"). Period A is the baseline, period B is the more recent window; the response includes absolute and percentage deltas.',
       inputSchema: getDateComparisonInput,
-      annotations: { readOnlyHint: true },
+      outputSchema: getDateComparisonOutput,
+      annotations: {
+        readOnlyHint: true,
+        idempotentHint: true,
+        destructiveHint: false,
+        openWorldHint: true,
+      },
     },
     async (params, extra) => {
       try {

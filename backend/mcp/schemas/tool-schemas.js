@@ -2,7 +2,9 @@
 
 const { z } = require('zod');
 
-const dateString = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Expected YYYY-MM-DD');
+const dateString = z
+  .string()
+  .regex(/^\d{4}-\d{2}-\d{2}$/, 'Expected YYYY-MM-DD');
 // LLM clients (Claude.ai, ChatGPT) sometimes send null for date_from/date_to
 // when the user asks an open-ended question like "what was my spend last week".
 // Accept null/undefined at the schema level and default in the handler via
@@ -10,60 +12,111 @@ const dateString = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Expected YYYY-MM-DD'
 // calls forgiving for the user without losing regex validation when a real
 // date string is provided.
 const dateStringOrNull = dateString.nullable().optional();
-const channelAds = z.enum(['meta', 'google']);
-const channelAll = z.enum(['meta', 'google', 'all']);
-const channelComparison = z.enum(['meta', 'google', 'shopify', 'all']);
-const granularity = z.enum(['day', 'week', 'month', 'total']).default('total');
-const campaignStatus = z.enum(['active', 'paused', 'all']).default('all');
+
+const dateFromDesc =
+  'Start of the date range (inclusive) as YYYY-MM-DD in UTC. Omit or pass null to default to 30 days before date_to.';
+const dateToDesc =
+  'End of the date range (inclusive) as YYYY-MM-DD in UTC. Omit or pass null to default to today.';
+
+const channelAds = z
+  .enum(['meta', 'google'])
+  .describe('Ad channel: "meta" for Facebook/Instagram Ads, "google" for Google Ads.');
+const channelAll = z
+  .enum(['meta', 'google', 'all'])
+  .describe('Ad channel: "meta", "google", or "all" to fetch both in parallel.');
+const channelComparison = z
+  .enum(['meta', 'google', 'shopify', 'all'])
+  .describe('Source to compare: "meta", "google", "shopify", or "all" combined.');
+const granularity = z
+  .enum(['day', 'week', 'month', 'total'])
+  .default('total')
+  .describe(
+    'Time bucketing for rows: "day" / "week" / "month" produce a time series; "total" returns a single aggregate.'
+  );
+const campaignStatus = z
+  .enum(['active', 'paused', 'all'])
+  .default('all')
+  .describe('Filter campaigns by status. Defaults to "all".');
 
 const getAccountInfoInput = z.object({});
 
 const getAdPerformanceInput = z.object({
   channel: channelAll,
-  date_from: dateStringOrNull,
-  date_to: dateStringOrNull,
+  date_from: dateStringOrNull.describe(dateFromDesc),
+  date_to: dateStringOrNull.describe(dateToDesc),
   granularity: granularity.optional(),
 });
 
 const getCampaignPerformanceInput = z.object({
   channel: channelAds,
-  date_from: dateStringOrNull,
-  date_to: dateStringOrNull,
-  limit: z.number().int().min(1).max(50).default(10).optional(),
+  date_from: dateStringOrNull.describe(dateFromDesc),
+  date_to: dateStringOrNull.describe(dateToDesc),
+  limit: z
+    .number()
+    .int()
+    .min(1)
+    .max(50)
+    .default(10)
+    .optional()
+    .describe('Maximum number of campaigns to return, ordered by spend desc. 1–50, defaults to 10.'),
   status: campaignStatus.optional(),
 });
 
 const getAdsetPerformanceInput = z.object({
   channel: channelAds,
-  campaign_id: z.string().min(1),
-  date_from: dateStringOrNull,
-  date_to: dateStringOrNull,
+  campaign_id: z
+    .string()
+    .min(1)
+    .describe(
+      'Platform campaign ID to drill into. Obtain it from get_campaign_performance.campaigns[].campaign_id.'
+    ),
+  date_from: dateStringOrNull.describe(dateFromDesc),
+  date_to: dateStringOrNull.describe(dateToDesc),
 });
 
 const getShopifyRevenueInput = z.object({
-  date_from: dateStringOrNull,
-  date_to: dateStringOrNull,
+  date_from: dateStringOrNull.describe(dateFromDesc),
+  date_to: dateStringOrNull.describe(dateToDesc),
   granularity: granularity.optional(),
 });
 
 const getShopifyProductsInput = z.object({
-  date_from: dateStringOrNull,
-  date_to: dateStringOrNull,
-  sort_by: z.enum(['revenue', 'units_sold']).default('revenue').optional(),
-  limit: z.number().int().min(1).max(50).default(10).optional(),
+  date_from: dateStringOrNull.describe(dateFromDesc),
+  date_to: dateStringOrNull.describe(dateToDesc),
+  sort_by: z
+    .enum(['revenue', 'units_sold'])
+    .default('revenue')
+    .optional()
+    .describe('Sort the product ranking by "revenue" (default) or "units_sold".'),
+  limit: z
+    .number()
+    .int()
+    .min(1)
+    .max(50)
+    .default(10)
+    .optional()
+    .describe('Maximum number of products to return. 1–50, defaults to 10.'),
 });
 
 const getChannelSummaryInput = z.object({
-  date_from: dateStringOrNull,
-  date_to: dateStringOrNull,
+  date_from: dateStringOrNull.describe(dateFromDesc),
+  date_to: dateStringOrNull.describe(dateToDesc),
 });
 
 const getDateComparisonInput = z.object({
   channel: channelComparison,
-  period_a_from: dateStringOrNull,
-  period_a_to: dateStringOrNull,
-  period_b_from: dateStringOrNull,
-  period_b_to: dateStringOrNull,
+  period_a_from: dateStringOrNull.describe(
+    'Start of period A (the earlier/baseline window). YYYY-MM-DD in UTC. Defaults anchor off period_b.'
+  ),
+  period_a_to: dateStringOrNull.describe(
+    'End of period A (inclusive). YYYY-MM-DD in UTC.'
+  ),
+  period_b_from: dateStringOrNull.describe(
+    'Start of period B (the more recent window). YYYY-MM-DD in UTC. Defaults to 30 days before period_b_to.'
+  ),
+  period_b_to: dateStringOrNull.describe(
+    'End of period B (inclusive). YYYY-MM-DD in UTC. Defaults to today.'
+  ),
 });
 
 function validateDateRange(from, to, maxDays = 365) {

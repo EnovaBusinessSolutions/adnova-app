@@ -2,6 +2,7 @@
 
 const { getAccountInfo } = require('../adapters/account');
 const { getAccountInfoInput } = require('../schemas/tool-schemas');
+const { getAccountInfoOutput } = require('../schemas/output-schemas');
 const { createToolResponse, createToolErrorResponse } = require('../schemas/errors');
 const { resolveToolUserId } = require('../mcpContext');
 const { checkToolScopes } = require('../scopes');
@@ -12,10 +13,17 @@ function register(server, mcpUserId) {
   server.registerTool(
     TOOL_NAME,
     {
+      title: 'Get connected accounts',
       description:
-        'Returns metadata about the merchant\'s connected ad accounts and Shopify store (account names, IDs, currency, time zone, connection status).',
+        "Returns metadata about the merchant's connected ad accounts and Shopify store (account names, IDs, currency, time zone, connection status). Call first to discover which platforms (meta, google, shopify) can be queried.",
       inputSchema: getAccountInfoInput,
-      annotations: { readOnlyHint: true },
+      outputSchema: getAccountInfoOutput,
+      annotations: {
+        readOnlyHint: true,
+        idempotentHint: true,
+        destructiveHint: false,
+        openWorldHint: true,
+      },
     },
     async (_params, extra) => {
       try {
