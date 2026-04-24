@@ -2082,9 +2082,12 @@ app.listen(PORT, () => {
 // ── SessionPacket backfill: build packets for READY recordings that pre-date ──
 // ── the build-packet pipeline, so /bri shows Sessions for every recording. ──
 // Runs 3 min after boot (letting the sweep start first) then every 15 min.
+// Uses the INLINE builder (/build-packets-now) so it works even when the
+// BullMQ worker is busy draining finalize jobs. No LLM calls here —
+// analyze-session is enqueued for the worker to pick up asynchronously.
 (function startPacketBackfill() {
   const BACKFILL_INTERVAL_MS = 15 * 60 * 1000;
-  const backfillUrl = `http://localhost:${PORT}/collect/x/backfill-packets`;
+  const backfillUrl = `http://localhost:${PORT}/collect/x/build-packets-now`;
   const secret = process.env.INTERNAL_CRON_SECRET || 'adray-internal';
 
   async function runBackfill() {
@@ -2092,11 +2095,13 @@ app.listen(PORT, () => {
       const r = await fetch(backfillUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-adray-internal': secret },
-        body: JSON.stringify({ limit: 1000 }),
+        // 50 per run — each involves an R2 download. Larger backlogs drain
+        // across subsequent runs.
+        body: JSON.stringify({ limit: 50 }),
       });
       const data = await r.json().catch(() => ({}));
-      if (data.enqueued > 0) {
-        console.log(`[packetBackfill] enqueued=${data.enqueued} candidates=${data.candidates} alreadyHavePacket=${data.alreadyHavePacket}`);
+      if (data.built > 0 || data.failed > 0) {
+        console.log(`[packetBackfill] built=${data.built} failed=${data.failed} candidates=${data.candidates} alreadyHavePacket=${data.alreadyHavePacket}`);
       }
     } catch (e) {
       console.warn('[packetBackfill] Backfill failed:', e.message);
