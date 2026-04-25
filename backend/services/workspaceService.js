@@ -212,6 +212,65 @@ async function transferOwnership({ workspace, currentOwnerMembership, targetMemb
   };
 }
 
+// ============================================================
+// Invitations (Fase 3B)
+// ============================================================
+
+const crypto = require('crypto');
+const WorkspaceInvitation = require('../models/WorkspaceInvitation');
+
+const INVITATION_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 días
+
+/**
+ * Genera un par { token, tokenHash }.
+ * El token plano se manda al email. El hash se guarda en DB.
+ */
+function generateInvitationToken() {
+  const token = crypto.randomBytes(32).toString('hex'); // 64 chars
+  const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+  return { token, tokenHash };
+}
+
+/**
+ * Hashea un token incoming (en accept) para buscarlo en DB.
+ */
+function hashInvitationToken(token) {
+  return crypto.createHash('sha256').update(String(token || '')).digest('hex');
+}
+
+/**
+ * Devuelve true si la invitación está activa (no aceptada, no rechazada,
+ * no revocada, no expirada).
+ */
+function isInvitationActive(invitation) {
+  if (!invitation) return false;
+  if (invitation.acceptedAt || invitation.declinedAt || invitation.revokedAt) return false;
+  if (invitation.expiresAt && new Date(invitation.expiresAt).getTime() < Date.now()) return false;
+  return true;
+}
+
+/**
+ * Busca una invitación activa para (workspaceId, email).
+ * Retorna null si no hay.
+ */
+async function findActiveInvitation(workspaceId, email) {
+  const candidates = await WorkspaceInvitation.find({
+    workspaceId,
+    email: String(email || '').toLowerCase().trim(),
+    acceptedAt: null,
+    declinedAt: null,
+    revokedAt: null,
+    expiresAt: { $gt: new Date() },
+  });
+  return candidates[0] || null;
+}
+
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+function isValidEmail(email) {
+  return typeof email === 'string' && EMAIL_REGEX.test(email.trim());
+}
+
 module.exports = {
   RESERVED_SLUGS,
   deriveBaseSlug,
@@ -220,4 +279,10 @@ module.exports = {
   createWorkspaceForUser,
   countActiveOwners,
   transferOwnership,
+  generateInvitationToken,
+  hashInvitationToken,
+  isInvitationActive,
+  findActiveInvitation,
+  isValidEmail,
+  INVITATION_TTL_MS,
 };

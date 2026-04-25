@@ -386,4 +386,165 @@ router.delete(
   }
 );
 
+/* ============================================================
+ * POST /api/workspaces/:id/invitations
+ * Body: { email, role? }
+ * Crea invitación + envía email.
+ * ============================================================ */
+router.post(
+  '/api/workspaces/:id/invitations',
+  ensureAuthenticated,
+  resolveWorkspace,
+  requirePermission('invitations.create'),
+  async (req, res) => {
+    try {
+      const WorkspaceInvitation = require('../models/WorkspaceInvitation');
+      const { sendWorkspaceInvitationEmail } = require('../services/emailService');
+
+      const rawEmail = String((req.body && req.body.email) || '').trim().toLowerCase();
+      const role = (req.body && req.body.role) || 'MEMBER';
+
+      if (!rawEmail) return res.status(400).json({ error: 'EMAIL_REQUIRED' });
+      if (!workspaceService.isValidEmail(rawEmail)) {
+        return res.status(400).json({ error: 'EMAIL_INVALID' });
+      }
+      if (!['ADMIN', 'MEMBER'].includes(role)) {
+        return res.status(400).json({ error: 'INVALID_ROLE' });
+      }
+
+      // ¿Ya es miembro activo?
+      const allActive = await WorkspaceMember.find({
+        workspaceId: req.workspace._id,
+        status: 'ACTIVE',
+      }).populate('userId', 'email');
+      const alreadyMember = allActive.find(
+        (m) => m.userId && String(m.userId.email || '').toLowerCase() === rawEmail
+      );
+      if (alreadyMember) return res.status(409).json({ error: 'ALREADY_A_MEMBER' });
+
+      // ¿Ya tiene invitación activa?
+      const existing = await workspaceService.findActiveInvitation(req.workspace._id, rawEmail);
+      if (existing) return res.status(409).json({ error: 'INVITATION_ALREADY_PENDING' });
+
+      // Crear invitación.
+      const { token, tokenHash } = workspaceService.generateInvitationToken();
+      const expiresAt = new Date(Date.now() + workspaceService.INVITATION_TTL_MS);
+
+      const invitation = await WorkspaceInvitation.create({
+        workspaceId: req.workspace._id,
+        email: rawEmail,
+        role,
+        tokenHash,
+        invitedBy: req.user._id,
+        expiresAt,
+      });
+
+      // Enviar email (fail-safe).
+      const appUrl = (process.env.APP_URL || 'https://adray.ai').replace(/\/$/, '');
+      const acceptUrl = `${appUrl}/invitations/${token}`;
+
+      const inviterName =
+        (req.user.firstName && `${req.user.firstName} ${req.user.lastName || ''}`.trim()) ||
+        req.user.name ||
+        req.user.email;
+
+      const emailResult = await sendWorkspaceInvitationEmail({
+        toEmail: rawEmail,
+        inviterName,
+        workspaceName: req.workspace.name,
+        role,
+        acceptUrl,
+        expiresAt,
+      });
+
+      return res.status(201).json({
+        invitation: {
+          _id: invitation._id,
+          workspaceId: invitation.workspaceId,
+          email: invitation.email,
+          role: invitation.role,
+          expiresAt: invitation.expiresAt,
+          createdAt: invitation.createdAt,
+        },
+        emailDelivered: !!emailResult.sent,
+        emailSkippedReason: emailResult.skipped ? emailResult.reason : null,
+      });
+    } catch (err) {
+      console.error('[POST /api/workspaces/:id/invitations]', err);
+      return res.status(500).json({ error: 'INTERNAL_ERROR' });
+    }
+  }
+);
+
+/* ============================================================
+ * GET /api/workspaces/:id/invitations
+ * Lista invitaciones pendientes (no aceptadas, no revocadas, no expiradas).
+ * ============================================================ */
+router.get(
+  '/api/workspaces/:id/invitations',
+  ensureAuthenticated,
+  resolveWorkspace,
+  requirePermission('invitations.view'),
+  async (req, res) => {
+    try {
+      const WorkspaceInvitation = require('../models/WorkspaceInvitation');
+      const invitations = await WorkspaceInvitation.find({
+        workspaceId: req.workspace._id,
+        acceptedAt: null,
+        declinedAt: null,
+        revokedAt: null,
+        expiresAt: { $gt: new Date() },
+      })
+        .select('-tokenHash')
+        .sort({ createdAt: -1 })
+        .lean();
+
+      return res.json({ invitations });
+    } catch (err) {
+      console.error('[GET /api/workspaces/:id/invitations]', err);
+      return res.status(500).json({ error: 'INTERNAL_ERROR' });
+    }
+  }
+);
+
+/* ============================================================
+ * DELETE /api/workspaces/:id/invitations/:invitationId
+ * Revoca una invitación (marca revokedAt).
+ * ============================================================ */
+router.delete(
+  '/api/workspaces/:id/invitations/:invitationId',
+  ensureAuthenticated,
+  resolveWorkspace,
+  requirePermission('invitations.revoke'),
+  async (req, res) => {
+    try {
+      const WorkspaceInvitation = require('../models/WorkspaceInvitation');
+      const { invitationId } = req.params;
+
+      if (!mongoose.isValidObjectId(invitationId)) {
+        return res.status(400).json({ error: 'INVALID_INVITATION_ID' });
+      }
+
+      const inv = await WorkspaceInvitation.findOne({
+        _id: invitationId,
+        workspaceId: req.workspace._id,
+      });
+
+      if (!inv) return res.status(404).json({ error: 'INVITATION_NOT_FOUND' });
+      if (inv.acceptedAt) return res.status(400).json({ error: 'INVITATION_ALREADY_ACCEPTED' });
+      if (inv.revokedAt) return res.status(400).json({ error: 'INVITATION_ALREADY_REVOKED' });
+
+      await WorkspaceInvitation.updateOne(
+        { _id: inv._id },
+        { $set: { revokedAt: new Date() } }
+      );
+
+      return res.json({ ok: true });
+    } catch (err) {
+      console.error('[DELETE /api/workspaces/:id/invitations/:invitationId]', err);
+      return res.status(500).json({ error: 'INTERNAL_ERROR' });
+    }
+  }
+);
+
 module.exports = router;

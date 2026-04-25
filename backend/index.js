@@ -204,6 +204,7 @@ const mcpdataRoutes = require("./routes/mcpdata");
 // Workspaces (Fase 3A)
 const workspacesRoutes = require('./routes/workspaces');
 const meRoutes = require('./routes/me');
+const invitationsRoutes = require('./routes/invitations');
 
 const app = express();
 
@@ -843,6 +844,7 @@ app.use("/api/stripe", stripeRouter);
 // Workspaces (Fase 3A)
 app.use(workspacesRoutes);
 app.use(meRoutes);
+app.use(invitationsRoutes);
 
 /* =========================
  * CSP (orden importante)

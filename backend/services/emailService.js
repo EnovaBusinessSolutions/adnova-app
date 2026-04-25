@@ -3,6 +3,15 @@
 
 const { sendMail, verify, HAS_SMTP, FROM } = require('./mailer');
 
+// Resend client for workspace invitations (Fase 3B).
+const { Resend } = require('resend');
+const RESEND_API_KEY = process.env.RESEND_API_KEY || '';
+const FROM_RESEND = process.env.RESEND_FROM_ADDRESS || 'Adray <noreply@adray.ai>';
+let _resendClient = null;
+if (RESEND_API_KEY) {
+  _resendClient = new Resend(RESEND_API_KEY);
+}
+
 const {
   welcomeEmail,
   resetPasswordEmail,
@@ -589,6 +598,132 @@ async function sendTestEmail() {
   }
 }
 
+// ============================================================
+// Workspace Invitations (Fase 3B) — Resend-based
+// ============================================================
+
+function escapeHtml(s) {
+  return String(s || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function renderInvitationHtml({
+  inviterName,
+  workspaceName,
+  role,
+  acceptUrl,
+  expiresAtFormatted,
+}) {
+  const safeInviter = escapeHtml(inviterName || 'Un compañero');
+  const safeWorkspace = escapeHtml(workspaceName);
+  const safeRole = escapeHtml(role);
+  const safeUrl = escapeHtml(acceptUrl);
+  const safeExpires = escapeHtml(expiresAtFormatted);
+
+  return `<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Invitación a ${safeWorkspace}</title>
+</head>
+<body style="margin:0;padding:0;background:#0b0b10;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:#e8e8ee;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#0b0b10;padding:40px 16px;">
+    <tr>
+      <td align="center">
+        <table role="presentation" width="560" cellpadding="0" cellspacing="0" style="max-width:560px;background:#16161f;border:1px solid #2a2a3a;border-radius:16px;overflow:hidden;">
+          <tr>
+            <td style="padding:32px 32px 16px 32px;">
+              <div style="font-size:14px;letter-spacing:2px;color:#9b87f5;text-transform:uppercase;">Adray</div>
+              <h1 style="margin:16px 0 8px 0;font-size:24px;line-height:1.3;color:#ffffff;font-weight:600;">
+                ${safeInviter} te invitó a <span style="color:#9b87f5;">${safeWorkspace}</span>
+              </h1>
+              <p style="margin:0 0 24px 0;font-size:15px;line-height:1.6;color:#b8b8c5;">
+                Te asignaron el rol de <strong style="color:#ffffff;">${safeRole}</strong>. Acepta para empezar a colaborar en el workspace.
+              </p>
+              <div style="margin:28px 0;">
+                <a href="${safeUrl}" style="display:inline-block;background:#9b87f5;color:#ffffff;text-decoration:none;padding:14px 24px;border-radius:10px;font-weight:600;font-size:15px;">
+                  Aceptar invitación
+                </a>
+              </div>
+              <p style="margin:24px 0 0 0;font-size:13px;line-height:1.6;color:#7c7c8a;">
+                Si el botón no funciona, copia y pega este link en tu navegador:<br>
+                <a href="${safeUrl}" style="color:#9b87f5;word-break:break-all;">${safeUrl}</a>
+              </p>
+              <p style="margin:24px 0 0 0;font-size:12px;color:#6a6a78;">
+                Esta invitación expira el ${safeExpires}.
+              </p>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:20px 32px;border-top:1px solid #2a2a3a;font-size:12px;color:#6a6a78;">
+              Si no esperabas esta invitación, ignora este correo.
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`;
+}
+
+/**
+ * Envía un email de invitación a un workspace vía Resend.
+ * Si Resend no está configurado, retorna { skipped: true }. No throws.
+ */
+async function sendWorkspaceInvitationEmail({
+  toEmail,
+  inviterName,
+  workspaceName,
+  role,
+  acceptUrl,
+  expiresAt,
+}) {
+  if (!toEmail) {
+    return { sent: false, skipped: true, reason: 'NO_RECIPIENT' };
+  }
+
+  if (!_resendClient) {
+    console.warn('[emailService] RESEND_API_KEY missing, skipping invitation email to', toEmail);
+    return { sent: false, skipped: true, reason: 'NO_API_KEY' };
+  }
+
+  const expiresFormatted =
+    expiresAt instanceof Date
+      ? expiresAt.toLocaleDateString('es-MX', {
+          year: 'numeric', month: 'long', day: 'numeric',
+        })
+      : String(expiresAt);
+
+  const html = renderInvitationHtml({
+    inviterName,
+    workspaceName,
+    role,
+    acceptUrl,
+    expiresAtFormatted: expiresFormatted,
+  });
+
+  const subject = `${inviterName || 'Alguien'} te invitó a ${workspaceName} en Adray`;
+
+  try {
+    const result = await _resendClient.emails.send({
+      from: FROM_RESEND,
+      to: toEmail,
+      subject,
+      html,
+    });
+    return { sent: true, id: result?.id || result?.data?.id || null };
+  } catch (err) {
+    console.error('[emailService] Resend send failed for', toEmail, err?.message || err);
+    return { sent: false, error: err?.message || 'UNKNOWN' };
+  }
+}
+
 module.exports = {
   sendVerifyEmail,
   sendWelcomeEmail,
@@ -599,4 +734,6 @@ module.exports = {
   sendTestEmail,
   buildVerifyUrl,
   buildResetPasswordUrl,
+  sendWorkspaceInvitationEmail,
+  renderInvitationHtml,
 };
