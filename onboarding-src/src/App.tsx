@@ -57,7 +57,14 @@ function ResumeOnboarding() {
     );
   }
 
-  if (user.onboardingStep === 'COMPLETE') {
+  // Si ya completó el onboarding, redirect al dashboard.
+  // Excepción: si está en /success, dejamos que se vea la pantalla de
+  // confirmación final antes de mandar al user al dashboard. El usuario
+  // hace click en "Continuar al dashboard" desde Success cuando termine.
+  if (
+    user.onboardingStep === 'COMPLETE' &&
+    !location.pathname.startsWith('/success')
+  ) {
     window.location.href = '/dashboard';
     return <LoadingScreen />;
   }

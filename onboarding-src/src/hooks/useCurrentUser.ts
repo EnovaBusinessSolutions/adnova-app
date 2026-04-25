@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 
-type Me = {
+export type Me = {
   _id: string;
   email: string;
   name?: string;
@@ -18,7 +18,17 @@ async function fetchMe(): Promise<Me | null> {
   const res = await fetch("/api/me", { credentials: "include" });
   if (res.status === 401) return null;
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  return res.json();
+
+  const json = await res.json();
+
+  // El endpoint /api/me envuelve los datos en { ok, data, authenticated, user, plan, ... }.
+  // Extraemos `data` (que tiene todos los campos del User) o `user` como fallback.
+  // Si el response no tiene wrapper (formato antiguo o cache), usamos el response completo.
+  const u = json?.data || json?.user || json;
+
+  if (!u || !u._id) return null;
+
+  return u as Me;
 }
 
 export function useCurrentUser() {
@@ -26,5 +36,6 @@ export function useCurrentUser() {
     queryKey: ["me"],
     queryFn: fetchMe,
     retry: 0,
+    staleTime: 30_000,
   });
 }

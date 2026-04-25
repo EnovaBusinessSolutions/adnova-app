@@ -30,12 +30,17 @@ export function useUpdateProfile() {
   return useMutation({
     mutationFn: patchProfile,
     onSuccess: (data) => {
-      // El endpoint devuelve { ok, user }. Inyectamos directo en el cache
-      // para que useCurrentUser tenga los datos frescos sin esperar refetch.
+      // PATCH /api/me/profile devuelve { ok, user: { ...campos actualizados } }.
+      // Hacemos MERGE con el cache existente (que tiene los campos del GET /api/me)
+      // para no perder claves que el PATCH no devuelve (plan, subscription, etc.).
       if (data?.user) {
-        queryClient.setQueryData(['me'], data.user);
+        queryClient.setQueryData<any>(['me'], (old: any) => ({
+          ...(old || {}),
+          ...data.user,
+        }));
       }
-      queryClient.invalidateQueries({ queryKey: ['me'] });
+      // No invalidamos: setQueryData ya tiene los datos frescos del server.
+      // Si necesitamos refetch eventual, staleTime de useCurrentUser lo maneja.
     },
   });
 }

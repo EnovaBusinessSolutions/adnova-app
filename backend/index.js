@@ -1649,11 +1649,17 @@ app.get("/api/me", async (req, res) => {
 
   try {
     const u = await User.findById(req.user._id)
-      .select("name email plan subscription createdAt onboardingComplete")
+      .select(
+        "name email plan subscription createdAt onboardingComplete " +
+        "firstName lastName jobTitle primaryFocus profilePhotoUrl " +
+        "onboardingStep defaultWorkspaceId lastActiveWorkspaceId"
+      )
       .lean();
 
     if (!u) return res.status(401).json({ authenticated: false });
 
+    // Objeto base con todos los campos. El frontend del onboarding (useCurrentUser)
+    // extrae `data` como fuente del User. El dashboard legacy lee `user` y `plan`.
     const data = {
       _id: String(u._id),
       id: String(u._id),
@@ -1662,19 +1668,28 @@ app.get("/api/me", async (req, res) => {
       onboardingComplete: !!u.onboardingComplete,
       plan: u.plan || "gratis",
       createdAt: u.createdAt || null,
+
+      // Campos nuevos de workspaces (Fase 1+).
+      firstName: u.firstName || "",
+      lastName: u.lastName || "",
+      jobTitle: u.jobTitle || "",
+      primaryFocus: u.primaryFocus || null,
+      profilePhotoUrl: u.profilePhotoUrl || "",
+      onboardingStep: u.onboardingStep || "NONE",
+      defaultWorkspaceId: u.defaultWorkspaceId
+        ? String(u.defaultWorkspaceId)
+        : null,
+      lastActiveWorkspaceId: u.lastActiveWorkspaceId
+        ? String(u.lastActiveWorkspaceId)
+        : null,
     };
 
     return res.json({
       ok: true,
       data,
       authenticated: true,
-      user: {
-        _id: u._id,
-        name: u.name || null,
-        email: u.email,
-        onboardingComplete: !!u.onboardingComplete,
-        createdAt: u.createdAt || null,
-      },
+      // `user` con los mismos campos para retrocompatibilidad.
+      user: data,
       plan: u.plan || "gratis",
       subscription: u.subscription || null,
       intercom: buildIntercomPayload(u),
