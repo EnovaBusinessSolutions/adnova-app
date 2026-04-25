@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import { Check } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ParticleField } from "@/components/ParticleField";
+import adrayLogo from "@/assets/adray-logo.png";
 
 type Step = 1 | 2 | 3;
 
@@ -34,11 +35,14 @@ export function OnboardingLayout({
         {/* Header */}
         <header className="border-b border-white/[0.06] bg-[rgba(8,8,12,0.55)] backdrop-blur-xl">
           <div className="mx-auto flex max-w-5xl items-center justify-between px-6 py-5">
-            <div className="flex items-center gap-3">
-              <div className="grid h-9 w-9 place-items-center rounded-xl bg-gradient-to-br from-[#b55cff] via-[#9b7cff] to-[#7c6df0] shadow-[0_0_24px_rgba(181,92,255,0.45)]">
-                <span className="text-sm font-bold text-white">A</span>
-              </div>
-              <span className="gradient-text text-lg font-semibold tracking-tight">Adray</span>
+            <div className="flex items-center">
+              <img
+                src={adrayLogo}
+                alt="Adray"
+                draggable={false}
+                className="h-9 w-auto object-contain select-none"
+                style={{ filter: "drop-shadow(0 0 18px rgba(181,92,255,0.34))" }}
+              />
             </div>
 
             {/* Stepper */}

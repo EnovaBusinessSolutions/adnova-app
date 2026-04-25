@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { OnboardingLayout } from "@/layouts/OnboardingLayout";
+import { PremiumSelect } from "@/components/PremiumSelect";
 import { cn } from "@/lib/utils";
 import {
   WORKSPACE_ICONS,
@@ -123,7 +124,7 @@ export default function Step1Workspace() {
             onChange={(e) => setName(e.target.value)}
             placeholder="Ej. Shogun, Gymshark, Pela Case"
             maxLength={64}
-            className="w-full rounded-xl border border-white/[0.08] bg-[rgba(10,10,14,0.6)] px-4 py-3 text-foreground placeholder:text-white/30 focus:border-[#b55cff]/50 focus:outline-none focus:ring-2 focus:ring-[#b55cff]/20 transition"
+            className="w-full rounded-xl border border-white/[0.08] bg-[rgba(10,10,14,0.65)] px-4 py-3 text-foreground placeholder:text-white/30 transition-all duration-200 hover:border-white/[0.14] focus:border-[#b55cff]/55 focus:outline-none focus:ring-2 focus:ring-[#b55cff]/22 focus:shadow-[0_0_28px_rgba(181,92,255,0.18)]"
           />
           {slug && (
             <div className="text-xs text-white/40">
@@ -142,7 +143,7 @@ export default function Step1Workspace() {
               setSlug(e.target.value.toLowerCase().replace(/\s/g, "-"));
             }}
             maxLength={48}
-            className="w-full rounded-xl border border-white/[0.08] bg-[rgba(10,10,14,0.6)] px-4 py-3 font-mono text-sm text-foreground placeholder:text-white/30 focus:border-[#b55cff]/50 focus:outline-none focus:ring-2 focus:ring-[#b55cff]/20 transition"
+            className="w-full rounded-xl border border-white/[0.08] bg-[rgba(10,10,14,0.65)] px-4 py-3 font-mono text-sm text-foreground placeholder:text-white/30 transition-all duration-200 hover:border-white/[0.14] focus:border-[#b55cff]/55 focus:outline-none focus:ring-2 focus:ring-[#b55cff]/22 focus:shadow-[0_0_28px_rgba(181,92,255,0.18)]"
           />
           {slug && !isValidSlugFormat(slug) && (
             <div className="text-xs text-amber-400">
@@ -177,16 +178,12 @@ export default function Step1Workspace() {
           <label className="text-xs uppercase tracking-widest text-white/50">
             Vertical de industria
           </label>
-          <select
+          <PremiumSelect
+            options={INDUSTRY_VERTICALS.map((v) => ({ key: v.key, label: v.label }))}
             value={industry}
-            onChange={(e) => setIndustry(e.target.value as IndustryVertical)}
-            className="w-full rounded-xl border border-white/[0.08] bg-[rgba(10,10,14,0.6)] px-4 py-3 text-foreground focus:border-[#b55cff]/50 focus:outline-none focus:ring-2 focus:ring-[#b55cff]/20 transition"
-          >
-            <option value="" disabled>Selecciona tu vertical…</option>
-            {INDUSTRY_VERTICALS.map((v) => (
-              <option key={v.key} value={v.key}>{v.label}</option>
-            ))}
-          </select>
+            onChange={(v) => setIndustry(v as IndustryVertical)}
+            placeholder="Selecciona tu vertical…"
+          />
         </div>
 
         {error && (
@@ -199,7 +196,7 @@ export default function Step1Workspace() {
           <button
             type="submit"
             disabled={!canSubmit || mutation.isPending}
-            className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-[#b55cff] to-[#9b7cff] px-6 py-3 text-sm font-semibold text-white shadow-[0_0_22px_rgba(181,92,255,0.32)] transition hover:shadow-[0_0_32px_rgba(181,92,255,0.5)] disabled:cursor-not-allowed disabled:opacity-50"
+            className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-[#b55cff] to-[#9b7cff] px-6 py-3 text-sm font-semibold text-white shadow-[0_0_22px_rgba(181,92,255,0.34)] transition-all duration-300 hover:shadow-[0_0_36px_rgba(181,92,255,0.52)] hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:translate-y-0"
           >
             {mutation.isPending ? "Creando…" : "Continuar →"}
           </button>

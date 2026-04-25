@@ -36,8 +36,8 @@ export default function Success() {
 
       <div className="relative z-10 mx-auto max-w-2xl px-6 py-24">
         <div className="flex flex-col items-center text-center">
-          <div className="grid h-16 w-16 place-items-center rounded-full border border-emerald-400/30 bg-emerald-400/10 shadow-[0_0_24px_rgba(52,211,153,0.32)]">
-            <Check className="h-7 w-7 text-emerald-400" />
+          <div className="grid h-20 w-20 place-items-center rounded-full border border-emerald-400/35 bg-gradient-to-br from-emerald-500/15 to-emerald-400/5 shadow-[0_0_36px_rgba(52,211,153,0.34),inset_0_1px_0_rgba(255,255,255,0.12)]">
+            <Check className="h-9 w-9 text-emerald-300" />
           </div>
           <div className="mt-5 text-xs uppercase tracking-[0.22em] text-[#b55cff]">
             Workspace listo
@@ -75,7 +75,7 @@ export default function Success() {
           <button
             type="button"
             onClick={goToDashboard}
-            className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-[#b55cff] to-[#9b7cff] px-6 py-3 text-sm font-semibold text-white shadow-[0_0_22px_rgba(181,92,255,0.32)] transition hover:shadow-[0_0_32px_rgba(181,92,255,0.5)]"
+            className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-[#b55cff] to-[#9b7cff] px-6 py-3 text-sm font-semibold text-white shadow-[0_0_22px_rgba(181,92,255,0.34)] transition-all duration-300 hover:shadow-[0_0_36px_rgba(181,92,255,0.52)] hover:-translate-y-0.5"
           >
             Continuar al dashboard →
           </button>

@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { Plus, X, Crown } from 'lucide-react';
 import { OnboardingLayout } from '@/layouts/OnboardingLayout';
+import { PremiumSelect } from '@/components/PremiumSelect';
 import { useCurrentUser } from '@/hooks/useCurrentUser';
 import { useUpdateProfile } from '@/hooks/useUpdateProfile';
 import { INVITABLE_ROLES, isValidEmail } from '@/config/workspaceCatalogs';
@@ -161,7 +162,7 @@ export default function Step3Team() {
 
       <div className="mt-8 space-y-3">
         {/* Owner card */}
-        <div className="flex items-center justify-between rounded-2xl border border-[#b55cff]/30 bg-[rgba(181,92,255,0.07)] adray-border-flow px-4 py-3">
+        <div className="flex items-center justify-between rounded-2xl border border-[#b55cff]/30 bg-[rgba(181,92,255,0.07)] adray-border-flow px-4 py-3 shadow-[0_0_24px_rgba(181,92,255,0.12)]">
           <div className="flex items-center gap-3">
             <div className="grid h-9 w-9 place-items-center rounded-full bg-gradient-to-br from-[#b55cff] via-[#9b7cff] to-[#7c6df0] text-sm font-semibold text-white">
               {ownerInitials}
@@ -179,23 +180,25 @@ export default function Step3Team() {
 
         {/* Invitation rows */}
         {rows.map((row, idx) => (
-          <div key={idx} className="flex gap-2">
+          <div key={idx} className="flex gap-2 hover:-translate-y-0.5 transition-transform duration-200">
             <input
               type="email"
               value={row.email}
               onChange={(e) => updateRow(idx, { email: e.target.value })}
               placeholder="teammate@brand.com"
-              className="flex-1 rounded-xl border border-white/[0.08] bg-[rgba(10,10,14,0.55)] px-4 py-3 text-sm text-foreground placeholder:text-white/30 focus:border-[#b55cff]/50 focus:outline-none focus:ring-2 focus:ring-[#b55cff]/20 transition"
+              className="flex-1 rounded-xl border border-white/[0.08] bg-[rgba(10,10,14,0.65)] px-4 py-3 text-sm text-foreground placeholder:text-white/30 transition-all duration-200 hover:border-white/[0.14] focus:border-[#b55cff]/55 focus:outline-none focus:ring-2 focus:ring-[#b55cff]/22 focus:shadow-[0_0_28px_rgba(181,92,255,0.18)]"
             />
-            <select
+            <PremiumSelect
+              className="w-32"
+              options={INVITABLE_ROLES.map((r) => ({
+                key: r.key,
+                label: r.label,
+                description: r.description,
+              }))}
               value={row.role}
-              onChange={(e) => updateRow(idx, { role: e.target.value as 'ADMIN' | 'MEMBER' })}
-              className="w-28 rounded-xl border border-white/[0.08] bg-[rgba(10,10,14,0.55)] px-3 py-3 text-sm text-foreground focus:border-[#b55cff]/50 focus:outline-none transition"
-            >
-              {INVITABLE_ROLES.map((r) => (
-                <option key={r.key} value={r.key}>{r.label}</option>
-              ))}
-            </select>
+              onChange={(v) => updateRow(idx, { role: v as 'ADMIN' | 'MEMBER' })}
+              placeholder="Rol"
+            />
             {rows.length > 1 && (
               <button
                 type="button"
@@ -212,7 +215,7 @@ export default function Step3Team() {
         <button
           type="button"
           onClick={addRow}
-          className="flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-white/[0.12] bg-transparent px-4 py-3 text-sm text-white/55 transition hover:border-[#b55cff]/30 hover:bg-[rgba(181,92,255,0.05)] hover:text-[#e6d2ff]"
+          className="group flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-white/[0.12] bg-transparent px-4 py-3 text-sm text-white/55 transition-all duration-200 hover:border-[#b55cff]/35 hover:bg-[rgba(181,92,255,0.05)] hover:text-[#e6d2ff]"
         >
           <Plus className="h-4 w-4" />
           Agregar otro compañero
@@ -262,8 +265,8 @@ export default function Step3Team() {
             onClick={handleSend}
             disabled={sending || updateProfile.isPending || wsLoading}
             className={cn(
-              'inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-[#b55cff] to-[#9b7cff] px-6 py-3 text-sm font-semibold text-white shadow-[0_0_22px_rgba(181,92,255,0.32)] transition hover:shadow-[0_0_32px_rgba(181,92,255,0.5)]',
-              (sending || updateProfile.isPending || wsLoading) && 'cursor-not-allowed opacity-50'
+              'inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-[#b55cff] to-[#9b7cff] px-6 py-3 text-sm font-semibold text-white shadow-[0_0_22px_rgba(181,92,255,0.34)] transition-all duration-300 hover:shadow-[0_0_36px_rgba(181,92,255,0.52)] hover:-translate-y-0.5',
+              (sending || updateProfile.isPending || wsLoading) && 'cursor-not-allowed opacity-50 hover:translate-y-0'
             )}
           >
             {sending ? 'Enviando…' : 'Enviar invitaciones →'}

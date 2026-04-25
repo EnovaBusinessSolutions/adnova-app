@@ -1,6 +1,7 @@
 import { useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { OnboardingLayout } from '@/layouts/OnboardingLayout';
+import { PremiumSelect } from '@/components/PremiumSelect';
 import { useCurrentUser } from '@/hooks/useCurrentUser';
 import { useUpdateProfile } from '@/hooks/useUpdateProfile';
 import { PRIMARY_FOCUS_OPTIONS, type PrimaryFocus } from '@/config/workspaceCatalogs';
@@ -72,30 +73,21 @@ export default function Step2Profile() {
         </p>
       </div>
 
-      <form onSubmit={handleSubmit} className="mt-8 space-y-6">
-        {/* Avatar (solo iniciales por ahora) */}
-        <div className="flex items-center gap-4">
-          <div className="grid h-16 w-16 place-items-center rounded-full bg-gradient-to-br from-[#b55cff] via-[#9b7cff] to-[#7c6df0] shadow-[0_0_22px_rgba(181,92,255,0.36)] text-xl font-semibold text-white">
-            {initials || '?'}
-          </div>
-          <div className="space-y-1">
-            <div className="text-sm font-medium text-foreground">Foto de perfil</div>
-            <div className="flex gap-2">
-              <button
-                type="button"
-                disabled
-                title="Disponible próximamente"
-                className="rounded-lg border border-white/10 bg-white/[0.03] px-3 py-1.5 text-xs text-white/30"
-              >
-                Subir foto
-              </button>
-              <span className="self-center text-xs text-white/40">
-                Por ahora usamos tus iniciales.
-              </span>
-            </div>
-          </div>
+      {/* Avatar centrado y grande */}
+      <div className="flex flex-col items-center gap-3 py-2 mt-6">
+        <div
+          className={cn(
+            "grid h-24 w-24 place-items-center rounded-full text-2xl font-semibold tracking-wide text-white",
+            "bg-gradient-to-br from-[#b55cff] via-[#9b7cff] to-[#7c6df0]",
+            "shadow-[0_0_36px_rgba(181,92,255,0.42),inset_0_1px_0_rgba(255,255,255,0.18)]",
+            "ring-1 ring-white/15"
+          )}
+        >
+          {initials || "?"}
         </div>
+      </div>
 
+      <form onSubmit={handleSubmit} className="mt-6 space-y-6">
         {/* First / Last name */}
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
           <div className="space-y-2">
@@ -106,7 +98,7 @@ export default function Step2Profile() {
               onChange={(e) => setFirstName(e.target.value)}
               maxLength={32}
               placeholder="Ej. Victor"
-              className="w-full rounded-xl border border-white/[0.08] bg-[rgba(10,10,14,0.6)] px-4 py-3 text-foreground placeholder:text-white/30 focus:border-[#b55cff]/50 focus:outline-none focus:ring-2 focus:ring-[#b55cff]/20 transition"
+              className="w-full rounded-xl border border-white/[0.08] bg-[rgba(10,10,14,0.65)] px-4 py-3 text-foreground placeholder:text-white/30 transition-all duration-200 hover:border-white/[0.14] focus:border-[#b55cff]/55 focus:outline-none focus:ring-2 focus:ring-[#b55cff]/22 focus:shadow-[0_0_28px_rgba(181,92,255,0.18)]"
             />
           </div>
           <div className="space-y-2">
@@ -117,7 +109,7 @@ export default function Step2Profile() {
               onChange={(e) => setLastName(e.target.value)}
               maxLength={32}
               placeholder="Ej. Huerta"
-              className="w-full rounded-xl border border-white/[0.08] bg-[rgba(10,10,14,0.6)] px-4 py-3 text-foreground placeholder:text-white/30 focus:border-[#b55cff]/50 focus:outline-none focus:ring-2 focus:ring-[#b55cff]/20 transition"
+              className="w-full rounded-xl border border-white/[0.08] bg-[rgba(10,10,14,0.65)] px-4 py-3 text-foreground placeholder:text-white/30 transition-all duration-200 hover:border-white/[0.14] focus:border-[#b55cff]/55 focus:outline-none focus:ring-2 focus:ring-[#b55cff]/22 focus:shadow-[0_0_28px_rgba(181,92,255,0.18)]"
             />
           </div>
         </div>
@@ -133,7 +125,7 @@ export default function Step2Profile() {
             onChange={(e) => setJobTitle(e.target.value)}
             maxLength={64}
             placeholder="Ej. Founder, Head of Growth, CMO"
-            className="w-full rounded-xl border border-white/[0.08] bg-[rgba(10,10,14,0.6)] px-4 py-3 text-foreground placeholder:text-white/30 focus:border-[#b55cff]/50 focus:outline-none focus:ring-2 focus:ring-[#b55cff]/20 transition"
+            className="w-full rounded-xl border border-white/[0.08] bg-[rgba(10,10,14,0.65)] px-4 py-3 text-foreground placeholder:text-white/30 transition-all duration-200 hover:border-white/[0.14] focus:border-[#b55cff]/55 focus:outline-none focus:ring-2 focus:ring-[#b55cff]/22 focus:shadow-[0_0_28px_rgba(181,92,255,0.18)]"
           />
         </div>
 
@@ -142,16 +134,12 @@ export default function Step2Profile() {
           <label className="text-xs uppercase tracking-widest text-white/50">
             ¿Cuál describe mejor tu rol?
           </label>
-          <select
+          <PremiumSelect
+            options={PRIMARY_FOCUS_OPTIONS.map((o) => ({ key: o.key, label: o.label }))}
             value={primaryFocus}
-            onChange={(e) => setPrimaryFocus(e.target.value as PrimaryFocus)}
-            className="w-full rounded-xl border border-white/[0.08] bg-[rgba(10,10,14,0.6)] px-4 py-3 text-foreground focus:border-[#b55cff]/50 focus:outline-none focus:ring-2 focus:ring-[#b55cff]/20 transition"
-          >
-            <option value="" disabled>Selecciona una opción…</option>
-            {PRIMARY_FOCUS_OPTIONS.map((o) => (
-              <option key={o.key} value={o.key}>{o.label}</option>
-            ))}
-          </select>
+            onChange={(v) => setPrimaryFocus(v as PrimaryFocus)}
+            placeholder="Selecciona una opción…"
+          />
         </div>
 
         {error && (
@@ -172,8 +160,8 @@ export default function Step2Profile() {
             type="submit"
             disabled={!canSubmit || updateProfile.isPending}
             className={cn(
-              'inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-[#b55cff] to-[#9b7cff] px-6 py-3 text-sm font-semibold text-white shadow-[0_0_22px_rgba(181,92,255,0.32)] transition hover:shadow-[0_0_32px_rgba(181,92,255,0.5)]',
-              (!canSubmit || updateProfile.isPending) && 'cursor-not-allowed opacity-50'
+              'inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-[#b55cff] to-[#9b7cff] px-6 py-3 text-sm font-semibold text-white shadow-[0_0_22px_rgba(181,92,255,0.34)] transition-all duration-300 hover:shadow-[0_0_36px_rgba(181,92,255,0.52)] hover:-translate-y-0.5',
+              (!canSubmit || updateProfile.isPending) && 'cursor-not-allowed opacity-50 hover:translate-y-0'
             )}
           >
             {updateProfile.isPending ? 'Guardando…' : 'Continuar →'}
