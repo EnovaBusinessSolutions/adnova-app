@@ -364,6 +364,60 @@ const userSchema = new mongoose.Schema(
     planStartedAt: { type: Date, default: Date.now },
 
     subscription: subscriptionSchema,
+
+    /**
+     * ============================
+     * Workspaces (multi-tenant)
+     * ============================
+     */
+
+    // Profile fields recolectados en Step 2 del onboarding nuevo.
+    firstName: { type: String, trim: true, default: '' },
+    lastName: { type: String, trim: true, default: '' },
+    jobTitle: { type: String, trim: true, default: '' },
+
+    primaryFocus: {
+      type: String,
+      enum: [
+        'FOUNDER_CEO',
+        'HEAD_OF_GROWTH',
+        'HEAD_OF_MARKETING',
+        'MARKETING_MANAGER',
+        'PERFORMANCE_MARKETER',
+        'ANALYTICS',
+        'AGENCY',
+        'ENGINEERING',
+        'OTHER',
+        null,
+      ],
+      default: null,
+    },
+
+    profilePhotoUrl: { type: String, trim: true, default: '' },
+
+    // Estado del NUEVO onboarding de workspaces (independiente de onboardingComplete).
+    // El campo viejo onboardingComplete sigue funcionando como hasta ahora; este nuevo
+    // campo lo usaremos en Fase 4 para reanudar el flujo de creación de workspace.
+    onboardingStep: {
+      type: String,
+      enum: ['NONE', 'WORKSPACE_CREATED', 'PROFILE_COMPLETE', 'COMPLETE'],
+      default: 'NONE',
+      index: true,
+    },
+
+    // Workspace navigation: cuál es el workspace por defecto y cuál fue el último activo.
+    defaultWorkspaceId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Workspace',
+      default: null,
+      index: true,
+    },
+    lastActiveWorkspaceId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Workspace',
+      default: null,
+      index: true,
+    },
   },
   { timestamps: true }
 );

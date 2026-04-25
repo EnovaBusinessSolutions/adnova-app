@@ -11,7 +11,7 @@
     "build:landing:sync": "npm --prefix landing-adray run build && node scripts/sync-landing.cjs",
     "build:dashboard": "npm --prefix dashboard-src ci && npm --prefix dashboard-src run build",
     "build": "npm run build:landing && npm run build:dashboard && npm run prisma:generate",
-    "test": "jest backend/mcp/__tests__/ --verbose",
+    "test": "jest backend/mcp/__tests__/ backend/__tests__/ --verbose",
     "test:mcp": "jest backend/mcp/__tests__/ --verbose",
     "test:shopify-session": "node scripts/shopify-session-smoke.js",
     "seed:oauth-client": "node backend/scripts/seed-oauth-client.js",
@@ -25,7 +25,9 @@
     "db:pc:check": "node scripts/platform-connections-dedupe.js --check",
     "db:pc:dedupe": "node scripts/platform-connections-dedupe.js --apply",
     "db:oauth:drop-access-ttl": "node backend/scripts/drop-oauth-token-access-ttl-index.js",
-    "db:oauth:drop-access-ttl:dry": "node backend/scripts/drop-oauth-token-access-ttl-index.js --dry-run"
+    "db:oauth:drop-access-ttl:dry": "node backend/scripts/drop-oauth-token-access-ttl-index.js --dry-run",
+    "db:backfill:workspaces": "node backend/scripts/backfillWorkspaces.js",
+    "db:backfill:workspaces:dry": "node backend/scripts/backfillWorkspaces.js --dry-run"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1030.0",
@@ -67,6 +69,7 @@
     "resend": "^6.9.4",
     "rrweb": "^2.0.0-alpha.13",
     "rrweb-player": "^2.0.0-alpha.13",
+    "slugify": "^1.6.9",
     "stripe": "^19.1.0",
     "zod": "^3.25.76"
   },
@@ -74,6 +77,7 @@
     "@shopify/app-bridge": "^3.7.10",
     "@types/node": "^25.0.10",
     "jest": "^30.3.0",
+    "mongodb-memory-server": "^10.4.3",
     "typescript": "^5.9.3"
   }
 }

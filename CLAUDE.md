@@ -11,8 +11,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Tech Stack
 
 - **Backend:** Node.js + Express (port 3000), entry point `backend/index.js`
-- **Primary DB:** PostgreSQL via Prisma ORM (`backend/prisma/schema.prisma`)
-- **Legacy DB:** MongoDB via Mongoose (`backend/models/`) — auth, OAuth tokens, integration metadata
+- **Primary DB:** MongoDB via Mongoose (`backend/models/`) — fuente de verdad del producto. Aquí viven User, OAuth tokens, MetaAccount, GoogleAccount, ShopConnections, AnalyticsEvent, McpData, PixelSelection, SignalData, Audit, TaxProfile, Workspace, WorkspaceMember, WorkspaceInvitation, etc.
+- **Aux DB:** PostgreSQL via Prisma ORM (`backend/prisma/schema.prisma`) — usado SOLO para sub-features aisladas: session recordings (`backend/workers/recordingWorker.js`, `backend/services/personResolver.js`) y el pixel auditor (`backend/tsconfig.pixel-auditor.json`). El producto principal NO depende de Postgres. No agregar tablas nuevas a Prisma sin coordinarse con el dueño de esas sub-features.
 - **Cache / Queue:** Redis + BullMQ (`backend/queues/`, `backend/workers/`)
 - **Dashboard:** React 18 + TypeScript + Vite + shadcn-ui + Tailwind (`dashboard-src/`)
   - Attribution panel lives in `dashboard-src/src/features/attribution/` — fully native React (no iframe). Route: `/dashboard/attribution`.
@@ -88,12 +88,13 @@ npm run db:pc:dedupe           # Remove duplicate platform connections
 | `backend/mcp/tools/` | 8 tools: ads performance, revenue, funnel, etc. |
 | `backend/workers/mcpWorker.js` | BullMQ consumer for async MCP jobs |
 
-### Dual-Database Pattern
-PostgreSQL (Prisma) is the **canonical relational store** for: accounts, sessions, events, orders, identity graph, attribution, and merchant snapshots.
+### Database Pattern
 
-MongoDB (Mongoose) is the **legacy store** for: user auth/OAuth tokens, platform connection metadata (Meta, Google), MCP snapshots/cache, and signal data.
+MongoDB (Mongoose) is the **canonical store** for the Adray product: users, OAuth tokens, platform connections (Meta, Google, Shopify), pixel events, MCP data, signal data, audits, workspaces, and workspace memberships.
 
-When adding new features, prefer Prisma/PostgreSQL. Only touch MongoDB models when working with auth, OAuth flows, or MCP snapshot cache.
+PostgreSQL (Prisma) is used only for two isolated sub-features that have their own data domain: session recordings (BRI Phase 4–7 work in `backend/workers/recordingWorker.js`) and the pixel auditor (`backend/tsconfig.pixel-auditor.json`). These sub-features are owned by a separate dev and should not be modified without coordination.
+
+When adding new product features, default to MongoDB/Mongoose unless you are extending session recordings or pixel auditor specifically.
 
 ### Identity Resolution
 The `_adray_uid` cookie is the primary identity key. Fallback chain: `click_id` (URL param) → `customer_id` (from platform) → email/phone hash → browser fingerprint. Identity records live in the `IdentityGraph` Prisma table.
