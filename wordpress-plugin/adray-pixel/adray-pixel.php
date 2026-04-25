@@ -1,10 +1,10 @@
 <?php
 /**
- * Plugin Name: Adnova Pixel
- * Plugin URI: https://adnova.ai
- * Description: Instala automaticamente el pixel de Adnova en tu sitio WordPress y usa el dominio como Site ID.
+ * Plugin Name: Adray Pixel
+ * Plugin URI: https://adray.ai
+ * Description: Instala automaticamente el pixel de Adray en tu sitio WordPress y usa el dominio como Site ID.
  * Version: 1.4.0
- * Author: Adnova
+ * Author: Adray
  * License: GPL-2.0-or-later
  * License URI: https://www.gnu.org/licenses/gpl-2.0.html
  * Text Domain: adnova-pixel
@@ -245,7 +245,7 @@ final class Adnova_Pixel_Plugin {
         }
 
         $info = new stdClass();
-        $info->name = isset($metadata['name']) ? $metadata['name'] : 'Adnova Pixel';
+        $info->name = isset($metadata['name']) ? $metadata['name'] : 'Adray Pixel';
         $info->slug = 'adnova-pixel';
         $info->version = isset($metadata['version']) ? $metadata['version'] : self::VERSION;
         $info->homepage = isset($metadata['homepage']) ? $metadata['homepage'] : '';
@@ -1519,8 +1519,8 @@ final class Adnova_Pixel_Plugin {
 
     public static function register_admin_menu() {
         add_options_page(
-            'Adnova Pixel',
-            'Adnova Pixel',
+            'Adray Pixel',
+            'Adray Pixel',
             'manage_options',
             'adnova-pixel-settings',
             array(__CLASS__, 'render_settings_page')
@@ -1551,7 +1551,7 @@ final class Adnova_Pixel_Plugin {
         $backfill_ok = isset($_GET['adnova_backfill_ok']);
         ?>
         <div class="wrap">
-            <h1>Adnova Pixel — Configuración</h1>
+            <h1>Adray Pixel — Configuración</h1>
 
             <?php if ($backfill_ok): ?>
             <div class="notice notice-success is-dismissible">
@@ -1597,7 +1597,7 @@ final class Adnova_Pixel_Plugin {
                                 value="<?php echo esc_attr($script_url); ?>"
                                 class="large-text"
                             />
-                            <p class="description">No cambiar salvo instrucción de Adnova.</p>
+                            <p class="description">No cambiar salvo instrucción de Adray.</p>
                         </td>
                     </tr>
                 </table>
