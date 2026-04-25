@@ -29,6 +29,8 @@ import GeminiMcp from "./pages/GeminiMcp";
 import InternalAdmin from "./pages/InternalAdmin";
 import Attribution from "./pages/Attribution";
 import BriPipeline from "./pages/BriPipeline";
+import Workspaces, { WorkspacesNew } from "./pages/Workspaces";
+import { WorkspaceProvider } from "./contexts/WorkspaceContext";
 
 const queryClient = new QueryClient();
 
@@ -345,6 +347,10 @@ function AppRoutes() {
       {/* ✅ Logout real (full reload) */}
       <Route path="logout" element={<LogoutRedirect />} />
 
+      {/* Workspaces (placeholder, Fase 5B implementará el panel real) */}
+      <Route path="workspaces" element={<Workspaces />} />
+      <Route path="workspaces/new" element={<WorkspacesNew />} />
+
       {/* 404 local del SPA */}
       <Route path="*" element={<NotFound />} />
     </Routes>
@@ -373,7 +379,9 @@ const App = () => {
         <Sonner />
 
         <BrowserRouter basename={BASENAME}>
-          <AppRoutes />
+          <WorkspaceProvider>
+            <AppRoutes />
+          </WorkspaceProvider>
         </BrowserRouter>
       </TooltipProvider>
     </QueryClientProvider>

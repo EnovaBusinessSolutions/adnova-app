@@ -1,5 +1,5 @@
 // dashboard-src/src/components/Sidebar.tsx
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   ArrowRight,
   ChartColumn,
@@ -8,7 +8,6 @@ import {
   Compass,
   Lock,
   LogOut,
-  Settings,
 } from "lucide-react";
 import { Link, useLocation } from "react-router-dom";
 
@@ -17,6 +16,7 @@ import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/h
 import { Button } from "@/components/ui/button";
 import { PixelSetupWizard } from "@/components/PixelSetupWizard";
 import adrayLogo from "@/assets/adray-logo.png";
+import { WorkspaceSwitcher } from "@/components/WorkspaceSwitcher";
 
 export interface SidebarProps {
   isOpen: boolean;
@@ -44,7 +44,8 @@ const ATTRIBUTION: NavItem[] = [
   { icon: <ChartColumn className="h-5 w-5" />, label: "Attribution", path: ATTRIBUTION_PATH },
 ];
 
-const SECONDARY: NavItem[] = [{ icon: <Settings className="h-5 w-5" />, label: "Settings", path: SETTINGS_PATH }];
+// Settings y Sign out se movieron al dropdown del WorkspaceSwitcher (Fase 5A).
+const SECONDARY: NavItem[] = [];
 
 function isActivePath(pathname: string, target: string) {
   if (target === "/") return pathname === "/";
@@ -476,42 +477,48 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onToggle }) => {
     return () => window.removeEventListener("focus", onFocus);
   }, [refreshPixelStatus]);
 
+  const [emailFromSession, setEmailFromSession] = useState<string | null>(null);
+
   useEffect(() => {
-  let cancelled = false;
+    let cancelled = false;
 
-  const syncDisplayName = async () => {
-    const fromStorage = resolveDisplayName();
-    if (fromStorage) {
-      if (!cancelled) setDisplayName(fromStorage);
-      return;
-    }
+    const syncDisplayName = async () => {
+      const fromStorage = resolveDisplayName();
+      if (fromStorage) {
+        if (!cancelled) setDisplayName(fromStorage);
+      } else {
+        const fromSession = await fetchSessionDisplayName();
+        if (!cancelled) setDisplayName(fromSession);
+      }
 
-    const fromSession = await fetchSessionDisplayName();
-    if (!cancelled) {
-      setDisplayName(fromSession);
-    }
-  };
+      // Fetch email también
+      try {
+        const r = await fetch("/api/me", { credentials: "include" });
+        if (r.ok) {
+          const u = await r.json();
+          if (!cancelled && u?.email) setEmailFromSession(String(u.email));
+        }
+      } catch {}
+    };
 
-  syncDisplayName();
+    syncDisplayName();
 
-  const handleStorageSync = () => {
-    const fromStorage = resolveDisplayName();
-    setDisplayName(fromStorage);
-  };
+    const handleStorageSync = () => {
+      const fromStorage = resolveDisplayName();
+      setDisplayName(fromStorage);
+    };
 
-  window.addEventListener("storage", handleStorageSync);
-  window.addEventListener("focus", syncDisplayName);
+    window.addEventListener("storage", handleStorageSync);
+    window.addEventListener("focus", syncDisplayName);
 
-  return () => {
-    cancelled = true;
-    window.removeEventListener("storage", handleStorageSync);
-    window.removeEventListener("focus", syncDisplayName);
-  };
-}, []);
+    return () => {
+      cancelled = true;
+      window.removeEventListener("storage", handleStorageSync);
+      window.removeEventListener("focus", syncDisplayName);
+    };
+  }, []);
 
   const pathname = location.pathname || "/";
-
-  const footerName = useMemo(() => truncateName(displayName, 20), [displayName]);
 
   const logoutItem: NavItem = {
     icon: <LogOut className="h-5 w-5" />,
@@ -634,29 +641,15 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onToggle }) => {
           </div>
         </div>
 
-        <div className="pt-3">
-          <div className="mb-3 h-px w-full bg-gradient-to-r from-transparent via-white/8 to-transparent" />
-          <NavRow item={logoutItem} isOpen={isOpen} active={false} onLogout={handleLogout} />
-        </div>
       </nav>
 
       <div className="p-3">
-        <div className="adray-sidebar-footer-card overflow-hidden rounded-2xl px-3 py-3">
-          <div className={`flex items-center ${isOpen ? "justify-start" : "justify-center"}`}>
-            <span className="adray-sidebar-ambient-dot relative inline-flex h-2.5 w-2.5 rounded-full bg-[#EB2CFF] shadow-[0_0_12px_rgba(235,44,255,0.7)]">
-              <span className="absolute inset-0 animate-ping rounded-full bg-[#EB2CFF]/30" />
-            </span>
-
-            {isOpen && (
-              <span
-                className="ml-2 max-w-[180px] truncate text-xs font-semibold text-[#BFA9E8]"
-                title={displayName || "Your account"}
-              >
-                {footerName}
-              </span>
-            )}
-          </div>
-        </div>
+        <WorkspaceSwitcher
+          isOpen={isOpen}
+          displayName={displayName}
+          email={emailFromSession}
+          onLogout={handleLogout}
+        />
       </div>
     </aside>
 
