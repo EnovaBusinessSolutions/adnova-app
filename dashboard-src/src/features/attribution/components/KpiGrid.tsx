@@ -42,15 +42,20 @@ export function KpiGrid({ data, loading }: KpiGridProps) {
       ? `${Math.round((s.attributedOrders / s.totalOrders) * 100)}% of orders`
       : undefined;
 
-  const metaRoas =
-    pm?.meta?.spend != null && pm.meta.spend > 0 && pm.meta.revenue != null
-      ? `ROAS ${(pm.meta.revenue / pm.meta.spend).toFixed(2)}x`
-      : undefined;
+  const buildAdsSub = (platform: { spend: number | null; revenue: number | null; transactions?: number | null } | undefined) => {
+    if (!platform || platform.spend == null || platform.spend <= 0) return undefined;
+    const parts: string[] = [];
+    if (platform.transactions != null && platform.transactions > 0) {
+      parts.push(`${formatNumber(platform.transactions)} tx`);
+    }
+    if (platform.revenue != null) {
+      parts.push(`ROAS ${(platform.revenue / platform.spend).toFixed(2)}x`);
+    }
+    return parts.length ? parts.join(' · ') : undefined;
+  };
 
-  const googleRoas =
-    pm?.google?.spend != null && pm.google.spend > 0 && pm.google.revenue != null
-      ? `ROAS ${(pm.google.revenue / pm.google.spend).toFixed(2)}x`
-      : undefined;
+  const metaSub = buildAdsSub(pm?.meta);
+  const googleSub = buildAdsSub(pm?.google);
 
   const kpis: KpiDef[] = [
     {
@@ -119,14 +124,14 @@ export function KpiGrid({ data, loading }: KpiGridProps) {
     {
       label: 'Meta Ads Spend',
       value: pm?.meta?.spend != null ? formatCurrency(pm.meta.spend, currency) : '—',
-      sub: metaRoas,
+      sub: metaSub,
       accent: 'meta',
       icon: <BarChart2 size={13} />,
     },
     {
       label: 'Google Ads Spend',
       value: pm?.google?.spend != null ? formatCurrency(pm.google.spend, currency) : '—',
-      sub: googleRoas,
+      sub: googleSub,
       accent: 'google',
       icon: <TrendingUp size={13} />,
     },

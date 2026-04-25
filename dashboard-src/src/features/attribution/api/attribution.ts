@@ -94,3 +94,34 @@ export async function fetchDataCoverage(
   return res.json() as Promise<DataCoverageResponse>;
 }
 
+export interface Ga4ChannelsResponse {
+  available: boolean;
+  reason?: string;
+  source?: 'ga4';
+  range?: { from?: string | null; to?: string | null; tz?: string | null } | null;
+  channels?: {
+    meta:         { orders: number; revenue: number };
+    google:       { orders: number; revenue: number };
+    tiktok:       { orders: number; revenue: number };
+    organic:      { orders: number; revenue: number };
+    other:        { orders: number; revenue: number };
+    unattributed: { orders: number; revenue: number };
+  };
+  totalOrders?: number;
+  totalRevenue?: number;
+  generatedAt?: string | null;
+  raw?: Array<{ channel: string; conversions: number; revenue: number; sessions: number }>;
+}
+
+export async function fetchGa4Channels(
+  shopId: string,
+  signal?: AbortSignal,
+): Promise<Ga4ChannelsResponse> {
+  const res = await fetch(
+    `/api/analytics/${encodeURIComponent(shopId)}/ga4-channels`,
+    { credentials: 'include', signal },
+  );
+  if (!res.ok) throw new Error(`Failed to fetch GA4 channels: ${res.status}`);
+  return res.json() as Promise<Ga4ChannelsResponse>;
+}
+

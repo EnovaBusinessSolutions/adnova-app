@@ -16,6 +16,7 @@ import { useShops } from '@/features/attribution/hooks/useShops';
 import { useShopPersistence } from '@/features/attribution/hooks/useShopPersistence';
 import { useAttributionFilters } from '@/features/attribution/hooks/useAttributionFilters';
 import { useAnalytics } from '@/features/attribution/hooks/useAnalytics';
+import { useGa4Channels } from '@/features/attribution/hooks/useGa4Channels';
 
 function SupportGridSkeleton() {
   return (
@@ -51,6 +52,8 @@ export default function Attribution() {
     isFetching,
     refetch,
   } = useAnalytics({ shopId: resolvedShop, model, range, start, end });
+
+  const { data: ga4Channels, isLoading: ga4Loading } = useGa4Channels(resolvedShop);
 
   const [exportOpen, setExportOpen] = useState(false);
 
@@ -114,10 +117,14 @@ export default function Attribution() {
           {!analyticsLoading && analyticsData && channels && (
             <section className="grid grid-cols-1 gap-3 sm:gap-5 lg:grid-cols-2">
               <div className="h-[300px]">
-                <RoasComparisonChart paidMedia={analyticsData.paidMedia} model={model} />
+                <RoasComparisonChart
+                  paidMedia={analyticsData.paidMedia}
+                  channels={channels}
+                  model={model}
+                />
               </div>
               <div className="h-[300px]">
-                <AttributionPieChart channels={channels} />
+                <AttributionPieChart channels={channels} ga4={ga4Channels} ga4Loading={ga4Loading} />
               </div>
             </section>
           )}

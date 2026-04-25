@@ -8,7 +8,7 @@ import {
   Tooltip,
   ResponsiveContainer,
 } from 'recharts';
-import type { PaidMedia, AttributionModel } from '../types';
+import type { PaidMedia, AttributionModel, AnalyticsResponse } from '../types';
 import { ADRAY_PURPLE, ADRAY_CYAN } from '../utils/adrayColors';
 
 const MODEL_LABELS: Record<AttributionModel, string> = {
@@ -24,6 +24,7 @@ const PLATFORM_STYLE: Record<string, { color: string; gradient: string; glow: st
 
 interface Props {
   paidMedia: PaidMedia;
+  channels?: AnalyticsResponse['channels'];
   model: AttributionModel;
 }
 
@@ -48,41 +49,55 @@ function CustomTooltip({ active, label, payload }: TooltipProps) {
   );
 }
 
-interface PlatformRoas {
+interface PlatformRow {
   name: string;
   adray: number | null;
   platform: number | null;
+  reportedTx: number | null;
+  stitchedTx: number | null;
 }
 
-function buildNarrative(rows: PlatformRoas[]): string {
-  const sentences: string[] = [];
+function buildNarrative(rows: PlatformRow[]): string {
+  const lines: string[] = [];
   for (const row of rows) {
     if (row.adray == null && row.platform == null) continue;
+
+    let roasInsight = '';
     if (row.adray != null && row.platform != null) {
       const diffPct = Math.round(((row.adray - row.platform) / row.platform) * 100);
       if (Math.abs(diffPct) < 8) {
-        sentences.push(
-          `${row.name} reports ${row.platform.toFixed(2)}x ROAS and Adray's stitched journeys confirm ${row.adray.toFixed(2)}x — the platform's view aligns with what we see on the site.`,
-        );
+        roasInsight = `${row.platform.toFixed(2)}x ROAS aligned`;
       } else if (diffPct < 0) {
-        sentences.push(
-          `${row.name} reports ${row.platform.toFixed(2)}x ROAS, but Adray attributes only ${row.adray.toFixed(2)}x — ${row.name} is over-claiming credit by ~${Math.abs(diffPct)}%, likely from assisted touchpoints rather than final-click conversions.`,
-        );
+        roasInsight = `over-claims ROAS ~${Math.abs(diffPct)}% (${row.platform.toFixed(2)}x vs ${row.adray.toFixed(2)}x)`;
       } else {
-        sentences.push(
-          `${row.name} reports ${row.platform.toFixed(2)}x ROAS; Adray's journey data shows ${row.adray.toFixed(2)}x — ${row.name} is under-crediting itself by ~${diffPct}%, missing assisted conversions in its native view.`,
-        );
+        roasInsight = `under-credits ~${diffPct}% (${row.platform.toFixed(2)}x vs ${row.adray.toFixed(2)}x)`;
       }
     } else if (row.platform != null) {
-      sentences.push(`${row.name} reports ${row.platform.toFixed(2)}x ROAS, but Adray has no attributed revenue yet for this period.`);
+      roasInsight = `${row.platform.toFixed(2)}x reported, no Adray data`;
     } else if (row.adray != null) {
-      sentences.push(`Adray attributes ${row.adray.toFixed(2)}x ROAS to ${row.name}; no platform-reported number is available for comparison.`);
+      roasInsight = `${row.adray.toFixed(2)}x Adray, no platform data`;
     }
+
+    let txInsight = '';
+    if (row.reportedTx != null && row.stitchedTx != null && (row.reportedTx > 0 || row.stitchedTx > 0)) {
+      const reported = Math.round(row.reportedTx);
+      const stitched = Math.round(row.stitchedTx);
+      const denom = Math.max(reported, stitched, 1);
+      const diffPct = Math.round((Math.abs(reported - stitched) / denom) * 100);
+      if (diffPct < 10) {
+        txInsight = `tx match (${stitched}/${reported})`;
+      } else {
+        txInsight = `tx gap ${diffPct}% (${stitched} stitched vs ${reported} reported)`;
+      }
+    }
+
+    const parts = [roasInsight, txInsight].filter(Boolean);
+    lines.push(`${row.name}: ${parts.join(' · ')}.`);
   }
-  return sentences.join(' ');
+  return lines.join(' ');
 }
 
-export function RoasComparisonChart({ paidMedia: pm, model }: Props) {
+export function RoasComparisonChart({ paidMedia: pm, channels, model }: Props) {
 
   const safeRoas = (revenue: number | null, spend: number | null) =>
     spend && spend > 0 && revenue != null ? +(revenue / spend).toFixed(2) : null;
@@ -100,8 +115,20 @@ export function RoasComparisonChart({ paidMedia: pm, model }: Props) {
   const hasData = data.some((d) => d.hasValue);
 
   const narrative = buildNarrative([
-    { name: 'Meta',   adray: metaAdray,   platform: metaPlatform },
-    { name: 'Google', adray: googleAdray, platform: googlePlatform },
+    {
+      name: 'Meta',
+      adray: metaAdray,
+      platform: metaPlatform,
+      reportedTx: pm.meta.transactions ?? null,
+      stitchedTx: channels?.meta?.orders ?? null,
+    },
+    {
+      name: 'Google',
+      adray: googleAdray,
+      platform: googlePlatform,
+      reportedTx: pm.google.transactions ?? null,
+      stitchedTx: channels?.google?.orders ?? null,
+    },
   ]);
 
   return (

@@ -756,3 +756,13 @@
     0%, 100% { transform: translate3d(0, 0, 0); opacity: 0.3; }
   }
 }
+
+/* ============================================================
+   Tooltip stacking — keep every chart tooltip above sticky
+   headers (z-[80]), sidebar (z-50) and dialog overlays so they
+   never get covered by other UI. Recharts tooltip wrappers
+   default to z-index:0 (effectively below most surfaces).
+   ============================================================ */
+.recharts-tooltip-wrapper {
+  z-index: 200 !important;
+}

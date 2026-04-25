@@ -63,6 +63,7 @@ export interface PaidMediaPlatform {
   spend: number | null;
   revenue: number | null;
   clicks: number | null;
+  transactions?: number | null;
   roas?: number | null;
 }
 
@@ -75,7 +76,9 @@ export interface PaidMedia {
   blended: {
     spend: number;
     revenue: number;
+    transactions?: number | null;
     roas: number | null;
+    cpa?: number | null;
     currency: string | null;
   };
 }

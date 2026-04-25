@@ -1174,6 +1174,7 @@ async function buildPaidMediaSummary({ accountId, domain, platformConnections = 
     revenue: 0,
     roas: null,
     conversions: 0,
+    transactions: 0,
     clicks: 0,
     spendDeltaPct: null,
     roasDelta: null,
@@ -1194,7 +1195,9 @@ async function buildPaidMediaSummary({ accountId, domain, platformConnections = 
     blended: {
       spend: 0,
       revenue: 0,
+      transactions: 0,
       roas: null,
+      cpa: null,
       currency: null,
     },
   };
@@ -1343,10 +1346,15 @@ async function buildPaidMediaSummary({ accountId, domain, platformConnections = 
 
     const blendedSpend = Number(summary.meta.spend || 0) + Number(summary.google.spend || 0);
     const blendedRevenue = Number(summary.meta.revenue || 0) + Number(summary.google.revenue || 0);
+    const blendedTransactions = Number(summary.meta.conversions || 0) + Number(summary.google.conversions || 0);
+    summary.meta.transactions = Number(summary.meta.conversions || 0);
+    summary.google.transactions = Number(summary.google.conversions || 0);
     summary.blended = {
       spend: blendedSpend,
       revenue: blendedRevenue,
+      transactions: blendedTransactions,
       roas: blendedSpend > 0 ? Number((blendedRevenue / blendedSpend).toFixed(2)) : null,
+      cpa: blendedTransactions > 0 ? Number((blendedSpend / blendedTransactions).toFixed(2)) : null,
       currency: summary.meta.currency || summary.google.currency || null,
     };
 
@@ -2442,9 +2450,9 @@ router.get('/:account_id', async (req, res) => {
       linked: false,
       available: false,
       reason: 'lookup_skipped',
-      meta: { hasSnapshot: false, spend: null, revenue: null, clicks: null },
-      google: { hasSnapshot: false, spend: null, revenue: null, clicks: null },
-      blended: { spend: 0, revenue: 0, roas: null, currency: null },
+      meta: { hasSnapshot: false, spend: null, revenue: null, clicks: null, transactions: null },
+      google: { hasSnapshot: false, spend: null, revenue: null, clicks: null, transactions: null },
+      blended: { spend: 0, revenue: 0, transactions: 0, roas: null, cpa: null, currency: null },
     };
 
     try {
@@ -3597,9 +3605,9 @@ router.get('/:account_id', async (req, res) => {
           linked: false,
           available: false,
           reason: 'database_unreachable',
-          meta: { hasSnapshot: false, spend: null, revenue: null, clicks: null },
-          google: { hasSnapshot: false, spend: null, revenue: null, clicks: null },
-          blended: { spend: 0, revenue: 0, roas: null, currency: null },
+          meta: { hasSnapshot: false, spend: null, revenue: null, clicks: null, transactions: null },
+          google: { hasSnapshot: false, spend: null, revenue: null, clicks: null, transactions: null },
+          blended: { spend: 0, revenue: 0, transactions: 0, roas: null, cpa: null, currency: null },
         },
         events: {
           page_view: 0,
@@ -4001,6 +4009,91 @@ async function resolveSessionIdentityContext({ accountId, sessionId, sessionUser
     historicalOrders,
   };
 }
+
+/* ───────────────────────────────────────────────────────────────────
+ * GA4 channels — for the Attribution panel comparison view.
+ * Reads the latest `ga4.channels_top` chunk persisted by the GA4 collector
+ * (backend/jobs/collect/googleAnalyticsCollector.js) and maps GA4 default
+ * channel grouping names to the Adray channel keys used by the dashboard.
+ * ─────────────────────────────────────────────────────────────────── */
+function ga4ChannelToAdrayKey(channel) {
+  const c = String(channel || '').toLowerCase().trim();
+  if (!c) return 'other';
+  if (c.includes('paid search') || c.includes('display') || c === 'cross-network') return 'google';
+  if (c.includes('paid social') || c.includes('paid video')) return 'meta';
+  if (c.includes('organic search')) return 'organic';
+  if (c === 'direct' || c === 'unassigned' || c === '(other)') return 'unattributed';
+  return 'other';
+}
+
+function mapGa4ChannelsToAdray(rows) {
+  const acc = {
+    meta:         { orders: 0, revenue: 0 },
+    google:       { orders: 0, revenue: 0 },
+    tiktok:       { orders: 0, revenue: 0 },
+    organic:      { orders: 0, revenue: 0 },
+    other:        { orders: 0, revenue: 0 },
+    unattributed: { orders: 0, revenue: 0 },
+  };
+  for (const row of (rows || [])) {
+    const key = ga4ChannelToAdrayKey(row?.channel);
+    acc[key].orders  += Number(row?.conversions || 0);
+    acc[key].revenue += Number(row?.revenue || 0);
+  }
+  for (const k of Object.keys(acc)) {
+    acc[k].orders  = Math.round(acc[k].orders);
+    acc[k].revenue = +acc[k].revenue.toFixed(2);
+  }
+  return acc;
+}
+
+router.get('/:account_id/ga4-channels', async (req, res) => {
+  try {
+    const userId = req.user?._id;
+    if (!userId) return res.status(401).json({ error: 'unauthorized' });
+    if (!McpData) return res.json({ available: false, reason: 'mcp-data-unavailable' });
+
+    const cacheKey = buildRouteCacheKey('ga4-channels', req);
+    const cached = readRouteCache(cacheKey);
+    if (cached && String(req.query.nocache) !== '1') return res.json(cached);
+
+    const chunk = await McpData.findOne({
+      userId,
+      kind: 'chunk',
+      source: 'ga4',
+      dataset: 'ga4.channels_top',
+    })
+      .sort({ updatedAt: -1, createdAt: -1 })
+      .lean();
+
+    if (!chunk) {
+      const payload = { available: false, reason: 'no-ga4-data' };
+      writeRouteCache(cacheKey, payload, 30000);
+      return res.json(payload);
+    }
+
+    const rows = chunk?.data?.channels_top || [];
+    const channels = mapGa4ChannelsToAdray(rows);
+    const totalOrders  = Object.values(channels).reduce((s, c) => s + c.orders, 0);
+    const totalRevenue = +Object.values(channels).reduce((s, c) => s + c.revenue, 0).toFixed(2);
+
+    const payload = {
+      available: true,
+      source: 'ga4',
+      range: chunk?.data?.meta?.range || chunk?.range || null,
+      channels,
+      totalOrders,
+      totalRevenue,
+      generatedAt: chunk.updatedAt || chunk.createdAt || null,
+      raw: rows.map((r) => ({ channel: r.channel, conversions: r.conversions, revenue: r.revenue, sessions: r.sessions })),
+    };
+    writeRouteCache(cacheKey, payload, 60000);
+    return res.json(payload);
+  } catch (e) {
+    console.error('[GA4 Channels API] Error:', e);
+    return res.status(500).json({ error: e?.message || 'ga4-channels-failed' });
+  }
+});
 
 router.get('/:account_id/wordpress-users-online', async (req, res) => {
   try {
@@ -4985,8 +5078,16 @@ router.get('/:account_id/data-coverage', async (req, res) => {
         meta_spend: { ok: Boolean(paidMedia?.meta?.hasSnapshot), value: paidMedia?.meta?.spend ?? null },
         meta_impressions: { ok: false, note: 'Not exposed as canonical field in this API yet.' },
         meta_reported_conv_value: { ok: Boolean(paidMedia?.meta?.hasSnapshot), value: paidMedia?.meta?.revenue ?? null },
+        meta_transactions: {
+          ok: Boolean(paidMedia?.meta?.hasSnapshot) && Number(paidMedia?.meta?.transactions ?? paidMedia?.meta?.conversions ?? 0) > 0,
+          value: paidMedia?.meta?.transactions ?? paidMedia?.meta?.conversions ?? null,
+        },
         google_spend: { ok: Boolean(paidMedia?.google?.hasSnapshot), value: paidMedia?.google?.spend ?? null },
         google_clicks: { ok: Boolean(paidMedia?.google?.hasSnapshot), value: paidMedia?.google?.clicks ?? null },
+        google_transactions: {
+          ok: Boolean(paidMedia?.google?.hasSnapshot) && Number(paidMedia?.google?.transactions ?? paidMedia?.google?.conversions ?? 0) > 0,
+          value: paidMedia?.google?.transactions ?? paidMedia?.google?.conversions ?? null,
+        },
         ga4_session_source: { ok: isOk(sessionsGa4Source), count: sessionsGa4Source, ratio: ratio(sessionsGa4Source, totalSessions) },
       },
       layer6_raw_enrichment_every_event: {
