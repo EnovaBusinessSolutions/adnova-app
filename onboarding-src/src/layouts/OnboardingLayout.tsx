@@ -34,14 +34,14 @@ export function OnboardingLayout({
       <div className="relative z-10">
         {/* Header */}
         <header className="border-b border-white/[0.06] bg-[rgba(8,8,12,0.55)] backdrop-blur-xl">
-          <div className="mx-auto flex max-w-5xl items-center justify-between px-6 py-5">
+          <div className="mx-auto flex max-w-5xl items-center justify-between px-6 py-6">
             <div className="flex items-center">
               <img
                 src={adrayLogo}
                 alt="Adray"
                 draggable={false}
-                className="h-9 w-auto object-contain select-none"
-                style={{ filter: "drop-shadow(0 0 18px rgba(181,92,255,0.34))" }}
+                className="h-16 md:h-20 w-auto object-contain select-none"
+                style={{ filter: "drop-shadow(0 0 22px rgba(181,92,255,0.42))" }}
               />
             </div>
 

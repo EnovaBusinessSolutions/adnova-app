@@ -85,7 +85,7 @@ export function PremiumSelect<T extends string>({
           role="listbox"
           className={cn(
             "absolute left-0 right-0 z-50 mt-2 max-h-72 overflow-y-auto rounded-xl p-1.5",
-            "border border-[#b55cff]/22 bg-[rgba(10,9,16,0.96)] backdrop-blur-xl",
+            "border border-[#b55cff]/30 bg-[rgba(14,11,22,0.99)] backdrop-blur-2xl",
             "shadow-[0_30px_70px_rgba(0,0,0,0.55),0_0_30px_rgba(181,92,255,0.18)]",
             "animate-fade-in no-scrollbar"
           )}
@@ -103,17 +103,17 @@ export function PremiumSelect<T extends string>({
                   setOpen(false);
                 }}
                 className={cn(
-                  "group flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm transition-colors duration-150",
+                  "group flex w-full items-center gap-2 rounded-lg px-3 py-2.5 text-left text-sm transition-colors duration-150",
                   isSelected
-                    ? "bg-[rgba(181,92,255,0.15)] text-[#e6d2ff] shadow-[inset_0_0_0_1px_rgba(181,92,255,0.34)]"
-                    : "text-foreground hover:bg-[rgba(181,92,255,0.10)] hover:text-[#e6d2ff]"
+                    ? "bg-[rgba(181,92,255,0.22)] text-white shadow-[inset_0_0_0_1px_rgba(181,92,255,0.45)]"
+                    : "text-white/90 hover:bg-[rgba(181,92,255,0.16)] hover:text-white"
                 )}
               >
                 {opt.icon && <span className="flex-none">{opt.icon}</span>}
                 <span className="min-w-0 flex-1">
                   <span className="block truncate">{opt.label}</span>
                   {opt.description && (
-                    <span className="block truncate text-xs text-white/45 group-hover:text-white/55">
+                    <span className="block truncate text-xs text-white/60 group-hover:text-white/75">
                       {opt.description}
                     </span>
                   )}
