@@ -32,7 +32,9 @@ async function resolveWorkspace(req, res, next) {
 
     // 1. Resolver workspaceId.
     const headerWorkspaceId = req.headers['x-workspace-id'];
+    const pathWorkspaceId = req.params && req.params.id;
     const candidate =
+      (pathWorkspaceId && String(pathWorkspaceId).trim()) ||
       (headerWorkspaceId && String(headerWorkspaceId).trim()) ||
       (user.lastActiveWorkspaceId && String(user.lastActiveWorkspaceId)) ||
       (user.defaultWorkspaceId && String(user.defaultWorkspaceId));

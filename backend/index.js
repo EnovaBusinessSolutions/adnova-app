@@ -1,4 +1,4 @@
-// backend/index.js
+﻿// backend/index.js
 require("dotenv").config();
 
 // Render inyecta RENDER_EXTERNAL_URL: sin esto, OAuth puede apuntar al default (adray.ai) en staging.
@@ -200,6 +200,10 @@ const pixelsRoutes = require("./routes/pixels");
 
 // â NEW: MCPDATA router
 const mcpdataRoutes = require("./routes/mcpdata");
+
+// Workspaces (Fase 3A)
+const workspacesRoutes = require('./routes/workspaces');
+const meRoutes = require('./routes/me');
 
 const app = express();
 
@@ -835,6 +839,10 @@ app.use("/api", pixelAuditor);
 // Router de Stripe (ya con sesiĂłn/passport disponibles)
 // Nota: para /api/stripe/webhook el body ya fue preparado por el middleware anterior
 app.use("/api/stripe", stripeRouter);
+
+// Workspaces (Fase 3A)
+app.use(workspacesRoutes);
+app.use(meRoutes);
 
 /* =========================
  * CSP (orden importante)
