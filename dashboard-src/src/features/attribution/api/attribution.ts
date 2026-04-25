@@ -31,6 +31,10 @@ export async function fetchAnalytics(
   if (range != null) qs.set('range', String(range));
   if (start) qs.set('start', start);
   if (end) qs.set('end', end);
+  // Match the per-channel counts shown in the attribution chart: ask the
+  // backend for every modeled conversion in the period so the Conversion
+  // Paths panel can filter across the full set, not just the latest 100.
+  qs.set('recent_limit', 'all');
 
   const res = await fetch(`/api/analytics/${encodeURIComponent(shopId)}?${qs}`, {
     credentials: 'include',

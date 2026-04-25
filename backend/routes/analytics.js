@@ -2320,8 +2320,12 @@ router.get('/:account_id', async (req, res) => {
     const attributionModel = ATTRIBUTION_MODELS.has(requestedModelRaw) ? requestedModelRaw : 'last_touch';
     const allTime = String(req.query.all_time || '0') === '1';
     const recentLimitRaw = String(req.query.recent_limit || '100').toLowerCase();
+    // 'all' should return every modeled conversion the channel chart counts,
+    // not a smaller subset — otherwise filtering by channel in the Conversion
+    // Paths panel can show fewer orders than the chart's per-channel total.
+    // Cap matches the `take: 4000` used when fetching `filteredOrders`.
     const recentLimit = recentLimitRaw === 'all'
-      ? 400
+      ? 4000
       : Math.max(15, Math.min(400, Number.parseInt(recentLimitRaw, 10) || 100));
 
     const analyticsCacheKey = buildRouteCacheKey('analytics', req);
