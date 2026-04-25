@@ -27,6 +27,8 @@ import GeminiMcp from "./pages/GeminiMcp";
 
 // ✅ NUEVO: Panel interno (equipo)
 import InternalAdmin from "./pages/InternalAdmin";
+import { RouteGate } from "./components/RouteGate";
+import { useSyncApiWorkspace } from "./lib/apiFetch";
 import Attribution from "./pages/Attribution";
 import BriPipeline from "./pages/BriPipeline";
 import Workspaces, { WorkspacesNew } from "./pages/Workspaces";
@@ -302,11 +304,19 @@ function LogoutRedirect() {
 function AppRoutes() {
   usePixelsPageViews();
   useIntercomE2E();
+  useSyncApiWorkspace();
 
   return (
     <Routes>
       {/* Página principal */}
-      <Route index element={<Index />} />
+      <Route
+        index
+        element={
+          <RouteGate permission="dashboard.connect" redirectTo="/laststep">
+            <Index />
+          </RouteGate>
+        }
+      />
 
       <Route path="laststep" element={<LastStep />} />
       <Route path="signal" element={<Signal />} />
