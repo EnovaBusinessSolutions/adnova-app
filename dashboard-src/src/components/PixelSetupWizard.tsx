@@ -653,7 +653,7 @@ export function PixelSetupWizard({ open, onOpenChange, currentShop, onDisconnect
                             asChild
                             className="h-11 rounded-2xl bg-[#B55CFF] px-5 text-white shadow-[0_0_24px_rgba(181,92,255,0.18)] hover:bg-[#A864FF]"
                           >
-                            <a href="/wp-plugin/adnova-pixel/download/adnova-pixel.zip">
+                            <a href="/wp-plugin/adray-pixel/download/adray-pixel.zip">
                               <Download className="h-4 w-4" />
                               Download plugin ZIP
                             </a>
