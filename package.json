@@ -25,9 +25,7 @@
     "db:pc:check": "node scripts/platform-connections-dedupe.js --check",
     "db:pc:dedupe": "node scripts/platform-connections-dedupe.js --apply",
     "db:oauth:drop-access-ttl": "node backend/scripts/drop-oauth-token-access-ttl-index.js",
-    "db:oauth:drop-access-ttl:dry": "node backend/scripts/drop-oauth-token-access-ttl-index.js --dry-run",
-    "db:backfill:workspaces": "node backend/scripts/backfillWorkspaces.js",
-    "db:backfill:workspaces:dry": "node backend/scripts/backfillWorkspaces.js --dry-run"
+    "db:oauth:drop-access-ttl:dry": "node backend/scripts/drop-oauth-token-access-ttl-index.js --dry-run"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1030.0",
@@ -69,7 +67,6 @@
     "resend": "^6.9.4",
     "rrweb": "^2.0.0-alpha.13",
     "rrweb-player": "^2.0.0-alpha.13",
-    "slugify": "^1.6.9",
     "stripe": "^19.1.0",
     "zod": "^3.25.76"
   },

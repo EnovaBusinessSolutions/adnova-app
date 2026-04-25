@@ -355,39 +355,6 @@ const userSchema = new mongoose.Schema(
 
     stripeCustomerId: { type: String },
 
-    // Profile fields (recolectados en Step 2 del onboarding)
-    firstName: { type: String, default: '' },
-    lastName: { type: String, default: '' },
-    jobTitle: { type: String, default: '' },
-    primaryFocus: {
-      type: String,
-      enum: [
-        'FOUNDER_CEO',
-        'HEAD_OF_GROWTH',
-        'HEAD_OF_MARKETING',
-        'MARKETING_MANAGER',
-        'PERFORMANCE_MARKETER',
-        'ANALYTICS',
-        'AGENCY',
-        'ENGINEERING',
-        'OTHER',
-      ],
-      default: null,
-    },
-    profilePhotoUrl: { type: String, default: '' },
-
-    // Onboarding state machine
-    onboardingStep: {
-      type: String,
-      enum: ['NONE', 'WORKSPACE_CREATED', 'PROFILE_COMPLETE', 'COMPLETE'],
-      default: 'NONE',
-      index: true,
-    },
-
-    // Workspace navigation
-    defaultWorkspaceId: { type: String, default: null, index: true },
-    lastActiveWorkspaceId: { type: String, default: null, index: true },
-
     plan: {
       type: String,
       enum: ['gratis', 'emprendedor', 'crecimiento', 'pro', 'enterprise'],
@@ -629,11 +596,5 @@ userSchema.statics.markDailySignalDeliveryStatus = async function (
     { new: true }
   );
 };
-
-const { syncUserToMirror } = require('../services/userMirrorSync');
-
-userSchema.post('save', async function (doc) {
-  await syncUserToMirror(doc);
-});
 
 module.exports = mongoose.model('User', userSchema);
