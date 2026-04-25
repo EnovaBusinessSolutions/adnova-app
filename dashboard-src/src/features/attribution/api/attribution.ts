@@ -6,7 +6,6 @@ import type {
   SessionDetailData,
   RecordingDetailResponse,
   DataCoverageResponse,
-  PixelHealthCoverage,
 } from '../types';
 
 export interface FetchAnalyticsParams {
@@ -91,16 +90,3 @@ export async function fetchDataCoverage(
   return res.json() as Promise<DataCoverageResponse>;
 }
 
-export async function fetchPixelHealth(
-  shopId: string,
-  days = 30,
-  signal?: AbortSignal,
-): Promise<PixelHealthCoverage> {
-  const qs = new URLSearchParams({ days: String(days) });
-  const res = await fetch(
-    `/api/analytics/${encodeURIComponent(shopId)}/pixel-health?${qs}`,
-    { credentials: 'include', signal },
-  );
-  if (!res.ok) throw new Error(`Failed to fetch pixel health: ${res.status}`);
-  return res.json() as Promise<PixelHealthCoverage>;
-}

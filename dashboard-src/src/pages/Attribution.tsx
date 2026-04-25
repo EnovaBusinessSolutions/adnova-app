@@ -11,7 +11,6 @@ import { RoasComparisonChart } from '@/features/attribution/components/RoasCompa
 import { PaidMediaPanel } from '@/features/attribution/components/PaidMediaPanel';
 import { TopProductsPanel } from '@/features/attribution/components/TopProductsPanel';
 import { DataEnrichmentPanel } from '@/features/attribution/components/DataEnrichmentPanel';
-import { PixelHealthPanel } from '@/features/attribution/components/PixelHealthPanel';
 import { ExportModal } from '@/features/attribution/components/ExportModal';
 import { useShops } from '@/features/attribution/hooks/useShops';
 import { useShopPersistence } from '@/features/attribution/hooks/useShopPersistence';
@@ -123,18 +122,17 @@ export default function Attribution() {
             </section>
           )}
 
-          {/* Support Grid: Paid Media | Data Enrichment | Pixel Health */}
+          {/* Support Grid: Paid Media | Data Enrichment */}
           {analyticsLoading ? (
             <SupportGridSkeleton />
           ) : analyticsData ? (
-            <section className="grid grid-cols-1 gap-3 sm:gap-5 md:grid-cols-2 lg:grid-cols-3">
+            <section className="grid grid-cols-1 gap-3 sm:gap-5 md:grid-cols-2">
               <PaidMediaPanel
                 paidMedia={analyticsData.paidMedia}
                 integrationHealth={analyticsData.integrationHealth}
                 currency={currency}
               />
               <DataEnrichmentPanel purchases={purchases} loading={analyticsLoading} />
-              <PixelHealthPanel shopId={resolvedShop || null} days={30} />
             </section>
           ) : null}
 
