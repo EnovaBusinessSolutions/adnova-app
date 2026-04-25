@@ -34,6 +34,59 @@ enum AccountPlatform {
   OTHER
 }
 
+enum WorkspaceRole {
+  OWNER
+  ADMIN
+  MEMBER
+}
+
+enum MemberStatus {
+  ACTIVE
+  SUSPENDED
+  REMOVED
+}
+
+enum WorkspaceIcon {
+  SHOPPING_BAG
+  LIGHTNING
+  TARGET
+  ROCKET
+  LIGHTBULB
+  FIRE
+  LEAF
+  DIAMOND
+}
+
+enum IndustryVertical {
+  ECOMMERCE_FASHION
+  ECOMMERCE_BEAUTY
+  ECOMMERCE_HOME_DECOR
+  ECOMMERCE_FOOD_BEVERAGE
+  ECOMMERCE_HEALTH_WELLNESS
+  ECOMMERCE_ELECTRONICS
+  ECOMMERCE_BABY_KIDS
+  ECOMMERCE_PETS
+  ECOMMERCE_SPORTS_OUTDOORS
+  ECOMMERCE_JEWELRY
+  ECOMMERCE_AUTOMOTIVE
+  DTC_SUBSCRIPTION
+  AGENCY
+  MARKETPLACE
+  OTHER
+}
+
+enum PrimaryFocus {
+  FOUNDER_CEO
+  HEAD_OF_GROWTH
+  HEAD_OF_MARKETING
+  MARKETING_MANAGER
+  PERFORMANCE_MARKETER
+  ANALYTICS
+  AGENCY
+  ENGINEERING
+  OTHER
+}
+
 model Account {
   id          String          @id @default(uuid())
   accountId   String          @unique @map("account_id")
@@ -43,32 +96,36 @@ model Account {
   createdAt   DateTime        @default(now()) @map("created_at")
   updatedAt   DateTime        @updatedAt @map("updated_at")
 
-  platformConnections  PlatformConnection[]
-  identityGraphs       IdentityGraph[]
-  sessions             Session[]
-  checkoutSessionMaps  CheckoutSessionMap[]
-  events               Event[]
-  orders               Order[]
-  snapshot             MerchantSnapshot?
-  sessionRecordings    SessionRecording[]
-  sessionPackets       SessionPacket[]
-  people               Person[]
-  abandonmentRiskScores AbandonmentRiskScore[]
-  abandonmentCohorts   AbandonmentCohort[]
+  workspaceId String?
+  workspace   Workspace? @relation(fields: [workspaceId], references: [id])
 
+  platformConnections   PlatformConnection[]
+  identityGraphs        IdentityGraph[]
+  sessions              Session[]
+  checkoutSessionMaps   CheckoutSessionMap[]
+  events                Event[]
+  orders                Order[]
+  snapshot              MerchantSnapshot?
+  sessionRecordings     SessionRecording[]
+  sessionPackets        SessionPacket[]
+  people                Person[]
+  abandonmentRiskScores AbandonmentRiskScore[]
+  abandonmentCohorts    AbandonmentCohort[]
+
+  @@index([workspaceId])
   @@map("accounts")
 }
 
 model PlatformConnection {
-  id           String           @id @default(uuid())
-  accountId    String           @map("account_id")
-  platform     Platform
-  accessToken  String           @map("access_token")
-  pixelId      String?          @map("pixel_id")
-  adAccountId  String?          @map("ad_account_id")
-  status       ConnectionStatus @default(ACTIVE)
-  createdAt    DateTime         @default(now()) @map("created_at")
-  updatedAt    DateTime         @updatedAt @map("updated_at")
+  id          String           @id @default(uuid())
+  accountId   String           @map("account_id")
+  platform    Platform
+  accessToken String           @map("access_token")
+  pixelId     String?          @map("pixel_id")
+  adAccountId String?          @map("ad_account_id")
+  status      ConnectionStatus @default(ACTIVE)
+  createdAt   DateTime         @default(now()) @map("created_at")
+  updatedAt   DateTime         @updatedAt @map("updated_at")
 
   account Account @relation(fields: [accountId], references: [accountId], onDelete: Cascade)
 
@@ -104,24 +161,24 @@ model IdentityGraph {
 }
 
 model Session {
-  id             String   @id @default(uuid())
-  sessionId      String   @unique @map("session_id")
-  accountId      String   @map("account_id")
-  userKey        String   @map("user_key")
-  ga4SessionSource String? @map("ga4_session_source")
-  utmSource      String?  @map("utm_source")
-  utmMedium      String?  @map("utm_medium")
-  utmCampaign    String?  @map("utm_campaign")
-  utmContent     String?  @map("utm_content")
-  utmTerm        String?  @map("utm_term")
-  referrer       String?
-  landingPageUrl String?  @map("landing_page_url")
-  ipHash         String?  @map("ip_hash")
-  fbclid         String?
-  gclid          String?
-  ttclid         String?
-  fbp            String?
-  fbc            String?
+  id                 String    @id @default(uuid())
+  sessionId          String    @unique @map("session_id")
+  accountId          String    @map("account_id")
+  userKey            String    @map("user_key")
+  ga4SessionSource   String?   @map("ga4_session_source")
+  utmSource          String?   @map("utm_source")
+  utmMedium          String?   @map("utm_medium")
+  utmCampaign        String?   @map("utm_campaign")
+  utmContent         String?   @map("utm_content")
+  utmTerm            String?   @map("utm_term")
+  referrer           String?
+  landingPageUrl     String?   @map("landing_page_url")
+  ipHash             String?   @map("ip_hash")
+  fbclid             String?
+  gclid              String?
+  ttclid             String?
+  fbp                String?
+  fbc                String?
   isFirstTouch       Boolean   @map("is_first_touch")
   startedAt          DateTime  @default(now()) @map("started_at")
   sessionEndAt       DateTime? @map("session_end_at")
@@ -177,8 +234,8 @@ model Event {
   collectedAt       DateTime? @map("collected_at")
   browserReceivedAt DateTime? @map("browser_received_at")
   serverReceivedAt  DateTime? @map("server_received_at")
-  capturedAt        DateTime? @map("captured_at")         // client clock at event-fire moment (ordering source of truth)
-  seq               Int?                                  // monotonic per-session sequence for tie-breaking
+  capturedAt        DateTime? @map("captured_at") // client clock at event-fire moment (ordering source of truth)
+  seq               Int? // monotonic per-session sequence for tie-breaking
   postPurchase      Boolean   @default(false) @map("post_purchase")
   createdAt         DateTime  @default(now()) @map("created_at")
 
@@ -189,42 +246,42 @@ model Event {
 }
 
 model Order {
-  id                    String   @id @default(uuid())
-  orderId               String   @unique @map("order_id")
-  orderNumber           String   @map("order_number")
-  accountId             String   @map("account_id")
-  checkoutToken         String?  @map("checkout_token")
-  userKey               String?  @map("user_key")
-  sessionId             String?  @map("session_id")
-  customerId            String?  @map("customer_id")
-  emailHash             String?  @map("email_hash")
-  phoneHash             String?  @map("phone_hash")
-  revenue               Float
-  subtotal              Float
-  discountTotal         Float    @map("discount_total")
-  shippingTotal         Float    @map("shipping_total")
-  taxTotal              Float    @map("tax_total")
-  refundAmount          Float    @default(0) @map("refund_amount")
-  chargebackFlag        Boolean  @default(false) @map("chargeback_flag")
-  ordersCount           Int?     @map("orders_count")
-  currency              String
-  lineItems             Json     @map("line_items")
-  attributedChannel     String?  @map("attributed_channel")
-  attributedCampaign    String?  @map("attributed_campaign")
-  attributedAdset       String?  @map("attributed_adset")
-  attributedAd          String?  @map("attributed_ad")
-  attributedClickId     String?  @map("attributed_click_id")
-  attributionModel      String   @default("last_touch") @map("attribution_model")
-  attributionSnapshot   Json?    @map("attribution_snapshot")
-  confidenceScore       Float?   @map("confidence_score")
-  eventId               String?  @map("event_id")
-  capiSentMeta          Boolean  @default(false) @map("capi_sent_meta")
-  capiSentGoogle        Boolean  @default(false) @map("capi_sent_google")
-  capiSentTiktok        Boolean  @default(false) @map("capi_sent_tiktok")
-  capiMetaResponse      Json?    @map("capi_meta_response")
-  capiGoogleResponse    Json?    @map("capi_google_response")
-  createdAt             DateTime @default(now()) @map("created_at")
-  platformCreatedAt     DateTime @map("platform_created_at")
+  id                  String   @id @default(uuid())
+  orderId             String   @unique @map("order_id")
+  orderNumber         String   @map("order_number")
+  accountId           String   @map("account_id")
+  checkoutToken       String?  @map("checkout_token")
+  userKey             String?  @map("user_key")
+  sessionId           String?  @map("session_id")
+  customerId          String?  @map("customer_id")
+  emailHash           String?  @map("email_hash")
+  phoneHash           String?  @map("phone_hash")
+  revenue             Float
+  subtotal            Float
+  discountTotal       Float    @map("discount_total")
+  shippingTotal       Float    @map("shipping_total")
+  taxTotal            Float    @map("tax_total")
+  refundAmount        Float    @default(0) @map("refund_amount")
+  chargebackFlag      Boolean  @default(false) @map("chargeback_flag")
+  ordersCount         Int?     @map("orders_count")
+  currency            String
+  lineItems           Json     @map("line_items")
+  attributedChannel   String?  @map("attributed_channel")
+  attributedCampaign  String?  @map("attributed_campaign")
+  attributedAdset     String?  @map("attributed_adset")
+  attributedAd        String?  @map("attributed_ad")
+  attributedClickId   String?  @map("attributed_click_id")
+  attributionModel    String   @default("last_touch") @map("attribution_model")
+  attributionSnapshot Json?    @map("attribution_snapshot")
+  confidenceScore     Float?   @map("confidence_score")
+  eventId             String?  @map("event_id")
+  capiSentMeta        Boolean  @default(false) @map("capi_sent_meta")
+  capiSentGoogle      Boolean  @default(false) @map("capi_sent_google")
+  capiSentTiktok      Boolean  @default(false) @map("capi_sent_tiktok")
+  capiMetaResponse    Json?    @map("capi_meta_response")
+  capiGoogleResponse  Json?    @map("capi_google_response")
+  createdAt           DateTime @default(now()) @map("created_at")
+  platformCreatedAt   DateTime @map("platform_created_at")
 
   account Account @relation(fields: [accountId], references: [accountId], onDelete: Cascade)
 
@@ -380,20 +437,20 @@ model SessionPacket {
   sessionId       String         @unique @map("session_id")
   accountId       String         @map("account_id")
   visitorId       String?        @map("visitor_id")
-  personId        String?        @map("person_id")         // set by identity resolver (Phase 7)
+  personId        String?        @map("person_id") // set by identity resolver (Phase 7)
   startTs         DateTime       @map("start_ts")
   endTs           DateTime       @map("end_ts")
   durationMs      Int            @map("duration_ms")
-  device          Json?                                   // { type, ua, viewport }
-  trafficSource   Json?          @map("traffic_source")   // { utm, fbclid, gclid, referrer }
+  device          Json? // { type, ua, viewport }
+  trafficSource   Json?          @map("traffic_source") // { utm, fbclid, gclid, referrer }
   landingPage     String?        @map("landing_page")
-  keyframes       Json                                    // array from keyframeExtractor
-  signals         Json                                    // aggregates from recordingSignalExtractor
+  keyframes       Json // array from keyframeExtractor
+  signals         Json // aggregates from recordingSignalExtractor
   ecommerceEvents Json           @map("ecommerce_events") // add_to_cart, purchase, etc.
   outcome         SessionOutcome @default(STILL_BROWSING)
   cartValueAtEnd  Float?         @map("cart_value_at_end")
   orderId         String?        @map("order_id")
-  aiAnalysis      Json?          @map("ai_analysis")      // filled by Phase 6 LLM reasoning
+  aiAnalysis      Json?          @map("ai_analysis") // filled by Phase 6 LLM reasoning
   aiAnalyzedAt    DateTime?      @map("ai_analyzed_at")
   rawErasedAt     DateTime?      @map("raw_erased_at")
   createdAt       DateTime       @default(now()) @map("created_at")
@@ -415,17 +472,17 @@ model SessionPacket {
 model Person {
   id           String   @id @default(uuid())
   accountId    String   @map("account_id")
-  visitorIds   String[] @map("visitor_ids")    // userKeys confirmed to be this person
+  visitorIds   String[] @map("visitor_ids") // userKeys confirmed to be this person
   emailHashes  String[] @map("email_hashes")
   phoneHashes  String[] @map("phone_hashes")
-  customerIds  String[] @map("customer_ids")   // platform customer IDs (Shopify, Woo)
+  customerIds  String[] @map("customer_ids") // platform customer IDs (Shopify, Woo)
   firstSeenAt  DateTime @map("first_seen_at")
   lastSeenAt   DateTime @map("last_seen_at")
   sessionCount Int      @default(0) @map("session_count")
   orderCount   Int      @default(0) @map("order_count")
   totalSpent   Float    @default(0) @map("total_spent")
 
-  account  Account        @relation(fields: [accountId], references: [accountId], onDelete: Cascade)
+  account  Account         @relation(fields: [accountId], references: [accountId], onDelete: Cascade)
   analysis PersonAnalysis?
 
   @@index([accountId])
@@ -437,24 +494,118 @@ model Person {
 // Rate-limited to once per person per day.
 
 model PersonAnalysis {
-  id              String   @id @default(uuid())
-  personId        String   @unique @map("person_id")
-  accountId       String   @map("account_id")
-  tier            String?                         // vip | returning | new | at_risk
-  behaviorSummary String?  @map("behavior_summary")
-  conversionProb  Float?   @map("conversion_probability")
-  preferredChannel String? @map("preferred_channel")
-  nextBestAction  Json?    @map("next_best_action")
-  retentionInsight String? @map("retention_insight")
-  ltvEstimate     Float?   @map("ltv_estimate")
-  confidence      Float?
-  sessionCount    Int      @default(0) @map("session_count")
-  lastSessionId   String?  @map("last_session_id")
-  analyzedAt      DateTime @default(now()) @map("analyzed_at")
-  updatedAt       DateTime @updatedAt @map("updated_at")
+  id               String   @id @default(uuid())
+  personId         String   @unique @map("person_id")
+  accountId        String   @map("account_id")
+  tier             String? // vip | returning | new | at_risk
+  behaviorSummary  String?  @map("behavior_summary")
+  conversionProb   Float?   @map("conversion_probability")
+  preferredChannel String?  @map("preferred_channel")
+  nextBestAction   Json?    @map("next_best_action")
+  retentionInsight String?  @map("retention_insight")
+  ltvEstimate      Float?   @map("ltv_estimate")
+  confidence       Float?
+  sessionCount     Int      @default(0) @map("session_count")
+  lastSessionId    String?  @map("last_session_id")
+  analyzedAt       DateTime @default(now()) @map("analyzed_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
 
   person Person @relation(fields: [personId], references: [id], onDelete: Cascade)
 
   @@index([accountId])
   @@map("person_analysis")
+}
+
+// ─── Workspaces ───────────────────────────────────────────────────────────────
+
+model UserMirror {
+  id    String @id
+  email String @unique
+
+  firstName       String?
+  lastName        String?
+  jobTitle        String?
+  primaryFocus    PrimaryFocus?
+  profilePhotoUrl String?
+
+  defaultWorkspaceId String?
+
+  syncedAt DateTime @default(now()) @updatedAt
+
+  ownedWorkspaces  Workspace[]       @relation("WorkspaceOwner")
+  memberships      WorkspaceMember[]
+  defaultWorkspace Workspace?        @relation("UserDefaultWorkspace", fields: [defaultWorkspaceId], references: [id])
+
+  @@index([email])
+}
+
+model Workspace {
+  id               String            @id @default(uuid())
+  slug             String            @unique
+  name             String
+  icon             WorkspaceIcon     @default(SHOPPING_BAG)
+  industryVertical IndustryVertical?
+
+  ownerUserId String
+
+  plan             String  @default("gratis")
+  stripeCustomerId String?
+
+  onboardingComplete Boolean @default(false)
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  owner           UserMirror            @relation("WorkspaceOwner", fields: [ownerUserId], references: [id])
+  defaultForUsers UserMirror[]          @relation("UserDefaultWorkspace")
+  members         WorkspaceMember[]
+  invitations     WorkspaceInvitation[]
+  accounts        Account[]
+
+  @@index([ownerUserId])
+  @@index([deletedAt])
+}
+
+model WorkspaceMember {
+  id          String @id @default(uuid())
+  workspaceId String
+  userId      String
+
+  role   WorkspaceRole @default(MEMBER)
+  status MemberStatus  @default(ACTIVE)
+
+  invitedBy    String?
+  invitedAt    DateTime?
+  joinedAt     DateTime  @default(now())
+  lastActiveAt DateTime?
+
+  workspace Workspace  @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user      UserMirror @relation(fields: [userId], references: [id])
+
+  @@unique([workspaceId, userId])
+  @@index([userId])
+  @@index([workspaceId, role])
+}
+
+model WorkspaceInvitation {
+  id          String        @id @default(uuid())
+  workspaceId String
+  email       String
+  role        WorkspaceRole @default(MEMBER)
+
+  tokenHash String @unique
+  invitedBy String
+
+  expiresAt  DateTime
+  acceptedAt DateTime?
+  declinedAt DateTime?
+  revokedAt  DateTime?
+
+  createdAt DateTime @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([email])
+  @@index([workspaceId])
 }
