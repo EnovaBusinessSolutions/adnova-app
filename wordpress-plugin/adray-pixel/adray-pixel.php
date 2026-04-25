@@ -3,7 +3,7 @@
  * Plugin Name: Adray Pixel
  * Plugin URI: https://adray.ai
  * Description: Instala automaticamente el pixel de Adray en tu sitio WordPress y usa el dominio como Site ID.
- * Version: 1.4.0
+ * Version: 1.4.1
  * Author: Adray
  * License: GPL-2.0-or-later
  * License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -15,7 +15,7 @@ if (!defined('ABSPATH')) {
 }
 
 final class Adnova_Pixel_Plugin {
-    const VERSION = '1.4.0';
+    const VERSION = '1.4.1';
     const OPTION_SCRIPT_URL = 'adnova_pixel_script_url';
     const OPTION_SITE_ID = 'adnova_pixel_site_id';
     const OPTION_CLARITY_ID = 'adnova_pixel_clarity_id';
@@ -26,7 +26,7 @@ final class Adnova_Pixel_Plugin {
     const DEFAULT_COLLECT_PATH = '/m/s';
     const DEFAULT_COLLECT_MS_URL = 'https://adray.ai/m/s';
     const DEFAULT_ORDER_SYNC_URL = 'https://adray.ai/api/woo/orders-sync';
-    const DEFAULT_UPDATE_METADATA_URL = 'https://adray.ai/wp-plugin/adnova-pixel/update.json';
+    const DEFAULT_UPDATE_METADATA_URL = 'https://adray.ai/wp-plugin/adray-pixel/update.json';
 
     // Phase A — first-party proxy path. Events POSTed here by the pixel are
     // invisible to ad-blockers because the request is same-origin as the
@@ -210,7 +210,7 @@ final class Adnova_Pixel_Plugin {
         }
 
         $update = new stdClass();
-        $update->slug = 'adnova-pixel';
+        $update->slug = 'adray-pixel';
         $update->plugin = $plugin_file;
         $update->new_version = $metadata['version'];
         $update->url = isset($metadata['homepage']) ? $metadata['homepage'] : '';
@@ -235,7 +235,7 @@ final class Adnova_Pixel_Plugin {
     }
 
     public static function plugins_api_handler($result, $action, $args) {
-        if ($action !== 'plugin_information' || empty($args->slug) || $args->slug !== 'adnova-pixel') {
+        if ($action !== 'plugin_information' || empty($args->slug) || $args->slug !== 'adray-pixel') {
             return $result;
         }
 
@@ -246,7 +246,7 @@ final class Adnova_Pixel_Plugin {
 
         $info = new stdClass();
         $info->name = isset($metadata['name']) ? $metadata['name'] : 'Adray Pixel';
-        $info->slug = 'adnova-pixel';
+        $info->slug = 'adray-pixel';
         $info->version = isset($metadata['version']) ? $metadata['version'] : self::VERSION;
         $info->homepage = isset($metadata['homepage']) ? $metadata['homepage'] : '';
         $info->download_link = isset($metadata['download_url']) ? $metadata['download_url'] : '';

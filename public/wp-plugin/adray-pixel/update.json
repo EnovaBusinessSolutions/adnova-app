@@ -1,7 +1,7 @@
 {
-  "version": "1.4.0",
+  "version": "1.4.1",
   "homepage": "https://adray.ai/",
-  "download_url": "https://adray.ai/wp-plugin/adnova-pixel/adnova-pixel.zip",
+  "download_url": "https://adray.ai/wp-plugin/adray-pixel/download/adray-pixel.zip",
   "tested": "6.4.3",
   "requires": "5.6",
   "requires_php": "7.4"
