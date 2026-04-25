@@ -104,9 +104,10 @@ if (process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET) {
             // Si tu login email/pass usa "password", dejarlo vacío está OK
             password: '',
 
-            // ✅ Mantengo esto TAL CUAL para NO romper tu flujo actual:
-            // (tu index.js redirige a /dashboard si onboardingComplete=true)
-            onboardingComplete: true,
+            // Onboarding nuevo de workspaces: el user pasa por /onboarding
+            // donde crea su workspace. Los users existentes ya tienen el flag
+            // en true (Fase 1 backfill), solo se aplica a nuevos signups.
+            onboardingComplete: false,
 
             // ✅ CLAVE E2E: control del welcome
             welcomeEmailSent: false,
