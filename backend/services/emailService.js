@@ -6,7 +6,16 @@ const { sendMail, verify, HAS_SMTP, FROM } = require('./mailer');
 // Resend client for workspace invitations (Fase 3B).
 const { Resend } = require('resend');
 const RESEND_API_KEY = process.env.RESEND_API_KEY || '';
-const FROM_RESEND = process.env.RESEND_FROM_ADDRESS || 'Adray <noreply@adray.ai>';
+// Sender por defecto: usa el subdominio signal.adray.ai que SÍ está verificado
+// en la cuenta de Resend. El dominio raíz adray.ai NO está verificado al
+// momento de escribir esto — cuando se verifique, basta con configurar la
+// env var WORKSPACE_INVITATION_FROM_ADDRESS=Adray <noreply@adray.ai> en Render
+// y este código respetará el override sin necesidad de redeploy.
+const FROM_RESEND =
+  process.env.WORKSPACE_INVITATION_FROM_ADDRESS ||
+  process.env.RESEND_FROM_ADDRESS ||
+  process.env.RESEND_FROM_EMAIL ||
+  'Adray <noreply@signal.adray.ai>';
 let _resendClient = null;
 if (RESEND_API_KEY) {
   _resendClient = new Resend(RESEND_API_KEY);
