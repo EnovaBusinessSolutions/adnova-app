@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { Loader2, AlertCircle, CheckCircle } from 'lucide-react';
+import { ParticleField } from '@/components/ParticleField';
 
 type AcceptResult =
   | { status: 'idle' }
@@ -67,39 +68,43 @@ export default function AcceptInvitation() {
   }, [token]);
 
   return (
-    <div className="min-h-screen bg-bg text-white flex items-center justify-center px-6">
-      <div className="max-w-md w-full text-center space-y-4">
+    <div className="adray-dashboard-shell adray-hero-bg relative min-h-screen overflow-hidden bg-background text-foreground flex items-center justify-center px-6">
+      <div className="adray-hero-grid" aria-hidden="true" />
+      <div className="adray-hero-beam" aria-hidden="true" />
+      <ParticleField variant="multiverse" count={32} />
+
+      <div className="relative z-10 max-w-md w-full text-center space-y-4">
         {result.status === 'loading' && (
-          <>
-            <Loader2 className="mx-auto h-10 w-10 animate-spin text-accent" />
-            <h1 className="text-xl font-semibold">Procesando invitación…</h1>
-            <p className="text-sm text-white/60">Esto toma un par de segundos.</p>
-          </>
+          <div className="glass-effect-strong p-6 rounded-2xl space-y-4">
+            <Loader2 className="mx-auto h-10 w-10 animate-spin text-[#b55cff]" />
+            <h1 className="text-xl font-semibold text-foreground">Procesando invitación…</h1>
+            <p className="text-sm text-muted-foreground">Esto toma un par de segundos.</p>
+          </div>
         )}
 
         {result.status === 'success' && (
-          <>
-            <div className="mx-auto grid h-16 w-16 place-items-center rounded-full border border-emerald-500/30 bg-emerald-500/10">
+          <div className="glass-effect-strong p-6 rounded-2xl space-y-4">
+            <div className="mx-auto grid h-16 w-16 place-items-center rounded-full border border-emerald-400/30 bg-emerald-400/10 shadow-[0_0_24px_rgba(52,211,153,0.32)]">
               <CheckCircle className="h-7 w-7 text-emerald-400" />
             </div>
-            <h1 className="text-xl font-semibold">¡Bienvenido al workspace!</h1>
-            <p className="text-sm text-white/60">Te llevamos al dashboard…</p>
-          </>
+            <h1 className="text-xl font-semibold text-foreground">¡Bienvenido al workspace!</h1>
+            <p className="text-sm text-muted-foreground">Te llevamos al dashboard…</p>
+          </div>
         )}
 
         {result.status === 'error' && (
-          <>
+          <div className="glass-effect-strong p-6 rounded-2xl space-y-4">
             <div className="mx-auto grid h-16 w-16 place-items-center rounded-full border border-rose-500/30 bg-rose-500/10">
               <AlertCircle className="h-7 w-7 text-rose-400" />
             </div>
-            <h1 className="text-xl font-semibold">No pudimos aceptar la invitación</h1>
-            <p className="text-sm text-white/60">{result.message}</p>
+            <h1 className="text-xl font-semibold text-foreground">No pudimos aceptar la invitación</h1>
+            <p className="text-sm text-muted-foreground">{result.message}</p>
 
-            <div className="pt-4 flex flex-col gap-2">
+            <div className="pt-2 flex flex-col gap-2">
               {result.code === 'NEEDS_LOGIN' && (
                 <a
                   href={`/login?return=${encodeURIComponent(`/onboarding/invitations/${token}`)}`}
-                  className="inline-block rounded-xl bg-accent px-6 py-3 text-sm font-semibold text-white hover:bg-accent-hover"
+                  className="inline-block rounded-xl bg-gradient-to-r from-[#b55cff] to-[#9b7cff] px-6 py-3 text-sm font-semibold text-white shadow-[0_0_22px_rgba(181,92,255,0.32)] transition hover:shadow-[0_0_32px_rgba(181,92,255,0.5)]"
                 >
                   Iniciar sesión
                 </a>
@@ -107,7 +112,7 @@ export default function AcceptInvitation() {
               {result.code === 'EMAIL_MISMATCH' && (
                 <a
                   href="/logout"
-                  className="inline-block rounded-xl border border-white/10 bg-white/[0.04] px-6 py-3 text-sm text-white/80 hover:bg-white/[0.07]"
+                  className="inline-block rounded-xl border border-white/10 bg-white/[0.04] px-6 py-3 text-sm text-white/80 transition hover:bg-white/[0.07]"
                 >
                   Cerrar sesión y volver a abrir el link
                 </a>
@@ -115,13 +120,13 @@ export default function AcceptInvitation() {
               {result.code === 'ALREADY_A_MEMBER' && (
                 <a
                   href="/dashboard"
-                  className="inline-block rounded-xl bg-accent px-6 py-3 text-sm font-semibold text-white hover:bg-accent-hover"
+                  className="inline-block rounded-xl bg-gradient-to-r from-[#b55cff] to-[#9b7cff] px-6 py-3 text-sm font-semibold text-white shadow-[0_0_22px_rgba(181,92,255,0.32)] transition hover:shadow-[0_0_32px_rgba(181,92,255,0.5)]"
                 >
                   Ir al dashboard
                 </a>
               )}
             </div>
-          </>
+          </div>
         )}
       </div>
     </div>

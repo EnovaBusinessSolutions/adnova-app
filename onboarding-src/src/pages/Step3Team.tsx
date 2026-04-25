@@ -151,9 +151,9 @@ export default function Step3Team() {
   return (
     <OnboardingLayout currentStep={3}>
       <div className="space-y-2">
-        <div className="text-xs uppercase tracking-widest text-accent">Paso 3 de 3</div>
-        <h1 className="text-3xl font-semibold">Invita a tu equipo</h1>
-        <p className="text-sm text-white/60">
+        <div className="text-xs uppercase tracking-[0.22em] text-[#b55cff]">Paso 3 de 3</div>
+        <h1 className="gradient-text text-3xl font-semibold leading-tight">Invita a tu equipo</h1>
+        <p className="text-sm text-muted-foreground">
           Agrega compañeros que colaborarán en este workspace. Recibirán un email para aceptar.
           Puedes saltarte este paso e invitarlos después desde el panel de members.
         </p>
@@ -161,17 +161,17 @@ export default function Step3Team() {
 
       <div className="mt-8 space-y-3">
         {/* Owner card */}
-        <div className="flex items-center justify-between rounded-2xl border border-accent/30 bg-accent/5 px-4 py-3">
+        <div className="flex items-center justify-between rounded-2xl border border-[#b55cff]/30 bg-[rgba(181,92,255,0.07)] adray-border-flow px-4 py-3">
           <div className="flex items-center gap-3">
-            <div className="grid h-9 w-9 place-items-center rounded-full bg-gradient-to-br from-accent to-[#7c6df0] text-sm font-semibold">
+            <div className="grid h-9 w-9 place-items-center rounded-full bg-gradient-to-br from-[#b55cff] via-[#9b7cff] to-[#7c6df0] text-sm font-semibold text-white">
               {ownerInitials}
             </div>
             <div>
-              <div className="text-sm font-medium text-white">{ownerDisplayName}</div>
+              <div className="text-sm font-medium text-foreground">{ownerDisplayName}</div>
               <div className="text-xs text-white/50">{user?.email}</div>
             </div>
           </div>
-          <div className="flex items-center gap-1.5 rounded-full bg-accent/15 px-3 py-1 text-xs font-medium text-accent">
+          <div className="flex items-center gap-1.5 rounded-full bg-[rgba(181,92,255,0.15)] px-3 py-1 text-xs font-medium text-[#b55cff]">
             <Crown className="h-3 w-3" />
             <span>Tú · Owner</span>
           </div>
@@ -185,12 +185,12 @@ export default function Step3Team() {
               value={row.email}
               onChange={(e) => updateRow(idx, { email: e.target.value })}
               placeholder="teammate@brand.com"
-              className="flex-1 rounded-xl border border-white/10 bg-white/[0.04] px-4 py-3 text-sm text-white placeholder:text-white/30 focus:border-accent/50 focus:outline-none focus:ring-2 focus:ring-accent/20"
+              className="flex-1 rounded-xl border border-white/[0.08] bg-[rgba(10,10,14,0.55)] px-4 py-3 text-sm text-foreground placeholder:text-white/30 focus:border-[#b55cff]/50 focus:outline-none focus:ring-2 focus:ring-[#b55cff]/20 transition"
             />
             <select
               value={row.role}
               onChange={(e) => updateRow(idx, { role: e.target.value as 'ADMIN' | 'MEMBER' })}
-              className="w-28 rounded-xl border border-white/10 bg-white/[0.04] px-3 py-3 text-sm text-white focus:border-accent/50 focus:outline-none"
+              className="w-28 rounded-xl border border-white/[0.08] bg-[rgba(10,10,14,0.55)] px-3 py-3 text-sm text-foreground focus:border-[#b55cff]/50 focus:outline-none transition"
             >
               {INVITABLE_ROLES.map((r) => (
                 <option key={r.key} value={r.key}>{r.label}</option>
@@ -212,7 +212,7 @@ export default function Step3Team() {
         <button
           type="button"
           onClick={addRow}
-          className="flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-white/10 px-4 py-3 text-sm text-white/60 transition hover:border-white/20 hover:text-white/80"
+          className="flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-white/[0.12] bg-transparent px-4 py-3 text-sm text-white/55 transition hover:border-[#b55cff]/30 hover:bg-[rgba(181,92,255,0.05)] hover:text-[#e6d2ff]"
         >
           <Plus className="h-4 w-4" />
           Agregar otro compañero
@@ -220,14 +220,14 @@ export default function Step3Team() {
       </div>
 
       {/* Role legend */}
-      <div className="mt-6 rounded-2xl border border-white/5 bg-white/[0.02] p-4">
+      <div className="adray-laststep-tip mt-6">
         <div className="text-center text-xs uppercase tracking-widest text-white/40">
           Permisos por rol
         </div>
         <div className="mt-3 grid grid-cols-1 gap-2 md:grid-cols-2">
           {INVITABLE_ROLES.map((r) => (
-            <div key={r.key} className="rounded-xl bg-white/[0.03] p-3">
-              <div className="text-sm font-medium text-white">{r.label}</div>
+            <div key={r.key} className="glass-effect rounded-xl p-3">
+              <div className="text-sm font-medium text-foreground">{r.label}</div>
               <div className="text-xs text-white/50">{r.description}</div>
             </div>
           ))}
@@ -262,7 +262,7 @@ export default function Step3Team() {
             onClick={handleSend}
             disabled={sending || updateProfile.isPending || wsLoading}
             className={cn(
-              'inline-flex items-center gap-2 rounded-xl bg-accent px-6 py-3 text-sm font-semibold text-white transition hover:bg-accent-hover',
+              'inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-[#b55cff] to-[#9b7cff] px-6 py-3 text-sm font-semibold text-white shadow-[0_0_22px_rgba(181,92,255,0.32)] transition hover:shadow-[0_0_32px_rgba(181,92,255,0.5)]',
               (sending || updateProfile.isPending || wsLoading) && 'cursor-not-allowed opacity-50'
             )}
           >

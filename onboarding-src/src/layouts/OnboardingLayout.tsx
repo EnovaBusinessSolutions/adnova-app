@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { Check } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { ParticleField } from "@/components/ParticleField";
 
 type Step = 1 | 2 | 3;
 
@@ -20,50 +21,67 @@ export function OnboardingLayout({
   ];
 
   return (
-    <div className="min-h-screen bg-bg text-white">
-      <header className="border-b border-white/10 bg-bg/80 backdrop-blur">
-        <div className="mx-auto flex max-w-5xl items-center justify-between px-6 py-5">
-          <div className="flex items-center gap-3">
-            <div className="grid h-8 w-8 place-items-center rounded-lg bg-gradient-to-br from-accent to-[#7c6df0]">
-              <span className="text-sm font-bold text-white">A</span>
+    <div className="adray-dashboard-shell adray-hero-bg relative min-h-screen overflow-hidden bg-background text-foreground">
+      {/* Hero grid + beam ambient overlays (igual que dashboard) */}
+      <div className="adray-hero-grid" aria-hidden="true" />
+      <div className="adray-hero-beam" aria-hidden="true" />
+
+      {/* Floating particles ambient field */}
+      <ParticleField variant="multiverse" count={32} />
+
+      {/* Content stack on top of ambient layers */}
+      <div className="relative z-10">
+        {/* Header */}
+        <header className="border-b border-white/[0.06] bg-[rgba(8,8,12,0.55)] backdrop-blur-xl">
+          <div className="mx-auto flex max-w-5xl items-center justify-between px-6 py-5">
+            <div className="flex items-center gap-3">
+              <div className="grid h-9 w-9 place-items-center rounded-xl bg-gradient-to-br from-[#b55cff] via-[#9b7cff] to-[#7c6df0] shadow-[0_0_24px_rgba(181,92,255,0.45)]">
+                <span className="text-sm font-bold text-white">A</span>
+              </div>
+              <span className="gradient-text text-lg font-semibold tracking-tight">Adray</span>
             </div>
-            <span className="text-lg font-semibold">Adray</span>
-          </div>
 
-          <div className="hidden items-center gap-2 md:flex">
-            {steps.map((s, idx) => {
-              const isActive = s.num === currentStep;
-              const isDone = s.num < currentStep;
-              return (
-                <div key={s.num} className="flex items-center gap-2">
-                  <div
-                    className={cn(
-                      "flex items-center gap-2 rounded-full border px-3 py-1 text-xs",
-                      isActive && "border-accent/50 bg-accent/10 text-accent",
-                      isDone && "border-emerald-500/30 bg-emerald-500/10 text-emerald-400",
-                      !isActive && !isDone && "border-white/10 bg-white/[0.02] text-white/40"
-                    )}
-                  >
-                    {isDone ? (
-                      <Check className="h-3.5 w-3.5" />
-                    ) : (
-                      <span className="h-1.5 w-1.5 rounded-full bg-current" />
-                    )}
-                    <span>{s.label}</span>
+            {/* Stepper */}
+            <div className="hidden items-center gap-2 md:flex">
+              {steps.map((s, idx) => {
+                const isActive = s.num === currentStep;
+                const isDone = s.num < currentStep;
+                return (
+                  <div key={s.num} className="flex items-center gap-2">
+                    <div
+                      className={cn(
+                        "flex items-center gap-2 rounded-full border px-3 py-1 text-xs transition",
+                        isActive && "border-[#b55cff]/45 bg-[rgba(181,92,255,0.12)] text-[#e6d2ff] shadow-[0_0_16px_rgba(181,92,255,0.22)]",
+                        isDone && "border-emerald-400/30 bg-emerald-400/10 text-emerald-300",
+                        !isActive && !isDone && "border-white/10 bg-white/[0.03] text-white/40"
+                      )}
+                    >
+                      {isDone ? (
+                        <Check className="h-3.5 w-3.5" />
+                      ) : (
+                        <span className="h-1.5 w-1.5 rounded-full bg-current" />
+                      )}
+                      <span>{s.label}</span>
+                    </div>
+                    {idx < steps.length - 1 && <div className="h-px w-6 bg-white/10" />}
                   </div>
-                  {idx < steps.length - 1 && <div className="h-px w-6 bg-white/10" />}
-                </div>
-              );
-            })}
-          </div>
+                );
+              })}
+            </div>
 
-          <div className="text-xs text-white/40">
-            Paso <span className="text-white">{currentStep}</span> de {totalSteps}
+            <div className="text-xs uppercase tracking-widest text-white/40">
+              Paso <span className="text-white">{currentStep}</span> de {totalSteps}
+            </div>
           </div>
-        </div>
-      </header>
+        </header>
 
-      <main className="mx-auto max-w-2xl px-6 py-12">{children}</main>
+        {/* Main content area */}
+        <main className="mx-auto max-w-2xl px-6 py-12">
+          <div className="futuristic-panel adray-border-flow animate-fade-in-up p-8 md:p-10">
+            {children}
+          </div>
+        </main>
+      </div>
     </div>
   );
 }

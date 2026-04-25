@@ -104,9 +104,9 @@ export default function Step1Workspace() {
   return (
     <OnboardingLayout currentStep={1}>
       <div className="space-y-2">
-        <div className="text-xs uppercase tracking-widest text-accent">Paso 1 de 3</div>
-        <h1 className="text-3xl font-semibold">Configura tu workspace</h1>
-        <p className="text-sm text-white/60">
+        <div className="text-xs uppercase tracking-[0.22em] text-[#b55cff]">Paso 1 de 3</div>
+        <h1 className="gradient-text text-3xl font-semibold leading-tight">Configura tu workspace</h1>
+        <p className="text-sm text-muted-foreground">
           Un workspace es el espacio compartido donde tu equipo verá la inteligencia de
           marketing de tu marca. Dale un nombre, un ícono y dinos a qué te dedicas.
         </p>
@@ -123,11 +123,11 @@ export default function Step1Workspace() {
             onChange={(e) => setName(e.target.value)}
             placeholder="Ej. Shogun, Gymshark, Pela Case"
             maxLength={64}
-            className="w-full rounded-xl border border-white/10 bg-white/[0.04] px-4 py-3 text-white placeholder:text-white/30 focus:border-accent/50 focus:outline-none focus:ring-2 focus:ring-accent/20"
+            className="w-full rounded-xl border border-white/[0.08] bg-[rgba(10,10,14,0.6)] px-4 py-3 text-foreground placeholder:text-white/30 focus:border-[#b55cff]/50 focus:outline-none focus:ring-2 focus:ring-[#b55cff]/20 transition"
           />
           {slug && (
             <div className="text-xs text-white/40">
-              adray.ai/<span className="text-accent">{slug || "tu-workspace"}</span>
+              adray.ai/<span className="text-[#b55cff]">{slug || "tu-workspace"}</span>
             </div>
           )}
         </div>
@@ -142,7 +142,7 @@ export default function Step1Workspace() {
               setSlug(e.target.value.toLowerCase().replace(/\s/g, "-"));
             }}
             maxLength={48}
-            className="w-full rounded-xl border border-white/10 bg-white/[0.04] px-4 py-3 font-mono text-sm text-white placeholder:text-white/30 focus:border-accent/50 focus:outline-none focus:ring-2 focus:ring-accent/20"
+            className="w-full rounded-xl border border-white/[0.08] bg-[rgba(10,10,14,0.6)] px-4 py-3 font-mono text-sm text-foreground placeholder:text-white/30 focus:border-[#b55cff]/50 focus:outline-none focus:ring-2 focus:ring-[#b55cff]/20 transition"
           />
           {slug && !isValidSlugFormat(slug) && (
             <div className="text-xs text-amber-400">
@@ -163,7 +163,7 @@ export default function Step1Workspace() {
                 className={cn(
                   "aspect-square rounded-xl border flex items-center justify-center transition",
                   icon === key
-                    ? "border-accent bg-accent/15 text-accent"
+                    ? "border-[#b55cff] bg-[rgba(181,92,255,0.15)] text-[#b55cff] neon-glow"
                     : "border-white/10 bg-white/[0.03] text-white/60 hover:border-white/20"
                 )}
               >
@@ -180,7 +180,7 @@ export default function Step1Workspace() {
           <select
             value={industry}
             onChange={(e) => setIndustry(e.target.value as IndustryVertical)}
-            className="w-full rounded-xl border border-white/10 bg-white/[0.04] px-4 py-3 text-white focus:border-accent/50 focus:outline-none focus:ring-2 focus:ring-accent/20"
+            className="w-full rounded-xl border border-white/[0.08] bg-[rgba(10,10,14,0.6)] px-4 py-3 text-foreground focus:border-[#b55cff]/50 focus:outline-none focus:ring-2 focus:ring-[#b55cff]/20 transition"
           >
             <option value="" disabled>Selecciona tu vertical…</option>
             {INDUSTRY_VERTICALS.map((v) => (
@@ -199,7 +199,7 @@ export default function Step1Workspace() {
           <button
             type="submit"
             disabled={!canSubmit || mutation.isPending}
-            className="inline-flex items-center gap-2 rounded-xl bg-accent px-6 py-3 text-sm font-semibold text-white transition hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-50"
+            className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-[#b55cff] to-[#9b7cff] px-6 py-3 text-sm font-semibold text-white shadow-[0_0_22px_rgba(181,92,255,0.32)] transition hover:shadow-[0_0_32px_rgba(181,92,255,0.5)] disabled:cursor-not-allowed disabled:opacity-50"
           >
             {mutation.isPending ? "Creando…" : "Continuar →"}
           </button>

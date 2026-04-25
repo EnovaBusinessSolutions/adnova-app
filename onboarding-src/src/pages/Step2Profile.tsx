@@ -65,9 +65,9 @@ export default function Step2Profile() {
   return (
     <OnboardingLayout currentStep={2}>
       <div className="space-y-2">
-        <div className="text-xs uppercase tracking-widest text-accent">Paso 2 de 3</div>
-        <h1 className="text-3xl font-semibold">Tu perfil</h1>
-        <p className="text-sm text-white/60">
+        <div className="text-xs uppercase tracking-[0.22em] text-[#b55cff]">Paso 2 de 3</div>
+        <h1 className="gradient-text text-3xl font-semibold leading-tight">Tu perfil</h1>
+        <p className="text-sm text-muted-foreground">
           Así te van a reconocer tus compañeros dentro del workspace. Toma como 30 segundos.
         </p>
       </div>
@@ -75,17 +75,17 @@ export default function Step2Profile() {
       <form onSubmit={handleSubmit} className="mt-8 space-y-6">
         {/* Avatar (solo iniciales por ahora) */}
         <div className="flex items-center gap-4">
-          <div className="grid h-16 w-16 place-items-center rounded-full bg-gradient-to-br from-accent to-[#7c6df0] text-xl font-semibold">
+          <div className="grid h-16 w-16 place-items-center rounded-full bg-gradient-to-br from-[#b55cff] via-[#9b7cff] to-[#7c6df0] shadow-[0_0_22px_rgba(181,92,255,0.36)] text-xl font-semibold text-white">
             {initials || '?'}
           </div>
           <div className="space-y-1">
-            <div className="text-sm font-medium text-white">Foto de perfil</div>
+            <div className="text-sm font-medium text-foreground">Foto de perfil</div>
             <div className="flex gap-2">
               <button
                 type="button"
                 disabled
                 title="Disponible próximamente"
-                className="rounded-lg border border-white/10 bg-white/[0.04] px-3 py-1.5 text-xs text-white/40"
+                className="rounded-lg border border-white/10 bg-white/[0.03] px-3 py-1.5 text-xs text-white/30"
               >
                 Subir foto
               </button>
@@ -106,7 +106,7 @@ export default function Step2Profile() {
               onChange={(e) => setFirstName(e.target.value)}
               maxLength={32}
               placeholder="Ej. Victor"
-              className="w-full rounded-xl border border-white/10 bg-white/[0.04] px-4 py-3 text-white placeholder:text-white/30 focus:border-accent/50 focus:outline-none focus:ring-2 focus:ring-accent/20"
+              className="w-full rounded-xl border border-white/[0.08] bg-[rgba(10,10,14,0.6)] px-4 py-3 text-foreground placeholder:text-white/30 focus:border-[#b55cff]/50 focus:outline-none focus:ring-2 focus:ring-[#b55cff]/20 transition"
             />
           </div>
           <div className="space-y-2">
@@ -117,7 +117,7 @@ export default function Step2Profile() {
               onChange={(e) => setLastName(e.target.value)}
               maxLength={32}
               placeholder="Ej. Huerta"
-              className="w-full rounded-xl border border-white/10 bg-white/[0.04] px-4 py-3 text-white placeholder:text-white/30 focus:border-accent/50 focus:outline-none focus:ring-2 focus:ring-accent/20"
+              className="w-full rounded-xl border border-white/[0.08] bg-[rgba(10,10,14,0.6)] px-4 py-3 text-foreground placeholder:text-white/30 focus:border-[#b55cff]/50 focus:outline-none focus:ring-2 focus:ring-[#b55cff]/20 transition"
             />
           </div>
         </div>
@@ -133,7 +133,7 @@ export default function Step2Profile() {
             onChange={(e) => setJobTitle(e.target.value)}
             maxLength={64}
             placeholder="Ej. Founder, Head of Growth, CMO"
-            className="w-full rounded-xl border border-white/10 bg-white/[0.04] px-4 py-3 text-white placeholder:text-white/30 focus:border-accent/50 focus:outline-none focus:ring-2 focus:ring-accent/20"
+            className="w-full rounded-xl border border-white/[0.08] bg-[rgba(10,10,14,0.6)] px-4 py-3 text-foreground placeholder:text-white/30 focus:border-[#b55cff]/50 focus:outline-none focus:ring-2 focus:ring-[#b55cff]/20 transition"
           />
         </div>
 
@@ -145,7 +145,7 @@ export default function Step2Profile() {
           <select
             value={primaryFocus}
             onChange={(e) => setPrimaryFocus(e.target.value as PrimaryFocus)}
-            className="w-full rounded-xl border border-white/10 bg-white/[0.04] px-4 py-3 text-white focus:border-accent/50 focus:outline-none focus:ring-2 focus:ring-accent/20"
+            className="w-full rounded-xl border border-white/[0.08] bg-[rgba(10,10,14,0.6)] px-4 py-3 text-foreground focus:border-[#b55cff]/50 focus:outline-none focus:ring-2 focus:ring-[#b55cff]/20 transition"
           >
             <option value="" disabled>Selecciona una opción…</option>
             {PRIMARY_FOCUS_OPTIONS.map((o) => (
@@ -172,7 +172,7 @@ export default function Step2Profile() {
             type="submit"
             disabled={!canSubmit || updateProfile.isPending}
             className={cn(
-              'inline-flex items-center gap-2 rounded-xl bg-accent px-6 py-3 text-sm font-semibold text-white transition hover:bg-accent-hover',
+              'inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-[#b55cff] to-[#9b7cff] px-6 py-3 text-sm font-semibold text-white shadow-[0_0_22px_rgba(181,92,255,0.32)] transition hover:shadow-[0_0_32px_rgba(181,92,255,0.5)]',
               (!canSubmit || updateProfile.isPending) && 'cursor-not-allowed opacity-50'
             )}
           >
