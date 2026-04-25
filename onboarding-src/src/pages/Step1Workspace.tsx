@@ -67,15 +67,15 @@ export default function Step1Workspace() {
     onError: (err: any) => {
       const code = err?.code;
       if (code === "SLUG_TAKEN") {
-        setError("Este nombre ya está en uso. Prueba con otro o ajusta el slug.");
+        setError("This name is already in use. Try another one or adjust the slug.");
       } else if (code === "SLUG_INVALID" || code === "SLUG_RESERVED" || code === "SLUG_TOO_LONG") {
-        setError("El slug no es válido. Usa minúsculas, números y guiones.");
+        setError("Invalid slug. Use lowercase, numbers, and hyphens.");
       } else if (code === "NAME_REQUIRED") {
-        setError("El nombre es obligatorio.");
+        setError("Name is required.");
       } else if (code === "NAME_TOO_LONG") {
-        setError("El nombre debe tener máximo 64 caracteres.");
+        setError("Name must be 64 characters or fewer.");
       } else {
-        setError("No pudimos crear el workspace. Intenta de nuevo.");
+        setError("We couldn't create the workspace. Try again.");
       }
     },
   });
@@ -98,24 +98,24 @@ export default function Step1Workspace() {
   return (
     <OnboardingLayout currentStep={1}>
       <div className="space-y-2">
-        <div className="text-xs uppercase tracking-[0.22em] text-[#b55cff]">Paso 1 de 3</div>
-        <h1 className="gradient-text text-3xl font-semibold leading-tight">Configura tu workspace</h1>
+        <div className="text-xs uppercase tracking-[0.22em] text-[#b55cff]">Step 1 of 3</div>
+        <h1 className="gradient-text text-3xl font-semibold leading-tight">Set up your workspace</h1>
         <p className="text-sm text-muted-foreground">
-          Un workspace es el espacio compartido donde tu equipo verá la inteligencia de
-          marketing de tu marca. Dale un nombre, un ícono y dinos a qué te dedicas.
+          A workspace is the shared space where your team will see your brand's marketing
+          intelligence. Give it a name, an icon, and tell us what you do.
         </p>
       </div>
 
       <form onSubmit={handleSubmit} className="mt-8 space-y-6">
         <div className="space-y-2">
           <label className="text-xs uppercase tracking-widest text-white/50">
-            Nombre del workspace
+            Workspace name
           </label>
           <input
             type="text"
             value={name}
             onChange={(e) => setName(e.target.value)}
-            placeholder="Ej. Shogun, Gymshark, Pela Case"
+            placeholder="e.g. Shogun, Gymshark, Pela Case"
             maxLength={64}
             className="w-full rounded-xl border border-white/[0.08] bg-white/[0.02] backdrop-blur-xl px-4 py-3 text-foreground placeholder:text-white/30 transition-all duration-200 hover:border-white/[0.14] focus:border-[#b55cff]/55 focus:outline-none focus:ring-2 focus:ring-[#b55cff]/22 focus:shadow-[0_0_28px_rgba(181,92,255,0.18)]"
           />
@@ -140,13 +140,13 @@ export default function Step1Workspace() {
           />
           {slug && !isValidSlugFormat(slug) && (
             <div className="text-xs text-amber-400">
-              Solo minúsculas, números y guiones. No puede empezar ni terminar con guión.
+              Only lowercase letters, numbers, and hyphens. Cannot start or end with a hyphen.
             </div>
           )}
         </div>
 
         <div className="space-y-2">
-          <label className="text-xs uppercase tracking-widest text-white/50">Ícono</label>
+          <label className="text-xs uppercase tracking-widest text-white/50">Icon</label>
           <div className="grid grid-cols-8 gap-2">
             {WORKSPACE_ICONS.map(({ key, label, Icon }) => (
               <button
@@ -179,7 +179,7 @@ export default function Step1Workspace() {
             disabled={!canSubmit || mutation.isPending}
             className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-[#b55cff] to-[#9b7cff] px-6 py-3 text-sm font-semibold text-white shadow-[0_0_22px_rgba(181,92,255,0.34)] transition-all duration-300 hover:shadow-[0_0_36px_rgba(181,92,255,0.52)] hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:translate-y-0"
           >
-            {mutation.isPending ? "Creando…" : "Continuar →"}
+            {mutation.isPending ? "Creating…" : "Continue →"}
           </button>
         </div>
       </form>

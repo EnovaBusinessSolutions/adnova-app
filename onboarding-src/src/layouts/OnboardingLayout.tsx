@@ -14,8 +14,8 @@ export function OnboardingLayout({
 }) {
   const steps = [
     { num: 1, label: "Workspace" },
-    { num: 2, label: "Tu perfil" },
-    { num: 3, label: "Equipo" },
+    { num: 2, label: "Your profile" },
+    { num: 3, label: "Team" },
   ];
 
   return (

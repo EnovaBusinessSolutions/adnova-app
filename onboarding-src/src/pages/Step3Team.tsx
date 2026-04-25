@@ -87,7 +87,7 @@ export default function Step3Team() {
     setError(null);
 
     if (!workspace) {
-      setError('No encontramos tu workspace. Recarga la página.');
+      setError("We couldn't find your workspace. Reload the page.");
       return;
     }
 
@@ -99,7 +99,7 @@ export default function Step3Team() {
 
     for (const r of validRows) {
       if (!isValidEmail(r.email.trim())) {
-        setError(`"${r.email}" no es un email válido.`);
+        setError(`"${r.email}" is not a valid email.`);
         return;
       }
     }
@@ -107,7 +107,7 @@ export default function Step3Team() {
     const lower = validRows.map((r) => r.email.trim().toLowerCase());
     const dup = lower.find((e, i) => lower.indexOf(e) !== i);
     if (dup) {
-      setError(`El email "${dup}" está duplicado en la lista.`);
+      setError(`Email "${dup}" is duplicated in the list.`);
       return;
     }
 
@@ -128,7 +128,7 @@ export default function Step3Team() {
 
     if (failures.length === validRows.length) {
       setError(
-        `No pudimos enviar las invitaciones. Detalle: ${failures.map((f) => `${f.email} (${f.error})`).join(', ')}`
+        `We couldn't send the invitations. Detail: ${failures.map((f) => `${f.email} (${f.error})`).join(', ')}`
       );
       return;
     }
@@ -160,11 +160,11 @@ export default function Step3Team() {
   return (
     <OnboardingLayout currentStep={3}>
       <div className="space-y-2">
-        <div className="text-xs uppercase tracking-[0.22em] text-[#b55cff]">Paso 3 de 3</div>
-        <h1 className="gradient-text text-3xl font-semibold leading-tight">Invita a tu equipo</h1>
+        <div className="text-xs uppercase tracking-[0.22em] text-[#b55cff]">Step 3 of 3</div>
+        <h1 className="gradient-text text-3xl font-semibold leading-tight">Invite your team</h1>
         <p className="text-sm text-muted-foreground">
-          Agrega compañeros que colaborarán en este workspace. Recibirán un email para aceptar.
-          Puedes saltarte este paso e invitarlos después desde el panel de members.
+          Add teammates who will collaborate in this workspace. They'll receive an email to accept.
+          You can skip this step and invite them later from the members panel.
         </p>
       </div>
 
@@ -182,7 +182,7 @@ export default function Step3Team() {
           </div>
           <div className="flex items-center gap-1.5 rounded-full bg-[rgba(181,92,255,0.15)] px-3 py-1 text-xs font-medium text-[#b55cff]">
             <Crown className="h-3 w-3" />
-            <span>Tú · Owner</span>
+            <span>You · Owner</span>
           </div>
         </div>
 
@@ -205,14 +205,14 @@ export default function Step3Team() {
               }))}
               value={row.role}
               onChange={(v) => updateRow(idx, { role: v as 'ADMIN' | 'MEMBER' })}
-              placeholder="Rol"
+              placeholder="Role"
             />
             {rows.length > 1 && (
               <button
                 type="button"
                 onClick={() => removeRow(idx)}
                 className="rounded-xl border border-white/10 bg-white/[0.04] px-3 text-white/50 transition hover:bg-white/[0.07] hover:text-white/80"
-                title="Quitar"
+                title="Remove"
               >
                 <X className="h-4 w-4" />
               </button>
@@ -226,14 +226,14 @@ export default function Step3Team() {
           className="group flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-white/[0.12] bg-transparent px-4 py-3 text-sm text-white/55 transition-all duration-200 hover:border-[#b55cff]/35 hover:bg-[rgba(181,92,255,0.05)] hover:text-[#e6d2ff]"
         >
           <Plus className="h-4 w-4" />
-          Agregar otro compañero
+          Add another teammate
         </button>
       </div>
 
       {/* Role legend */}
       <div className="adray-laststep-tip mt-6">
         <div className="text-center text-xs uppercase tracking-widest text-white/40">
-          Permisos por rol
+          Permissions by role
         </div>
         <div className="mt-3 grid grid-cols-1 gap-2 md:grid-cols-2">
           {INVITABLE_ROLES.map((r) => (
@@ -257,7 +257,7 @@ export default function Step3Team() {
           onClick={() => navigate('/profile')}
           className="rounded-xl border border-white/10 bg-white/[0.04] px-5 py-3 text-sm text-white/80 transition hover:bg-white/[0.07]"
         >
-          ← Atrás
+          ← Back
         </button>
         <div className="flex items-center gap-3">
           <button
@@ -266,7 +266,7 @@ export default function Step3Team() {
             disabled={sending || updateProfile.isPending}
             className="text-sm text-white/60 transition hover:text-white/80 disabled:opacity-50"
           >
-            Saltar por ahora
+            Skip for now
           </button>
           <button
             type="button"
@@ -277,7 +277,7 @@ export default function Step3Team() {
               (sending || updateProfile.isPending || wsLoading) && 'cursor-not-allowed opacity-50 hover:translate-y-0'
             )}
           >
-            {sending ? 'Enviando…' : 'Enviar invitaciones →'}
+            {sending ? 'Sending…' : 'Send invitations →'}
           </button>
         </div>
       </div>

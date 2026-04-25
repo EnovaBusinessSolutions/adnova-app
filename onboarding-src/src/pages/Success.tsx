@@ -40,13 +40,13 @@ export default function Success() {
             <Check className="h-9 w-9 text-emerald-300" />
           </div>
           <div className="mt-5 text-xs uppercase tracking-[0.22em] text-[#b55cff]">
-            Workspace listo
+            Workspace ready
           </div>
-          <h1 className="gradient-text mt-2 text-3xl font-semibold">Todo está configurado</h1>
+          <h1 className="gradient-text mt-2 text-3xl font-semibold">You're all set up</h1>
           <p className="mt-3 max-w-md text-sm text-muted-foreground">
             {teammatesCount > 0
-              ? `Invitaciones enviadas. Conecta tus fuentes de datos para que Adray empiece a construir inteligencia de marketing.`
-              : `Conecta tus fuentes de datos para que Adray empiece a construir inteligencia de marketing.`}
+              ? `Invitations sent. Connect your data sources so Adray can start building marketing intelligence.`
+              : `Connect your data sources so Adray can start building marketing intelligence.`}
           </p>
         </div>
 
@@ -58,13 +58,13 @@ export default function Success() {
             </div>
           </div>
           <div className="glass-effect rounded-2xl p-4">
-            <div className="text-xs uppercase tracking-widest text-white/40">Tu rol</div>
+            <div className="text-xs uppercase tracking-widest text-white/40">Your role</div>
             <div className="mt-1 text-base font-semibold text-foreground">
               {workspace?.role || 'Owner'}
             </div>
           </div>
           <div className="glass-effect rounded-2xl p-4">
-            <div className="text-xs uppercase tracking-widest text-white/40">Compañeros</div>
+            <div className="text-xs uppercase tracking-widest text-white/40">Teammates</div>
             <div className="mt-1 text-base font-semibold text-foreground">
               {teammatesCount > 0 ? teammatesCount : '—'}
             </div>
@@ -77,7 +77,7 @@ export default function Success() {
             onClick={goToDashboard}
             className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-[#b55cff] to-[#9b7cff] px-6 py-3 text-sm font-semibold text-white shadow-[0_0_22px_rgba(181,92,255,0.34)] transition-all duration-300 hover:shadow-[0_0_36px_rgba(181,92,255,0.52)] hover:-translate-y-0.5"
           >
-            Continuar al dashboard →
+            Continue to dashboard →
           </button>
         </div>
       </div>

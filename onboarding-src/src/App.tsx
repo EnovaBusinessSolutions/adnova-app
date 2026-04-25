@@ -13,15 +13,15 @@ function NotAuthScreen() {
   return (
     <div className="min-h-screen bg-bg text-white flex items-center justify-center px-6">
       <div className="max-w-md text-center space-y-3">
-        <h1 className="text-2xl font-semibold">Sesión requerida</h1>
+        <h1 className="text-2xl font-semibold">Sign in required</h1>
         <p className="text-sm text-white/60">
-          Necesitas iniciar sesión para continuar con el onboarding.
+          You need to sign in to continue with the onboarding.
         </p>
         <a
           href={`/login?return=${returnTo}`}
           className="inline-block rounded-xl bg-accent px-6 py-3 text-sm font-semibold text-white hover:bg-accent-hover"
         >
-          Iniciar sesión
+          Sign in
         </a>
       </div>
     </div>
@@ -31,7 +31,7 @@ function NotAuthScreen() {
 function LoadingScreen() {
   return (
     <div className="min-h-screen bg-bg text-white flex items-center justify-center">
-      <div className="text-sm text-white/40">Cargando…</div>
+      <div className="text-sm text-white/40">Loading…</div>
     </div>
   );
 }
@@ -57,13 +57,15 @@ function ResumeOnboarding() {
     );
   }
 
-  // Si ya completó el onboarding, redirect al dashboard.
-  // Excepción: si está en /success, dejamos que se vea la pantalla de
-  // confirmación final antes de mandar al user al dashboard. El usuario
-  // hace click en "Continuar al dashboard" desde Success cuando termine.
+  // If onboarding is complete, redirect to dashboard ONLY when the user
+  // landed on the root "/" of the onboarding SPA (e.g. typed the URL
+  // after already finishing). On any other route (/profile, /team,
+  // /success) we let the flow continue — the user is mid-navigation
+  // and the cache might have been updated by setQueryData before the
+  // navigate() call ran.
   if (
     user.onboardingStep === 'COMPLETE' &&
-    !location.pathname.startsWith('/success')
+    (location.pathname === '/' || location.pathname === '')
   ) {
     window.location.href = '/dashboard';
     return <LoadingScreen />;

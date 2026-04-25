@@ -8,14 +8,14 @@ export type WorkspaceIconKey =
   | "LIGHTBULB" | "FIRE" | "LEAF" | "DIAMOND";
 
 export const WORKSPACE_ICONS: { key: WorkspaceIconKey; label: string; Icon: LucideIcon }[] = [
-  { key: "SHOPPING_BAG", label: "Bolsa",    Icon: ShoppingBag },
-  { key: "LIGHTNING",    label: "Rayo",     Icon: Zap },
-  { key: "TARGET",       label: "Objetivo", Icon: Target },
-  { key: "ROCKET",       label: "Cohete",   Icon: Rocket },
-  { key: "LIGHTBULB",    label: "Idea",     Icon: Lightbulb },
-  { key: "FIRE",         label: "Fuego",    Icon: Flame },
-  { key: "LEAF",         label: "Hoja",     Icon: Leaf },
-  { key: "DIAMOND",      label: "Diamante", Icon: Gem },
+  { key: "SHOPPING_BAG", label: "Bag",       Icon: ShoppingBag },
+  { key: "LIGHTNING",    label: "Lightning", Icon: Zap },
+  { key: "TARGET",       label: "Target",    Icon: Target },
+  { key: "ROCKET",       label: "Rocket",    Icon: Rocket },
+  { key: "LIGHTBULB",    label: "Idea",      Icon: Lightbulb },
+  { key: "FIRE",         label: "Fire",      Icon: Flame },
+  { key: "LEAF",         label: "Leaf",      Icon: Leaf },
+  { key: "DIAMOND",      label: "Diamond",   Icon: Gem },
 ];
 
 export type IndustryVertical =
@@ -26,21 +26,21 @@ export type IndustryVertical =
   | "AGENCY" | "MARKETPLACE" | "OTHER";
 
 export const INDUSTRY_VERTICALS: { key: IndustryVertical; label: string }[] = [
-  { key: "ECOMMERCE_FASHION",         label: "Moda y ropa" },
-  { key: "ECOMMERCE_BEAUTY",          label: "Belleza y cuidado personal" },
-  { key: "ECOMMERCE_HOME_DECOR",      label: "Hogar y decoración" },
-  { key: "ECOMMERCE_FOOD_BEVERAGE",   label: "Comida y bebida" },
-  { key: "ECOMMERCE_HEALTH_WELLNESS", label: "Salud y bienestar" },
-  { key: "ECOMMERCE_ELECTRONICS",     label: "Electrónica" },
-  { key: "ECOMMERCE_BABY_KIDS",       label: "Bebés y niños" },
-  { key: "ECOMMERCE_PETS",            label: "Mascotas" },
-  { key: "ECOMMERCE_SPORTS_OUTDOORS", label: "Deportes y aire libre" },
-  { key: "ECOMMERCE_JEWELRY",         label: "Joyería y accesorios" },
-  { key: "ECOMMERCE_AUTOMOTIVE",      label: "Automotriz" },
-  { key: "DTC_SUBSCRIPTION",          label: "Suscripción DTC" },
-  { key: "AGENCY",                    label: "Agencia" },
+  { key: "ECOMMERCE_FASHION",         label: "Fashion & apparel" },
+  { key: "ECOMMERCE_BEAUTY",          label: "Beauty & personal care" },
+  { key: "ECOMMERCE_HOME_DECOR",      label: "Home & decor" },
+  { key: "ECOMMERCE_FOOD_BEVERAGE",   label: "Food & beverage" },
+  { key: "ECOMMERCE_HEALTH_WELLNESS", label: "Health & wellness" },
+  { key: "ECOMMERCE_ELECTRONICS",     label: "Electronics" },
+  { key: "ECOMMERCE_BABY_KIDS",       label: "Baby & kids" },
+  { key: "ECOMMERCE_PETS",            label: "Pets" },
+  { key: "ECOMMERCE_SPORTS_OUTDOORS", label: "Sports & outdoors" },
+  { key: "ECOMMERCE_JEWELRY",         label: "Jewelry & accessories" },
+  { key: "ECOMMERCE_AUTOMOTIVE",      label: "Automotive" },
+  { key: "DTC_SUBSCRIPTION",          label: "DTC subscription" },
+  { key: "AGENCY",                    label: "Agency" },
   { key: "MARKETPLACE",               label: "Marketplace" },
-  { key: "OTHER",                     label: "Otro" },
+  { key: "OTHER",                     label: "Other" },
 ];
 
 const RESERVED_SLUGS = new Set([
@@ -76,27 +76,27 @@ export type PrimaryFocus =
   | 'AGENCY' | 'ENGINEERING' | 'OTHER';
 
 export const PRIMARY_FOCUS_OPTIONS: { key: PrimaryFocus; label: string }[] = [
-  { key: 'FOUNDER_CEO',          label: 'Fundador / CEO' },
+  { key: 'FOUNDER_CEO',          label: 'Founder / CEO' },
   { key: 'HEAD_OF_GROWTH',       label: 'Head of Growth' },
   { key: 'HEAD_OF_MARKETING',    label: 'Head of Marketing' },
   { key: 'MARKETING_MANAGER',    label: 'Marketing Manager' },
   { key: 'PERFORMANCE_MARKETER', label: 'Performance Marketer' },
   { key: 'ANALYTICS',            label: 'Analytics' },
-  { key: 'AGENCY',               label: 'Agencia' },
-  { key: 'ENGINEERING',          label: 'Ingeniería' },
-  { key: 'OTHER',                label: 'Otro' },
+  { key: 'AGENCY',               label: 'Agency' },
+  { key: 'ENGINEERING',          label: 'Engineering' },
+  { key: 'OTHER',                label: 'Other' },
 ];
 
 export const INVITABLE_ROLES: { key: 'ADMIN' | 'MEMBER'; label: string; description: string }[] = [
   {
     key: 'ADMIN',
     label: 'Admin',
-    description: 'Configuración, equipo e integraciones.',
+    description: 'Settings, team and integrations.',
   },
   {
     key: 'MEMBER',
     label: 'Member',
-    description: 'Acceso de uso. Sin gestión de equipo.',
+    description: 'Use access. No team management.',
   },
 ];
 
