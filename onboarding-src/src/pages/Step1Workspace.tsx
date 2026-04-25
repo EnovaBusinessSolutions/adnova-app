@@ -2,22 +2,18 @@ import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { OnboardingLayout } from "@/layouts/OnboardingLayout";
-import { PremiumSelect } from "@/components/PremiumSelect";
 import { cn } from "@/lib/utils";
 import {
   WORKSPACE_ICONS,
-  INDUSTRY_VERTICALS,
   deriveSlug,
   isValidSlugFormat,
   type WorkspaceIconKey,
-  type IndustryVertical,
 } from "@/config/workspaceCatalogs";
 
 type CreateWorkspacePayload = {
   name: string;
   slug?: string;
   icon?: WorkspaceIconKey;
-  industryVertical?: IndustryVertical;
 };
 
 async function createWorkspace(payload: CreateWorkspacePayload) {
@@ -44,7 +40,6 @@ export default function Step1Workspace() {
   const [slug, setSlug] = useState("");
   const [slugTouched, setSlugTouched] = useState(false);
   const [icon, setIcon] = useState<WorkspaceIconKey>("SHOPPING_BAG");
-  const [industry, setIndustry] = useState<IndustryVertical | "">("");
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -88,8 +83,7 @@ export default function Step1Workspace() {
   const canSubmit =
     name.trim().length >= 1 &&
     name.trim().length <= 64 &&
-    isValidSlugFormat(slug) &&
-    industry !== "";
+    isValidSlugFormat(slug);
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -98,7 +92,6 @@ export default function Step1Workspace() {
       name: name.trim(),
       slug,
       icon,
-      industryVertical: industry as IndustryVertical,
     });
   }
 
@@ -124,7 +117,7 @@ export default function Step1Workspace() {
             onChange={(e) => setName(e.target.value)}
             placeholder="Ej. Shogun, Gymshark, Pela Case"
             maxLength={64}
-            className="w-full rounded-xl border border-white/[0.08] bg-[rgba(10,10,14,0.65)] px-4 py-3 text-foreground placeholder:text-white/30 transition-all duration-200 hover:border-white/[0.14] focus:border-[#b55cff]/55 focus:outline-none focus:ring-2 focus:ring-[#b55cff]/22 focus:shadow-[0_0_28px_rgba(181,92,255,0.18)]"
+            className="w-full rounded-xl border border-white/[0.08] bg-white/[0.02] backdrop-blur-xl px-4 py-3 text-foreground placeholder:text-white/30 transition-all duration-200 hover:border-white/[0.14] focus:border-[#b55cff]/55 focus:outline-none focus:ring-2 focus:ring-[#b55cff]/22 focus:shadow-[0_0_28px_rgba(181,92,255,0.18)]"
           />
           {slug && (
             <div className="text-xs text-white/40">
@@ -143,7 +136,7 @@ export default function Step1Workspace() {
               setSlug(e.target.value.toLowerCase().replace(/\s/g, "-"));
             }}
             maxLength={48}
-            className="w-full rounded-xl border border-white/[0.08] bg-[rgba(10,10,14,0.65)] px-4 py-3 font-mono text-sm text-foreground placeholder:text-white/30 transition-all duration-200 hover:border-white/[0.14] focus:border-[#b55cff]/55 focus:outline-none focus:ring-2 focus:ring-[#b55cff]/22 focus:shadow-[0_0_28px_rgba(181,92,255,0.18)]"
+            className="w-full rounded-xl border border-white/[0.08] bg-white/[0.02] backdrop-blur-xl px-4 py-3 font-mono text-sm text-foreground placeholder:text-white/30 transition-all duration-200 hover:border-white/[0.14] focus:border-[#b55cff]/55 focus:outline-none focus:ring-2 focus:ring-[#b55cff]/22 focus:shadow-[0_0_28px_rgba(181,92,255,0.18)]"
           />
           {slug && !isValidSlugFormat(slug) && (
             <div className="text-xs text-amber-400">
@@ -172,18 +165,6 @@ export default function Step1Workspace() {
               </button>
             ))}
           </div>
-        </div>
-
-        <div className="space-y-2">
-          <label className="text-xs uppercase tracking-widest text-white/50">
-            Vertical de industria
-          </label>
-          <PremiumSelect
-            options={INDUSTRY_VERTICALS.map((v) => ({ key: v.key, label: v.label }))}
-            value={industry}
-            onChange={(v) => setIndustry(v as IndustryVertical)}
-            placeholder="Selecciona tu vertical…"
-          />
         </div>
 
         {error && (

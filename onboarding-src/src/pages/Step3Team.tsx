@@ -142,9 +142,17 @@ export default function Step3Team() {
   }
 
   const ownerInitials = (() => {
-    const f = (user?.firstName || '')[0] || '';
-    const l = (user?.lastName || '')[0] || '';
-    return `${f}${l}`.toUpperCase() || (user?.email?.[0] || '?').toUpperCase();
+    const f = (user?.firstName || '').trim();
+    const l = (user?.lastName || '').trim();
+    if (f && l) return (f[0] + l[0]).toUpperCase();
+    if (f) return f.slice(0, 2).toUpperCase();
+    if (l) return l.slice(0, 2).toUpperCase();
+    if (user?.name) {
+      const parts = user.name.trim().split(/\s+/);
+      if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase();
+      return parts[0].slice(0, 2).toUpperCase();
+    }
+    return (user?.email?.[0] || '?').toUpperCase();
   })();
   const ownerDisplayName =
     user?.firstName && user?.lastName ? `${user.firstName} ${user.lastName}` : user?.email || 'Owner';
@@ -162,7 +170,7 @@ export default function Step3Team() {
 
       <div className="mt-8 space-y-3">
         {/* Owner card */}
-        <div className="flex items-center justify-between rounded-2xl border border-[#b55cff]/30 bg-[rgba(181,92,255,0.07)] adray-border-flow px-4 py-3 shadow-[0_0_24px_rgba(181,92,255,0.12)]">
+        <div className="flex items-center justify-between rounded-2xl border border-[#b55cff]/25 bg-[rgba(181,92,255,0.06)] backdrop-blur-2xl px-4 py-3 shadow-[0_0_28px_rgba(181,92,255,0.10),inset_0_1px_0_rgba(255,255,255,0.06)]">
           <div className="flex items-center gap-3">
             <div className="grid h-9 w-9 place-items-center rounded-full bg-gradient-to-br from-[#b55cff] via-[#9b7cff] to-[#7c6df0] text-sm font-semibold text-white">
               {ownerInitials}
@@ -186,7 +194,7 @@ export default function Step3Team() {
               value={row.email}
               onChange={(e) => updateRow(idx, { email: e.target.value })}
               placeholder="teammate@brand.com"
-              className="flex-1 rounded-xl border border-white/[0.08] bg-[rgba(10,10,14,0.65)] px-4 py-3 text-sm text-foreground placeholder:text-white/30 transition-all duration-200 hover:border-white/[0.14] focus:border-[#b55cff]/55 focus:outline-none focus:ring-2 focus:ring-[#b55cff]/22 focus:shadow-[0_0_28px_rgba(181,92,255,0.18)]"
+              className="flex-1 rounded-xl border border-white/[0.08] bg-white/[0.02] backdrop-blur-xl px-4 py-3 text-sm text-foreground placeholder:text-white/30 transition-all duration-200 hover:border-white/[0.14] focus:border-[#b55cff]/55 focus:outline-none focus:ring-2 focus:ring-[#b55cff]/22 focus:shadow-[0_0_28px_rgba(181,92,255,0.18)]"
             />
             <PremiumSelect
               className="w-32"

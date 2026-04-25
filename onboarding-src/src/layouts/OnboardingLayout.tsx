@@ -61,7 +61,7 @@ export function OnboardingLayout({
 
         {/* Main content area */}
         <main className="mx-auto max-w-2xl px-6 pt-8 pb-12 md:pt-10">
-          <div className="futuristic-panel adray-border-flow animate-fade-in-up p-8 md:p-10">
+          <div className="adray-glass-apple animate-fade-in-up p-8 md:p-10">
             {children}
           </div>
         </main>

@@ -29,7 +29,12 @@ export function useUpdateProfile() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: patchProfile,
-    onSuccess: () => {
+    onSuccess: (data) => {
+      // El endpoint devuelve { ok, user }. Inyectamos directo en el cache
+      // para que useCurrentUser tenga los datos frescos sin esperar refetch.
+      if (data?.user) {
+        queryClient.setQueryData(['me'], data.user);
+      }
       queryClient.invalidateQueries({ queryKey: ['me'] });
     },
   });

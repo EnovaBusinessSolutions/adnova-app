@@ -60,7 +60,7 @@ export function PremiumSelect<T extends string>({
         aria-haspopup="listbox"
         aria-expanded={open}
         className={cn(
-          "flex w-full items-center justify-between gap-2 rounded-xl border border-white/[0.08] bg-[rgba(10,10,14,0.65)] px-4 py-3 text-left text-sm text-foreground transition-all duration-200",
+          "flex w-full items-center justify-between gap-2 rounded-xl border border-white/[0.08] bg-white/[0.02] backdrop-blur-xl px-4 py-3 text-left text-sm text-foreground transition-all duration-200",
           "hover:border-[#b55cff]/35 hover:bg-[rgba(14,12,22,0.78)]",
           "focus:border-[#b55cff]/55 focus:outline-none focus:ring-2 focus:ring-[#b55cff]/22",
           open && "border-[#b55cff]/55 ring-2 ring-[#b55cff]/22 shadow-[0_0_28px_rgba(181,92,255,0.18)]",
@@ -85,7 +85,7 @@ export function PremiumSelect<T extends string>({
           role="listbox"
           className={cn(
             "absolute left-0 right-0 z-50 mt-2 max-h-72 overflow-y-auto rounded-xl p-1.5",
-            "border border-[#b55cff]/30 bg-[rgba(14,11,22,0.99)] backdrop-blur-2xl",
+            "border border-white/[0.10] bg-white/[0.04] backdrop-blur-3xl",
             "shadow-[0_30px_70px_rgba(0,0,0,0.55),0_0_30px_rgba(181,92,255,0.18)]",
             "animate-fade-in no-scrollbar"
           )}

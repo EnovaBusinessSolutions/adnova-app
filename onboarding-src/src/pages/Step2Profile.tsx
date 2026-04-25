@@ -1,10 +1,8 @@
 import { useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { OnboardingLayout } from '@/layouts/OnboardingLayout';
-import { PremiumSelect } from '@/components/PremiumSelect';
 import { useCurrentUser } from '@/hooks/useCurrentUser';
 import { useUpdateProfile } from '@/hooks/useUpdateProfile';
-import { PRIMARY_FOCUS_OPTIONS, type PrimaryFocus } from '@/config/workspaceCatalogs';
 import { cn } from '@/lib/utils';
 
 function getInitials(first: string, last: string, email: string): string {
@@ -22,9 +20,6 @@ export default function Step2Profile() {
   const [firstName, setFirstName] = useState(user?.firstName || '');
   const [lastName, setLastName] = useState(user?.lastName || '');
   const [jobTitle, setJobTitle] = useState(user?.jobTitle || '');
-  const [primaryFocus, setPrimaryFocus] = useState<PrimaryFocus | ''>(
-    (user?.primaryFocus as PrimaryFocus) || ''
-  );
   const [error, setError] = useState<string | null>(null);
 
   const initials = useMemo(
@@ -36,8 +31,7 @@ export default function Step2Profile() {
     firstName.trim().length >= 1 &&
     firstName.trim().length <= 32 &&
     lastName.trim().length >= 1 &&
-    lastName.trim().length <= 32 &&
-    primaryFocus !== '';
+    lastName.trim().length <= 32;
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -47,7 +41,6 @@ export default function Step2Profile() {
         firstName: firstName.trim(),
         lastName: lastName.trim(),
         jobTitle: jobTitle.trim(),
-        primaryFocus: primaryFocus as PrimaryFocus,
         onboardingStep: 'PROFILE_COMPLETE',
       });
       navigate('/team');
@@ -98,7 +91,7 @@ export default function Step2Profile() {
               onChange={(e) => setFirstName(e.target.value)}
               maxLength={32}
               placeholder="Ej. Victor"
-              className="w-full rounded-xl border border-white/[0.08] bg-[rgba(10,10,14,0.65)] px-4 py-3 text-foreground placeholder:text-white/30 transition-all duration-200 hover:border-white/[0.14] focus:border-[#b55cff]/55 focus:outline-none focus:ring-2 focus:ring-[#b55cff]/22 focus:shadow-[0_0_28px_rgba(181,92,255,0.18)]"
+              className="w-full rounded-xl border border-white/[0.08] bg-white/[0.02] backdrop-blur-xl px-4 py-3 text-foreground placeholder:text-white/30 transition-all duration-200 hover:border-white/[0.14] focus:border-[#b55cff]/55 focus:outline-none focus:ring-2 focus:ring-[#b55cff]/22 focus:shadow-[0_0_28px_rgba(181,92,255,0.18)]"
             />
           </div>
           <div className="space-y-2">
@@ -109,7 +102,7 @@ export default function Step2Profile() {
               onChange={(e) => setLastName(e.target.value)}
               maxLength={32}
               placeholder="Ej. Huerta"
-              className="w-full rounded-xl border border-white/[0.08] bg-[rgba(10,10,14,0.65)] px-4 py-3 text-foreground placeholder:text-white/30 transition-all duration-200 hover:border-white/[0.14] focus:border-[#b55cff]/55 focus:outline-none focus:ring-2 focus:ring-[#b55cff]/22 focus:shadow-[0_0_28px_rgba(181,92,255,0.18)]"
+              className="w-full rounded-xl border border-white/[0.08] bg-white/[0.02] backdrop-blur-xl px-4 py-3 text-foreground placeholder:text-white/30 transition-all duration-200 hover:border-white/[0.14] focus:border-[#b55cff]/55 focus:outline-none focus:ring-2 focus:ring-[#b55cff]/22 focus:shadow-[0_0_28px_rgba(181,92,255,0.18)]"
             />
           </div>
         </div>
@@ -125,20 +118,7 @@ export default function Step2Profile() {
             onChange={(e) => setJobTitle(e.target.value)}
             maxLength={64}
             placeholder="Ej. Founder, Head of Growth, CMO"
-            className="w-full rounded-xl border border-white/[0.08] bg-[rgba(10,10,14,0.65)] px-4 py-3 text-foreground placeholder:text-white/30 transition-all duration-200 hover:border-white/[0.14] focus:border-[#b55cff]/55 focus:outline-none focus:ring-2 focus:ring-[#b55cff]/22 focus:shadow-[0_0_28px_rgba(181,92,255,0.18)]"
-          />
-        </div>
-
-        {/* Primary focus */}
-        <div className="space-y-2">
-          <label className="text-xs uppercase tracking-widest text-white/50">
-            ¿Cuál describe mejor tu rol?
-          </label>
-          <PremiumSelect
-            options={PRIMARY_FOCUS_OPTIONS.map((o) => ({ key: o.key, label: o.label }))}
-            value={primaryFocus}
-            onChange={(v) => setPrimaryFocus(v as PrimaryFocus)}
-            placeholder="Selecciona una opción…"
+            className="w-full rounded-xl border border-white/[0.08] bg-white/[0.02] backdrop-blur-xl px-4 py-3 text-foreground placeholder:text-white/30 transition-all duration-200 hover:border-white/[0.14] focus:border-[#b55cff]/55 focus:outline-none focus:ring-2 focus:ring-[#b55cff]/22 focus:shadow-[0_0_28px_rgba(181,92,255,0.18)]"
           />
         </div>
 
