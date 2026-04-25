@@ -2059,12 +2059,45 @@ app.listen(PORT, () => {
 // All 3 loops share the `loopsStatus` module so `/collect/x/loops-status`
 // reflects whether they're actually alive (vs just "every 10m" marketing).
 const loopsStatus = require('./utils/loopsStatus');
+const http = require('http');
+
+// Native http.request POST helper. Bypasses undici entirely — we saw
+// "fetch failed" on every tick with sub-25ms duration even after pinning
+// to 127.0.0.1, which means undici was bailing for some reason orthogonal
+// to address resolution. http.request is older / simpler / never fails
+// silently.
+function internalPost(path, bodyObj, secret) {
+  const data = JSON.stringify(bodyObj || {});
+  const opts = {
+    host: '127.0.0.1',
+    port: Number(PORT) || 3000,
+    method: 'POST',
+    path,
+    headers: {
+      'Content-Type': 'application/json',
+      'Content-Length': Buffer.byteLength(data),
+      'x-adray-internal': secret,
+    },
+  };
+  return new Promise((resolve, reject) => {
+    const req = http.request(opts, (res) => {
+      let raw = '';
+      res.setEncoding('utf8');
+      res.on('data', (chunk) => { raw += chunk; });
+      res.on('end', () => {
+        let parsed = null;
+        try { parsed = raw ? JSON.parse(raw) : null; } catch (_) { parsed = { rawBody: raw.slice(0, 240) }; }
+        resolve({ status: res.statusCode, body: parsed });
+      });
+    });
+    req.on('error', (err) => reject(err));
+    req.setTimeout(60_000, () => req.destroy(new Error('internalPost timeout 60s')));
+    req.write(data);
+    req.end();
+  });
+}
 
 function startLoop({ name, intervalMs, firstDelayMs, path, body }) {
-  // Node 20's fetch (undici) resolves "localhost" to ::1 (IPv6) first.
-  // Express on Render listens IPv4-only, so localhost fetches fail with
-  // ECONNREFUSED → "fetch failed" with no other detail. Use 127.0.0.1.
-  const url = `http://127.0.0.1:${PORT}${path}`;
   const secret = process.env.INTERNAL_CRON_SECRET || 'adray-internal';
   loopsStatus.register(name, intervalMs, firstDelayMs);
 
@@ -2072,18 +2105,14 @@ function startLoop({ name, intervalMs, firstDelayMs, path, body }) {
     const ctx = loopsStatus.start(name);
     const tsIso = new Date().toISOString();
     try {
-      const r = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-adray-internal': secret },
-        body: JSON.stringify(body || {}),
-      });
-      const data = await r.json().catch(() => ({}));
-      // Always log a single line per tick so the presence of loops is
-      // verifiable in Render logs without needing data changes.
-      console.log(`[loop:${name}] ${tsIso} status=${r.status} ${JSON.stringify(data).slice(0, 240)}`);
+      const { status, body: data } = await internalPost(path, body || {}, secret);
+      console.log(`[loop:${name}] ${tsIso} status=${status} ${JSON.stringify(data).slice(0, 240)}`);
       loopsStatus.finish(name, ctx, data, null);
     } catch (err) {
-      console.warn(`[loop:${name}] ${tsIso} FAILED ${err.message}`);
+      // err.code (ECONNREFUSED, EHOSTUNREACH...) is the actionable detail
+      const codeBit = err?.code ? ` code=${err.code}` : '';
+      const causeBit = err?.cause ? ` cause=${err.cause.code || err.cause.message || err.cause}` : '';
+      console.warn(`[loop:${name}] ${tsIso} FAILED ${err.message}${codeBit}${causeBit}`);
       loopsStatus.finish(name, ctx, null, err);
     }
   }
