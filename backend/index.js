@@ -970,6 +970,40 @@ if (HAS_DASHBOARD_DIST) {
 }
 
 /* =========================
+ * Static / onboarding
+ * ========================= */
+const ONBOARDING_DIST = path.join(__dirname, "../onboarding-src/dist");
+const HAS_ONBOARDING_DIST = fs.existsSync(path.join(ONBOARDING_DIST, "index.html"));
+
+function serveOnboardingSPA({ app, rootDir, label }) {
+  app.use(
+    "/onboarding/assets",
+    express.static(path.join(rootDir, "assets"), {
+      immutable: true,
+      maxAge: "1y",
+    })
+  );
+
+  app.use("/onboarding", ensureAuthenticated, express.static(rootDir));
+
+  app.get(/^\/onboarding(?:\/.*)?$/, ensureAuthenticated, (_req, res) => {
+    return res.sendFile(path.join(rootDir, "index.html"));
+  });
+
+  console.log(`✅ Onboarding servido desde: ${label}`);
+}
+
+if (HAS_ONBOARDING_DIST) {
+  serveOnboardingSPA({
+    app,
+    rootDir: ONBOARDING_DIST,
+    label: "onboarding-src/dist",
+  });
+} else {
+  console.warn("⚠️ onboarding-src/dist no encontrado. Corre `npm run build:onboarding`.");
+}
+
+/* =========================
  * Rutas de autenticaciĂłn e integraciones
  * ========================= */
 app.use("/auth/google", googleConnect);

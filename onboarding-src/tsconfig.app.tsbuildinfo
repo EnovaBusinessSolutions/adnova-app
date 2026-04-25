@@ -1,0 +1,1 @@
+{"root":["./src/app.tsx","./src/main.tsx","./src/vite-env.d.ts","./src/config/workspacecatalogs.ts","./src/hooks/usecurrentuser.ts","./src/layouts/onboardinglayout.tsx","./src/lib/utils.ts","./src/pages/step1workspace.tsx","./src/pages/success.tsx"],"version":"5.9.3"}
