@@ -2104,7 +2104,10 @@ app.listen(PORT, () => {
 const loopsStatus = require('./utils/loopsStatus');
 
 function startLoop({ name, intervalMs, firstDelayMs, path, body }) {
-  const url = `http://localhost:${PORT}${path}`;
+  // Node 20's fetch (undici) resolves "localhost" to ::1 (IPv6) first.
+  // Express on Render listens IPv4-only, so localhost fetches fail with
+  // ECONNREFUSED → "fetch failed" with no other detail. Use 127.0.0.1.
+  const url = `http://127.0.0.1:${PORT}${path}`;
   const secret = process.env.INTERNAL_CRON_SECRET || 'adray-internal';
   loopsStatus.register(name, intervalMs, firstDelayMs);
 
