@@ -238,9 +238,17 @@ app.disable("x-powered-by");
 //     por alguna razón no setea x-forwarded-proto en estas peticiones,
 //     preferimos atenderlas tal cual antes que un 301 que rompe el flujo.
 app.use((req, res, next) => {
+  // Skip the redirect when the request is from the local process itself
+  // (BRI auto-loops + any internal cron). Without this, fetch/http.request
+  // to 127.0.0.1 gets a 301 to https://127.0.0.1:PORT which Express isn't
+  // listening to over TLS — every internal call dies as "Moved Permanently".
+  const ip = req.ip || req.socket?.remoteAddress || '';
+  const isLoopback = ip === '127.0.0.1' || ip === '::ffff:127.0.0.1' || ip === '::1';
+
   if (
     process.env.NODE_ENV === 'production' &&
     req.headers['x-forwarded-proto'] !== 'https' &&
+    !isLoopback &&
     !req.path.startsWith('/connector') &&
     !req.path.startsWith('/.well-known/') &&
     !req.path.startsWith('/mcp') &&
