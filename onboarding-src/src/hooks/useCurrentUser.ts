@@ -6,6 +6,9 @@ type Me = {
   name?: string;
   firstName?: string;
   lastName?: string;
+  jobTitle?: string;
+  primaryFocus?: string | null;
+  profilePhotoUrl?: string | null;
   defaultWorkspaceId?: string | null;
   lastActiveWorkspaceId?: string | null;
   onboardingStep?: string;

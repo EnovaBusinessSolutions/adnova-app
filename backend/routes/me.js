@@ -86,4 +86,89 @@ router.put('/api/me/active-workspace', ensureAuthenticated, async (req, res) => 
   }
 });
 
+/* ============================================================
+ * PATCH /api/me/profile
+ * Body parcial: { firstName?, lastName?, jobTitle?, primaryFocus?,
+ *                 profilePhotoUrl?, onboardingStep? }
+ * Actualiza solo los campos enviados. Los demás quedan intactos.
+ * ============================================================ */
+router.patch('/api/me/profile', ensureAuthenticated, async (req, res) => {
+  try {
+    const body = req.body || {};
+    const updates = {};
+
+    const ALLOWED_PRIMARY_FOCUS = [
+      'FOUNDER_CEO', 'HEAD_OF_GROWTH', 'HEAD_OF_MARKETING',
+      'MARKETING_MANAGER', 'PERFORMANCE_MARKETER', 'ANALYTICS',
+      'AGENCY', 'ENGINEERING', 'OTHER',
+    ];
+    const ALLOWED_ONBOARDING_STEPS = [
+      'NONE', 'WORKSPACE_CREATED', 'PROFILE_COMPLETE', 'COMPLETE',
+    ];
+
+    if (typeof body.firstName === 'string') {
+      const trimmed = body.firstName.trim();
+      if (trimmed.length > 32) return res.status(400).json({ error: 'FIRST_NAME_TOO_LONG' });
+      updates.firstName = trimmed;
+    }
+
+    if (typeof body.lastName === 'string') {
+      const trimmed = body.lastName.trim();
+      if (trimmed.length > 32) return res.status(400).json({ error: 'LAST_NAME_TOO_LONG' });
+      updates.lastName = trimmed;
+    }
+
+    if (typeof body.jobTitle === 'string') {
+      const trimmed = body.jobTitle.trim();
+      if (trimmed.length > 64) return res.status(400).json({ error: 'JOB_TITLE_TOO_LONG' });
+      updates.jobTitle = trimmed;
+    }
+
+    if (body.primaryFocus !== undefined) {
+      if (body.primaryFocus !== null && !ALLOWED_PRIMARY_FOCUS.includes(body.primaryFocus)) {
+        return res.status(400).json({ error: 'INVALID_PRIMARY_FOCUS' });
+      }
+      updates.primaryFocus = body.primaryFocus;
+    }
+
+    if (typeof body.profilePhotoUrl === 'string') {
+      const trimmed = body.profilePhotoUrl.trim();
+      if (trimmed.length > 1024) return res.status(400).json({ error: 'PHOTO_URL_TOO_LONG' });
+      updates.profilePhotoUrl = trimmed;
+    }
+
+    if (typeof body.onboardingStep === 'string') {
+      if (!ALLOWED_ONBOARDING_STEPS.includes(body.onboardingStep)) {
+        return res.status(400).json({ error: 'INVALID_ONBOARDING_STEP' });
+      }
+      updates.onboardingStep = body.onboardingStep;
+    }
+
+    if (Object.keys(updates).length === 0) {
+      return res.status(400).json({ error: 'NO_UPDATES_PROVIDED' });
+    }
+
+    await User.updateOne({ _id: req.user._id }, { $set: updates });
+    const updated = await User.findById(req.user._id);
+    return res.json({
+      ok: true,
+      user: {
+        _id: updated._id,
+        email: updated.email,
+        firstName: updated.firstName,
+        lastName: updated.lastName,
+        jobTitle: updated.jobTitle,
+        primaryFocus: updated.primaryFocus,
+        profilePhotoUrl: updated.profilePhotoUrl,
+        onboardingStep: updated.onboardingStep,
+        defaultWorkspaceId: updated.defaultWorkspaceId,
+        lastActiveWorkspaceId: updated.lastActiveWorkspaceId,
+      },
+    });
+  } catch (err) {
+    console.error('[PATCH /api/me/profile]', err);
+    return res.status(500).json({ error: 'INTERNAL_ERROR' });
+  }
+});
+
 module.exports = router;

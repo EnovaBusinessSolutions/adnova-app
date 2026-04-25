@@ -52,9 +52,21 @@ export default function Step1Workspace() {
 
   const mutation = useMutation({
     mutationFn: createWorkspace,
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["me"] });
-      navigate("/success");
+    onSuccess: async () => {
+      // Marcar onboardingStep para reanudación.
+      try {
+        await fetch('/api/me/profile', {
+          method: 'PATCH',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ onboardingStep: 'WORKSPACE_CREATED' }),
+        });
+      } catch (e) {
+        // No bloquear el flujo si esto falla; el dashboard se encarga.
+      }
+      queryClient.invalidateQueries({ queryKey: ['me'] });
+      queryClient.invalidateQueries({ queryKey: ['active-workspace'] });
+      navigate('/profile');
     },
     onError: (err: any) => {
       const code = err?.code;

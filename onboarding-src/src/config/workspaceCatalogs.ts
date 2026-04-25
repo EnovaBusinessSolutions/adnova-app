@@ -69,3 +69,38 @@ export function isValidSlugFormat(slug: string): boolean {
   if (RESERVED_SLUGS.has(slug)) return false;
   return SLUG_REGEX.test(slug);
 }
+
+export type PrimaryFocus =
+  | 'FOUNDER_CEO' | 'HEAD_OF_GROWTH' | 'HEAD_OF_MARKETING'
+  | 'MARKETING_MANAGER' | 'PERFORMANCE_MARKETER' | 'ANALYTICS'
+  | 'AGENCY' | 'ENGINEERING' | 'OTHER';
+
+export const PRIMARY_FOCUS_OPTIONS: { key: PrimaryFocus; label: string }[] = [
+  { key: 'FOUNDER_CEO',          label: 'Fundador / CEO' },
+  { key: 'HEAD_OF_GROWTH',       label: 'Head of Growth' },
+  { key: 'HEAD_OF_MARKETING',    label: 'Head of Marketing' },
+  { key: 'MARKETING_MANAGER',    label: 'Marketing Manager' },
+  { key: 'PERFORMANCE_MARKETER', label: 'Performance Marketer' },
+  { key: 'ANALYTICS',            label: 'Analytics' },
+  { key: 'AGENCY',               label: 'Agencia' },
+  { key: 'ENGINEERING',          label: 'Ingeniería' },
+  { key: 'OTHER',                label: 'Otro' },
+];
+
+export const INVITABLE_ROLES: { key: 'ADMIN' | 'MEMBER'; label: string; description: string }[] = [
+  {
+    key: 'ADMIN',
+    label: 'Admin',
+    description: 'Configuración, equipo e integraciones.',
+  },
+  {
+    key: 'MEMBER',
+    label: 'Member',
+    description: 'Acceso de uso. Sin gestión de equipo.',
+  },
+];
+
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+export function isValidEmail(s: string): boolean {
+  return typeof s === 'string' && EMAIL_REGEX.test(s.trim());
+}
